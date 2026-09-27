@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme/colors';
 
@@ -22,8 +23,14 @@ export const Header: React.FC<HeaderProps> = ({
   onBack,
   rightAction,
 }) => {
+  const insets = useSafeAreaInsets();
+  const topPadding = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0
+  );
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: topPadding + 10 }]}>
       <View style={styles.leftContainer}>
         {showBack && (
           <TouchableOpacity

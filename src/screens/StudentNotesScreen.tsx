@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -26,20 +26,16 @@ import {
   createNote,
   deleteNote,
   updateNote,
+  getQuickNotes,
+  addQuickNote,
+  updateQuickNote,
+  deleteQuickNote,
+  resetDefaultQuickNotes,
+  QuickNoteItem,
 } from '../database/operations/noteOperations';
 import { exportStudentNotesToExcel } from '../utils/excelService';
 import { formatDateToTR, getCurrentDateTimeString } from '../utils/dateUtils';
 import { ClassItem, Student, StudentNote } from '../types';
-
-const QUICK_TAGS = [
-  'Derste çok aktifti 👍',
-  'Ödevini getirmedi ❌',
-  'Derste konuştu / dikkati dağınıktı ⚠️',
-  'Soruları doğru çözdü ⭐',
-  'Dersi dikkatle dinledi 📖',
-  'Rehberlik görüşmesi yapıldı 💬',
-  'Söz hakkı aldı ve katkı sağladı 👏',
-];
 
 export const StudentNotesScreen: React.FC = () => {
   const route = useRoute<any>();
@@ -50,6 +46,13 @@ export const StudentNotesScreen: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Quick preset tags state
+  const [quickTags, setQuickTags] = useState<QuickNoteItem[]>([]);
+  const [manageModalVisible, setManageModalVisible] = useState(false);
+  const [newTagInput, setNewTagInput] = useState('');
+  const [editingTag, setEditingTag] = useState<QuickNoteItem | null>(null);
+  const [editingTagInput, setEditingTagInput] = useState('');
+
   // Modal State for student opinion
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -57,10 +60,14 @@ export const StudentNotesScreen: React.FC = () => {
   const [studentHistory, setStudentHistory] = useState<StudentNote[]>([]);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
 
-  const loadClasses = async () => {
+  const loadData = async () => {
     try {
       const cls = await getClasses();
       setClasses(cls);
+
+      const tags = await getQuickNotes();
+      setQuickTags(tags);
+
       const initialClassId = route.params?.initialClassId;
       if (initialClassId && cls.some((c) => c.id === initialClassId)) {
         handleSelectClass(initialClassId);
@@ -74,7 +81,7 @@ export const StudentNotesScreen: React.FC = () => {
 
   useFocusEffect(
     useCallback(() => {
-      loadClasses();
+      loadData();
     }, [])
   );
 
@@ -121,18 +128,15 @@ export const StudentNotesScreen: React.FC = () => {
       if (editingNoteId) {
         await updateNote(editingNoteId, noteInput.trim());
       } else {
-        await createNote(
-          selectedStudent.id,
-          selectedClassId,
-          noteInput.trim(),
-          getCurrentDateTimeString()
-        );
+        await createNote(selectedStudent.id, selectedClassId, noteInput.trim());
       }
+
       setNoteInput('');
       setEditingNoteId(null);
-      // Reload history
-      const updatedHistory = await getNotesByStudent(selectedStudent.id);
-      setStudentHistory(updatedHistory);
+
+      // Refresh history
+      const history = await getNotesByStudent(selectedStudent.id);
+      setStudentHistory(history);
     } catch (e) {
       Alert.alert('Hata', 'Görüş kaydedilemedi.');
     }
@@ -148,8 +152,8 @@ export const StudentNotesScreen: React.FC = () => {
           try {
             await deleteNote(item.id);
             if (selectedStudent) {
-              const updatedHistory = await getNotesByStudent(selectedStudent.id);
-              setStudentHistory(updatedHistory);
+              const history = await getNotesByStudent(selectedStudent.id);
+              setStudentHistory(history);
             }
           } catch (e) {
             Alert.alert('Hata', 'Kayıt silinemedi.');
@@ -164,45 +168,142 @@ export const StudentNotesScreen: React.FC = () => {
     setNoteInput(item.note);
   };
 
+  // Quick Preset Tag Handlers
+  const handleAddNewTag = async () => {
+    if (!newTagInput.trim()) {
+      Alert.alert('Uyarı', 'Lütfen eklenecek görüş metnini giriniz.');
+      return;
+    }
+    try {
+      await addQuickNote(newTagInput.trim());
+      setNewTagInput('');
+      const tags = await getQuickNotes();
+      setQuickTags(tags);
+    } catch (e) {
+      Alert.alert('Hata', 'Şablon eklenemedi.');
+    }
+  };
+
+  const handleStartEditTag = (tag: QuickNoteItem) => {
+    setEditingTag(tag);
+    setEditingTagInput(tag.text);
+  };
+
+  const handleSaveEditTag = async () => {
+    if (!editingTag) return;
+    if (!editingTagInput.trim()) {
+      Alert.alert('Uyarı', 'Görüş metni boş olamaz.');
+      return;
+    }
+    try {
+      await updateQuickNote(editingTag.id, editingTagInput.trim());
+      setEditingTag(null);
+      setEditingTagInput('');
+      const tags = await getQuickNotes();
+      setQuickTags(tags);
+    } catch (e) {
+      Alert.alert('Hata', 'Şablon güncellenemedi.');
+    }
+  };
+
+  const handleDeleteTag = (tag: QuickNoteItem) => {
+    Alert.alert(
+      'Şablonu Sil',
+      `"${tag.text}" şablonunu silmek istediğinize emin misiniz?`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteQuickNote(tag.id);
+              const tags = await getQuickNotes();
+              setQuickTags(tags);
+            } catch (e) {
+              Alert.alert('Hata', 'Şablon silinemedi.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResetDefaultTags = () => {
+    Alert.alert(
+      'Varsayılanlara Sıfırla',
+      'Tüm hızlı görüş şablonları başlangıçtaki varsayılan haline döndürülecektir. Onaylıyor musunuz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sıfırla',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await resetDefaultQuickNotes();
+              const tags = await getQuickNotes();
+              setQuickTags(tags);
+            } catch (e) {
+              Alert.alert('Hata', 'Sıfırlanamadı.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // EXCEL EXPORT
   const handleExportClassNotes = async () => {
     if (!selectedClassId) return;
     try {
       const notes = await getNotesByClass(selectedClassId);
       if (notes.length === 0) {
-        Alert.alert('Bilgi', 'Bu şubede henüz kayıtlı görüş bulunmuyor.');
+        Alert.alert('Bilgi', 'Bu şube için henüz kaydedilmiş bir görüş bulunmuyor.');
         return;
       }
       await exportStudentNotesToExcel(notes);
     } catch (e) {
-      Alert.alert('Hata', 'Excel raporu oluşturulamadı.');
+      Alert.alert('Hata', 'Excel çıktısı oluşturulamadı.');
     }
   };
 
   const filteredStudents = students.filter((s) => {
     const term = searchQuery.toLowerCase();
-    const name = `${s.first_name} ${s.last_name}`.toLowerCase();
+    const fullName = `${s.first_name} ${s.last_name}`.toLowerCase();
     const no = (s.student_number || '').toLowerCase();
-    return name.includes(term) || no.includes(term);
+    return fullName.includes(term) || no.includes(term);
   });
 
-  const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name || 'Şube';
+  const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name || '';
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Top Header */}
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Öğrenci Görüş Modülü</Text>
           <Text style={styles.headerSub}>Tarih & saat bilgisiyle anlık görüş kaydı</Text>
         </View>
-        <TouchableOpacity
-          style={styles.exportBtn}
-          onPress={handleExportClassNotes}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="share-outline" size={18} color={Colors.primary} />
-          <Text style={styles.exportBtnText}>Excel</Text>
-        </TouchableOpacity>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.settingsHeaderBtn}
+            onPress={() => setManageModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="sparkles" size={15} color={Colors.primary} />
+            <Text style={styles.settingsHeaderBtnText}>Hızlı Görüşler</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.exportBtn}
+            onPress={handleExportClassNotes}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="share-outline" size={16} color={Colors.primary} />
+            <Text style={styles.exportBtnText}>Excel</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Class Horizontal Selector */}
@@ -303,18 +404,29 @@ export const StudentNotesScreen: React.FC = () => {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
-              {/* Quick Preset Tags */}
-              <Text style={styles.presetLabel}>Hızlı Görüş Şablonları:</Text>
+              {/* Quick Preset Tags Header with Settings Link */}
+              <View style={styles.presetLabelRow}>
+                <Text style={styles.presetLabel}>Hızlı Görüş Şablonları:</Text>
+                <TouchableOpacity
+                  style={styles.editPresetsLink}
+                  onPress={() => setManageModalVisible(true)}
+                >
+                  <Ionicons name="options-outline" size={13} color={Colors.primary} />
+                  <Text style={styles.editPresetsLinkText}>Şablonları Düzenle</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick Preset Tags List */}
               <View style={styles.tagsGrid}>
-                {QUICK_TAGS.map((tag, idx) => (
+                {quickTags.map((tag) => (
                   <TouchableOpacity
-                    key={idx}
+                    key={tag.id}
                     style={styles.tagBtn}
                     onPress={() => {
-                      setNoteInput((prev) => (prev ? `${prev}, ${tag}` : tag));
+                      setNoteInput((prev) => (prev ? `${prev}, ${tag.text}` : tag.text));
                     }}
                   >
-                    <Text style={styles.tagText}>{tag}</Text>
+                    <Text style={styles.tagText}>{tag.text}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -326,7 +438,7 @@ export const StudentNotesScreen: React.FC = () => {
                     ? 'Görüşü Düzenle'
                     : `Öğrenci Görüşü (${getCurrentDateTimeString()})`
                 }
-                placeholder="Örn: Bu derste derse çok ilgiliydi veya yaramazlık yaptı..."
+                placeholder="Örn: Bu derste derse çok ilgiliydi veya ödevini eksik yapmış..."
                 value={noteInput}
                 onChangeText={setNoteInput}
                 multiline
@@ -402,6 +514,116 @@ export const StudentNotesScreen: React.FC = () => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* QUICK NOTES MANAGEMENT MODAL */}
+      <Modal visible={manageModalVisible} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={[styles.modalContainer, { maxHeight: '88%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Hızlı Görüş Şablonları</Text>
+                <Text style={styles.modalSub}>
+                  Tek dokunuşla eklenecek hazır ifadeleri belirleyin
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setManageModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Add new tag row */}
+            <View style={styles.addTagRow}>
+              <View style={{ flex: 1 }}>
+                <Input
+                  placeholder="Yeni şablon yazın (Örn: Ödevini çok güzel yapmış ⭐)..."
+                  value={newTagInput}
+                  onChangeText={setNewTagInput}
+                  style={{ height: 40 }}
+                />
+              </View>
+              <Button
+                title="Ekle"
+                icon="add"
+                size="sm"
+                onPress={handleAddNewTag}
+                style={{ height: 40, marginTop: 4 }}
+              />
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ marginVertical: 10 }}>
+              <Text style={styles.manageListTitle}>Kayıtlı Şablonlar ({quickTags.length})</Text>
+              {quickTags.map((tag) => {
+                const isEditing = editingTag?.id === tag.id;
+                return (
+                  <View key={tag.id} style={styles.manageTagCard}>
+                    {isEditing ? (
+                      <View style={styles.tagEditRow}>
+                        <View style={{ flex: 1 }}>
+                          <Input
+                            value={editingTagInput}
+                            onChangeText={setEditingTagInput}
+                            style={{ height: 38 }}
+                          />
+                        </View>
+                        <TouchableOpacity
+                          style={styles.saveTagBtn}
+                          onPress={handleSaveEditTag}
+                        >
+                          <Ionicons name="checkmark" size={18} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.cancelTagBtn}
+                          onPress={() => setEditingTag(null)}
+                        >
+                          <Ionicons name="close" size={18} color={Colors.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.tagDisplayRow}>
+                        <Text style={styles.manageTagText}>{tag.text}</Text>
+                        <View style={styles.manageTagActions}>
+                          <TouchableOpacity
+                            style={styles.tagActionBtn}
+                            onPress={() => handleStartEditTag(tag)}
+                          >
+                            <Ionicons name="pencil" size={15} color={Colors.textSecondary} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.tagActionBtn}
+                            onPress={() => handleDeleteTag(tag)}
+                          >
+                            <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.manageModalFooter}>
+              <TouchableOpacity
+                style={styles.resetTagsBtn}
+                onPress={handleResetDefaultTags}
+              >
+                <Ionicons name="refresh-outline" size={15} color={Colors.textSecondary} />
+                <Text style={styles.resetTagsBtnText}>Varsayılanlara Sıfırla</Text>
+              </TouchableOpacity>
+
+              <Button
+                title="Tamam"
+                size="sm"
+                onPress={() => setManageModalVisible(false)}
+                style={{ minWidth: 100 }}
+              />
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
@@ -431,12 +653,33 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 2,
   },
-  exportBtn: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  settingsHeaderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.primaryLight,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 5,
+  },
+  settingsHeaderBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primaryDark,
+  },
+  exportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderRadius: 8,
     gap: 4,
   },
@@ -458,43 +701,44 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
     backgroundColor: Colors.cardSubtle,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 6,
+    gap: 4,
   },
   chipActive: {
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
   chipText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    color: Colors.textPrimary,
+    color: Colors.textSecondary,
   },
   chipTextActive: {
-    color: Colors.textInverse,
+    color: '#fff',
   },
   chipSub: {
     fontSize: 11,
-    color: Colors.textSecondary,
+    color: Colors.textMuted,
   },
   chipSubActive: {
-    color: Colors.primaryLight,
+    color: '#E0E7FF',
   },
   searchWrap: {
     paddingHorizontal: 16,
-    paddingVertical: 6,
+    paddingTop: 10,
+    paddingBottom: 2,
   },
   listContent: {
     padding: 16,
-    paddingTop: 4,
+    paddingBottom: 24,
   },
   studentCard: {
-    padding: 14,
+    padding: 12,
     marginBottom: 8,
   },
   studentRow: {
@@ -502,39 +746,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noCircle: {
-    minWidth: 40,
-    height: 36,
-    borderRadius: 8,
+    width: 38,
+    height: 38,
+    borderRadius: 10,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-    paddingHorizontal: 4,
   },
   noText: {
     fontSize: 13,
     fontWeight: '800',
-    color: Colors.textPrimary,
+    color: Colors.primary,
   },
   studentInfo: {
     flex: 1,
   },
   studentName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
   clickHint: {
-    fontSize: 12,
-    color: Colors.primary,
+    fontSize: 11,
+    color: Colors.textSecondary,
     marginTop: 2,
   },
   iconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: Colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
@@ -549,12 +792,13 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
+    paddingBottom: 36,
     maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 12,
   },
   modalTitle: {
@@ -568,13 +812,30 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   modalScroll: {
-    marginBottom: 20,
+    marginBottom: 14,
+  },
+  presetLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   presetLabel: {
     fontSize: 12,
     fontWeight: '700',
     color: Colors.textSecondary,
-    marginBottom: 8,
+  },
+  editPresetsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  editPresetsLinkText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
   },
   tagsGrid: {
     flexDirection: 'row',
@@ -587,16 +848,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 16,
   },
   tagText: {
     fontSize: 12,
     color: Colors.textPrimary,
+    fontWeight: '500',
   },
   saveBtnRow: {
     flexDirection: 'row',
-    marginBottom: 20,
+    marginBottom: 18,
   },
   historySection: {
     borderTopWidth: 1,
@@ -604,27 +866,27 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   historyTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.textPrimary,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   emptyHistoryText: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMuted,
     fontStyle: 'italic',
-    paddingVertical: 8,
+    paddingVertical: 6,
   },
   historyCard: {
-    padding: 12,
-    marginBottom: 8,
+    padding: 10,
+    marginBottom: 6,
     backgroundColor: Colors.cardSubtle,
   },
   historyTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   historyDateBadge: {
     flexDirection: 'row',
@@ -641,8 +903,94 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   historyContentText: {
-    fontSize: 14,
+    fontSize: 13,
     color: Colors.textPrimary,
-    lineHeight: 19,
+    lineHeight: 18,
+  },
+  addTagRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 8,
+  },
+  manageListTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  manageTagCard: {
+    backgroundColor: Colors.cardSubtle,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tagDisplayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  manageTagText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    flex: 1,
+  },
+  manageTagActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  tagActionBtn: {
+    padding: 5,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tagEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  saveTagBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelTagBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manageModalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  resetTagsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    padding: 6,
+  },
+  resetTagsBtnText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
   },
 });

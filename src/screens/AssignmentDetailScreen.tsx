@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
+  Image,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,10 +21,19 @@ import {
   getAssignmentById,
   getAssignmentStudents,
   updateAssignmentStudentStatus,
+  bulkUpdateAssignmentStudents,
 } from '../database/operations/assignmentOperations';
 import { exportAssignmentToExcel } from '../utils/excelService';
 import { formatDateToTR } from '../utils/dateUtils';
 import { Assignment, AssignmentStudent, AssignmentStatus } from '../types';
+
+const statusLabels: Record<AssignmentStatus, string> = {
+  yapildi: 'Yapıldı',
+  yapilmadi: 'Yapılmadı',
+  eksik: 'Eksik',
+  bekliyor: 'Bekliyor',
+  muaf: 'Muaf',
+};
 
 export const AssignmentDetailScreen: React.FC = () => {
   const route = useRoute<any>();
@@ -70,6 +80,47 @@ export const AssignmentDetailScreen: React.FC = () => {
       Alert.alert('Hata', 'Durum güncellenirken hata oluştu.');
       loadData();
     }
+  };
+
+  const handleBulkUpdateStatus = (newStatus: AssignmentStatus) => {
+    const isFiltered = searchQuery.trim().length > 0;
+    const targetStudents = (isFiltered ? filtered : students).filter(
+      (s) => s.is_exempt === 0
+    );
+
+    if (targetStudents.length === 0) {
+      Alert.alert('Bilgi', 'İşlem yapılacak (muaf olmayan) öğrenci bulunamadı.');
+      return;
+    }
+
+    const label = statusLabels[newStatus] || newStatus;
+    const message = isFiltered
+      ? `Filtrelenen ${targetStudents.length} öğrencinin ödev durumu "${label}" olarak güncellensin mi?`
+      : `Muaf olmayan tüm (${targetStudents.length}) öğrencilerin ödev durumu "${label}" olarak güncellensin mi?`;
+
+    Alert.alert('Toplu Durum Atama', message, [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Evet, Güncelle',
+        style: newStatus === 'yapilmadi' ? 'destructive' : 'default',
+        onPress: async () => {
+          try {
+            const targetIds = targetStudents.map((s) => s.id);
+            setStudents((prev) =>
+              prev.map((s) =>
+                targetIds.includes(s.id) ? { ...s, status: newStatus } : s
+              )
+            );
+            await bulkUpdateAssignmentStudents(assignmentId, newStatus, targetIds);
+            const asg = await getAssignmentById(assignmentId);
+            setAssignment(asg);
+          } catch (e) {
+            Alert.alert('Hata', 'Toplu durum güncellenirken hata oluştu.');
+            loadData();
+          }
+        },
+      },
+    ]);
   };
 
   const handleOpenNote = (item: AssignmentStudent) => {
@@ -182,6 +233,57 @@ export const AssignmentDetailScreen: React.FC = () => {
         />
       </View>
 
+      {/* Toplu Durum Atama Butonları */}
+      <View style={styles.bulkContainer}>
+        <View style={styles.bulkHeader}>
+          <View style={styles.bulkHeaderLeft}>
+            <Ionicons name="flash-outline" size={14} color={Colors.primary} />
+            <Text style={styles.bulkTitle}>Toplu Durum Ata</Text>
+          </View>
+          <Text style={styles.bulkSubtitle}>
+            {searchQuery.trim() ? 'Filtrelenen öğrencilere' : 'Tüm sınıfa (muaf hariç)'}
+          </Text>
+        </View>
+
+        <View style={styles.bulkGrid}>
+          <TouchableOpacity
+            style={[styles.bulkBtn, styles.bulkBtnYapildi]}
+            onPress={() => handleBulkUpdateStatus('yapildi')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="checkmark-circle" size={15} color={Colors.successDark} />
+            <Text style={[styles.bulkBtnText, { color: Colors.successDark }]}>Tümü Yapıldı</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.bulkBtn, styles.bulkBtnYapilmadi]}
+            onPress={() => handleBulkUpdateStatus('yapilmadi')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="close-circle" size={15} color={Colors.dangerDark} />
+            <Text style={[styles.bulkBtnText, { color: Colors.dangerDark }]}>Tümü Yapılmadı</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.bulkBtn, styles.bulkBtnEksik]}
+            onPress={() => handleBulkUpdateStatus('eksik')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="alert-circle" size={15} color={Colors.warningDark} />
+            <Text style={[styles.bulkBtnText, { color: Colors.warningDark }]}>Tümü Eksik</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.bulkBtn, styles.bulkBtnBekliyor]}
+            onPress={() => handleBulkUpdateStatus('bekliyor')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="time" size={15} color={Colors.textSecondary} />
+            <Text style={[styles.bulkBtnText, { color: Colors.textSecondary }]}>Tümü Bekliyor</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* Students list */}
       <FlatList
         data={filtered}
@@ -193,9 +295,13 @@ export const AssignmentDetailScreen: React.FC = () => {
           return (
             <Card style={[styles.studentCard, isExempt && styles.studentCardExempt]}>
               <View style={styles.studentTopRow}>
-                <View style={styles.noCircle}>
-                  <Text style={styles.noText}>{item.student_number || '-'}</Text>
-                </View>
+                {item.photo_uri ? (
+                  <Image source={{ uri: item.photo_uri }} style={styles.studentThumb} />
+                ) : (
+                  <View style={styles.noCircle}>
+                    <Text style={styles.noText}>{item.student_number || '-'}</Text>
+                  </View>
+                )}
                 <View style={styles.studentNameWrap}>
                   <Text style={styles.studentName}>
                     {item.first_name} {item.last_name}
@@ -437,6 +543,15 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.cardSubtle,
     opacity: 0.85,
   },
+  studentThumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 10,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
   studentTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -549,5 +664,70 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginTop: 10,
+  },
+  bulkContainer: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  bulkHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bulkHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  bulkTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  bulkSubtitle: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontWeight: '500',
+  },
+  bulkGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  bulkBtn: {
+    width: '48.8%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 5,
+  },
+  bulkBtnYapildi: {
+    backgroundColor: Colors.successLight,
+    borderColor: '#A7F3D0',
+  },
+  bulkBtnYapilmadi: {
+    backgroundColor: Colors.dangerLight,
+    borderColor: '#FECACA',
+  },
+  bulkBtnEksik: {
+    backgroundColor: Colors.warningLight,
+    borderColor: '#FDE68A',
+  },
+  bulkBtnBekliyor: {
+    backgroundColor: Colors.cardSubtle,
+    borderColor: Colors.border,
+  },
+  bulkBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

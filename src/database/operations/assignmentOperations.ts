@@ -65,6 +65,7 @@ export const getAssignmentStudents = async (assignmentId: number): Promise<Assig
       s.student_number,
       s.first_name,
       s.last_name,
+      s.photo_uri,
       ast.is_exempt,
       ast.status,
       ast.note,
@@ -154,6 +155,32 @@ export const updateAssignmentStudentStatus = async (
     note || '',
     assignmentStudentId
   );
+};
+
+export const bulkUpdateAssignmentStudents = async (
+  assignmentId: number,
+  status: AssignmentStatus,
+  assignmentStudentIds?: number[]
+): Promise<void> => {
+  const db = await getDB();
+  if (assignmentStudentIds && assignmentStudentIds.length > 0) {
+    const placeholders = assignmentStudentIds.map(() => '?').join(',');
+    await db.runAsync(
+      `UPDATE assignment_students 
+       SET status = ?, updated_at = CURRENT_TIMESTAMP 
+       WHERE id IN (${placeholders}) AND is_exempt = 0`,
+      status,
+      ...assignmentStudentIds
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE assignment_students 
+       SET status = ?, updated_at = CURRENT_TIMESTAMP 
+       WHERE assignment_id = ? AND is_exempt = 0`,
+      status,
+      assignmentId
+    );
+  }
 };
 
 export const deleteAssignment = async (id: number): Promise<void> => {

@@ -14,6 +14,7 @@ export interface Student {
   last_name: string;
   full_name?: string;
   notes?: string;
+  photo_uri?: string | null;
   created_at?: string;
 }
 
@@ -41,6 +42,7 @@ export interface AssignmentStudent {
   student_number: string;
   first_name: string;
   last_name: string;
+  photo_uri?: string | null;
   is_exempt: number; // 0 = not exempt (needs to do homework), 1 = exempt
   status: AssignmentStatus;
   note?: string;
@@ -54,6 +56,7 @@ export interface StudentNote {
   student_name?: string;
   student_number?: string;
   class_name?: string;
+  photo_uri?: string | null;
   note: string;
   note_date: string; // YYYY-MM-DD HH:mm
   created_at?: string;
@@ -74,6 +77,18 @@ export interface LessonSlot {
   end_time: string; // "10:50"
 }
 
+export interface DaySlotTime {
+  id: number;
+  day_of_week: number;
+  slot_id: number;
+  start_time: string;
+  end_time: string;
+}
+
+export interface DaySlotInfo extends LessonSlot {
+  is_custom_time?: boolean;
+}
+
 export interface ScheduleItem {
   id: number;
   day_of_week: number; // 1 = Pazartesi, 2 = Salı, ..., 5 = Cuma, 6 = Cumartesi, 7 = Pazar
@@ -82,10 +97,13 @@ export interface ScheduleItem {
   slot_name?: string;
   start_time?: string;
   end_time?: string;
+  is_custom_time?: boolean;
   class_id?: number | null;
   class_name?: string | null;
   course_id?: number | null;
   course_name?: string | null;
+  course_code?: string | null;
+  course_color?: string | null;
   classroom?: string | null;
 }
 

@@ -7,12 +7,10 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
-  FlatList,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme/colors';
-import { Header } from '../components/Header';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -22,11 +20,15 @@ import {
   saveScheduleSlot,
   getCourses,
   getWeeklySchedule,
+  getSlotsForDay,
+  getCustomDaysWithOverrides,
+  saveDaySlotTime,
+  loadOfficialWeeklySchedule,
 } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
 import { exportScheduleToExcel } from '../utils/excelService';
 import { DAYS_OF_WEEK, getDayOfWeekIndex, isTimeBetween, getCurrentTimeString } from '../utils/dateUtils';
-import { LessonSlot, ScheduleItem, CourseName, ClassItem } from '../types';
+import { DaySlotInfo, ScheduleItem, CourseName, ClassItem } from '../types';
 
 export const ScheduleScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -36,30 +38,37 @@ export const ScheduleScreen: React.FC = () => {
     return idx > 5 ? 1 : idx; // default to today (or Monday if weekend)
   });
 
-  const [slots, setSlots] = useState<LessonSlot[]>([]);
+  const [slots, setSlots] = useState<DaySlotInfo[]>([]);
+  const [customDays, setCustomDays] = useState<number[]>([]);
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [courses, setCourses] = useState<CourseName[]>([]);
 
   // Slot Edit Modal
   const [modalVisible, setModalVisible] = useState(false);
-  const [activeSlot, setActiveSlot] = useState<LessonSlot | null>(null);
+  const [activeSlot, setActiveSlot] = useState<DaySlotInfo | null>(null);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [classroomInput, setClassroomInput] = useState('');
 
+  // Inline time edit inside modal
+  const [isEditingTime, setIsEditingTime] = useState(false);
+  const [slotStartInput, setSlotStartInput] = useState('');
+  const [slotEndInput, setSlotEndInput] = useState('');
+
   const loadData = async () => {
     try {
-      const [allSlots, cls, crs] = await Promise.all([
-        getLessonSlots(),
+      const [daySlots, cls, crs, cDays, currentDayItems] = await Promise.all([
+        getSlotsForDay(selectedDay),
         getClasses(),
         getCourses(),
+        getCustomDaysWithOverrides(),
+        getScheduleByDay(selectedDay),
       ]);
-      setSlots(allSlots);
+      setSlots(daySlots);
       setClasses(cls);
       setCourses(crs);
-
-      const currentDayItems = await getScheduleByDay(selectedDay);
+      setCustomDays(cDays);
       setDaySchedule(currentDayItems);
     } catch (e) {
       console.error(e);
@@ -72,18 +81,36 @@ export const ScheduleScreen: React.FC = () => {
     }, [selectedDay])
   );
 
-  const handleOpenSlotModal = (slot: LessonSlot) => {
+  const handleOpenSlotModal = (slot: DaySlotInfo) => {
     setActiveSlot(slot);
     const existing = daySchedule.find((item) => item.slot_id === slot.id);
     setSelectedClassId(existing?.class_id || null);
     setSelectedCourseId(existing?.course_id || null);
     setClassroomInput(existing?.classroom || '');
+    setSlotStartInput(slot.start_time);
+    setSlotEndInput(slot.end_time);
+    setIsEditingTime(false);
     setModalVisible(true);
   };
 
   const handleSaveSlot = async () => {
     if (!activeSlot) return;
     try {
+      // If user modified time for this day
+      if (
+        isEditingTime &&
+        slotStartInput.trim() &&
+        slotEndInput.trim() &&
+        (slotStartInput.trim() !== activeSlot.start_time || slotEndInput.trim() !== activeSlot.end_time)
+      ) {
+        await saveDaySlotTime(
+          selectedDay,
+          activeSlot.id,
+          slotStartInput.trim(),
+          slotEndInput.trim()
+        );
+      }
+
       await saveScheduleSlot(
         selectedDay,
         activeSlot.id,
@@ -119,8 +146,43 @@ export const ScheduleScreen: React.FC = () => {
     }
   };
 
+  const handleLoadOfficialSchedule = () => {
+    Alert.alert(
+      'Okul Programını Otomatik Yükle',
+      'Kamil Miras Anadolu Lisesi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
+        '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
+        '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
+        '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
+        '⚠️ Kural: Önceden tanımladığınız özel ders saatleriniz (başlangıç/bitiş zamanları) KORUNUR, sadece 27 ders saatinin şube ve ders kodları atanır.\n\n' +
+        'Programı yüklemek istiyor musunuz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Evet, Programı Yükle',
+          onPress: async () => {
+            try {
+              const res = await loadOfficialWeeklySchedule();
+              await loadData();
+              Alert.alert(
+                'Başarıyla Yüklendi 🎉',
+                `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
+                  `• Dersler: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
+                  `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
+                  `Ders saatleriniz korunmuştur.`
+              );
+            } catch (err: any) {
+              Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const currentTime = getCurrentTimeString();
   const currentDayIndex = getDayOfWeekIndex();
+  const currentDayObj = DAYS_OF_WEEK.find((d) => d.id === selectedDay);
+  const isCurrentDayCustom = customDays.includes(selectedDay);
 
   return (
     <View style={styles.container}>
@@ -132,8 +194,15 @@ export const ScheduleScreen: React.FC = () => {
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity
+            style={[styles.actionBtnIcon, { backgroundColor: '#EEF2FF' }]}
+            onPress={handleLoadOfficialSchedule}
+            accessibilityLabel="Okul Programını Otomatik Yükle"
+          >
+            <Ionicons name="cloud-download-outline" size={20} color={Colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
             style={styles.actionBtnIcon}
-            onPress={() => navigation.navigate('ScheduleManage')}
+            onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay })}
           >
             <Ionicons name="settings-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
@@ -152,15 +221,25 @@ export const ScheduleScreen: React.FC = () => {
           {DAYS_OF_WEEK.slice(0, 6).map((day) => {
             const isSelected = selectedDay === day.id;
             const isToday = currentDayIndex === day.id;
+            const hasCustom = customDays.includes(day.id);
             return (
               <TouchableOpacity
                 key={day.id}
-                style={[styles.dayTab, isSelected && styles.dayTabActive]}
+                style={[
+                  styles.dayTab,
+                  isSelected && styles.dayTabActive,
+                  hasCustom && !isSelected && styles.dayTabCustom,
+                ]}
                 onPress={() => setSelectedDay(day.id)}
               >
-                <Text style={[styles.dayTabText, isSelected && styles.dayTabTextActive]}>
-                  {day.shortName}
-                </Text>
+                <View style={styles.dayTabContent}>
+                  <Text style={[styles.dayTabText, isSelected && styles.dayTabTextActive]}>
+                    {day.shortName}
+                  </Text>
+                  {hasCustom && (
+                    <View style={[styles.customIndicatorDot, isSelected && { backgroundColor: '#fff' }]} />
+                  )}
+                </View>
                 {isToday && (
                   <View
                     style={[
@@ -175,17 +254,44 @@ export const ScheduleScreen: React.FC = () => {
         </ScrollView>
       </View>
 
+      {/* Custom Day Info Banner */}
+      {isCurrentDayCustom && (
+        <View style={styles.customBanner}>
+          <View style={styles.customBannerTextWrap}>
+            <Ionicons name="time" size={16} color="#B45309" />
+            <Text style={styles.customBannerText}>
+              {currentDayObj?.name} gününe özel ders saatleri uygulanıyor.
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.customBannerBtn}
+            onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay })}
+          >
+            <Text style={styles.customBannerBtnText}>Saatleri Düzenle</Text>
+            <Ionicons name="chevron-forward" size={12} color={Colors.primary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Lesson Slots List for Day */}
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {slots.length === 0 ? (
           <Card style={styles.emptySlotsCard}>
             <Text style={styles.emptySlotsText}>Ders saati tanımlı değil.</Text>
-            <Button
-              title="Saatleri Tanımla"
-              size="sm"
-              style={{ marginTop: 10 }}
-              onPress={() => navigation.navigate('ScheduleManage')}
-            />
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <Button
+                title="Saatleri Tanımla"
+                size="sm"
+                onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots' })}
+              />
+              <Button
+                title="Okul Programını Yükle (27 Saat)"
+                variant="outline"
+                size="sm"
+                icon="cloud-download-outline"
+                onPress={handleLoadOfficialSchedule}
+              />
+            </View>
           </Card>
         ) : (
           slots.map((slot) => {
@@ -207,8 +313,15 @@ export const ScheduleScreen: React.FC = () => {
                 >
                   <View style={styles.slotRow}>
                     <View style={styles.slotTimeWrap}>
-                      <Text style={styles.slotNum}>{slot.slot_name}</Text>
-                      <Text style={styles.slotTimes}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Text style={styles.slotNum}>{slot.slot_name}</Text>
+                        {slot.is_custom_time && (
+                          <View style={styles.customSlotBadge}>
+                            <Text style={styles.customSlotBadgeText}>Özel</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[styles.slotTimes, slot.is_custom_time && styles.slotTimesCustom]}>
                         {slot.start_time} - {slot.end_time}
                       </Text>
                     </View>
@@ -226,7 +339,29 @@ export const ScheduleScreen: React.FC = () => {
                               </View>
                             )}
                           </View>
-                          <Text style={styles.slotCourse}>{match.course_name || '-'}</Text>
+                          <View style={styles.courseTagRow}>
+                            {match.course_code ? (
+                              <View
+                                style={[
+                                  styles.courseCodeBadge,
+                                  { backgroundColor: match.course_color ? `${match.course_color}18` : Colors.primaryLight },
+                                  { borderColor: match.course_color || Colors.primary },
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.courseCodeBadgeText,
+                                    { color: match.course_color || Colors.primaryDark },
+                                  ]}
+                                >
+                                  {match.course_code}
+                                </Text>
+                              </View>
+                            ) : null}
+                            <Text style={styles.slotCourse} numberOfLines={1}>
+                              {match.course_name || '-'}
+                            </Text>
+                          </View>
                           {match.classroom && (
                             <Text style={styles.slotRoom}>Derslik: {match.classroom}</Text>
                           )}
@@ -255,17 +390,66 @@ export const ScheduleScreen: React.FC = () => {
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>{activeSlot?.slot_name} Düzenle</Text>
-                <Text style={styles.modalSub}>
-                  {DAYS_OF_WEEK.find((d) => d.id === selectedDay)?.name} (
-                  {activeSlot?.start_time} - {activeSlot?.end_time})
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  <Text style={styles.modalSub}>
+                    {currentDayObj?.name} ({activeSlot?.start_time} - {activeSlot?.end_time})
+                  </Text>
+                  {activeSlot?.is_custom_time && (
+                    <View style={styles.customSlotBadge}>
+                      <Text style={styles.customSlotBadgeText}>Güne Özel Saat</Text>
+                    </View>
+                  )}
+                </View>
               </View>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
                 <Ionicons name="close" size={24} color={Colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 360 }}>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+              {/* Optional inline day-time modifier */}
+              <TouchableOpacity
+                style={styles.timeEditToggle}
+                onPress={() => setIsEditingTime(!isEditingTime)}
+              >
+                <Ionicons
+                  name={isEditingTime ? 'chevron-up' : 'time-outline'}
+                  size={15}
+                  color={Colors.primary}
+                />
+                <Text style={styles.timeEditToggleText}>
+                  {isEditingTime
+                    ? 'Saat düzenlemeyi gizle'
+                    : `Bu günün saatini (${activeSlot?.start_time} - ${activeSlot?.end_time}) değiştir`}
+                </Text>
+              </TouchableOpacity>
+
+              {isEditingTime && (
+                <View style={styles.inlineTimeCard}>
+                  <Text style={styles.inlineTimeTitle}>
+                    {currentDayObj?.name} Günü {activeSlot?.slot_name} Saati:
+                  </Text>
+                  <View style={styles.inlineTimeInputsRow}>
+                    <View style={{ flex: 1 }}>
+                      <Input
+                        label="Başlangıç"
+                        placeholder="Örn: 11:40"
+                        value={slotStartInput}
+                        onChangeText={setSlotStartInput}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Input
+                        label="Bitiş"
+                        placeholder="Örn: 12:20"
+                        value={slotEndInput}
+                        onChangeText={setSlotEndInput}
+                      />
+                    </View>
+                  </View>
+                </View>
+              )}
+
               {/* Select Class */}
               <Text style={styles.selectLabel}>Şube Seçin:</Text>
               <View style={styles.selectGrid}>
@@ -390,6 +574,15 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
+  dayTabCustom: {
+    borderColor: '#F59E0B',
+    backgroundColor: '#FEF3C7',
+  },
+  dayTabContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   dayTabText: {
     fontSize: 14,
     fontWeight: '700',
@@ -398,30 +591,76 @@ const styles = StyleSheet.create({
   dayTabTextActive: {
     color: Colors.textInverse,
   },
+  customIndicatorDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#F59E0B',
+  },
   todayIndicator: {
     width: 4,
     height: 4,
     borderRadius: 2,
     backgroundColor: Colors.primary,
-    marginTop: 3,
+    marginTop: 4,
+  },
+  customBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+  },
+  customBannerTextWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  customBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  customBannerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  customBannerBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
   },
   scrollContent: {
     padding: 16,
+    paddingBottom: 32,
   },
   emptySlotsCard: {
-    alignItems: 'center',
     padding: 24,
+    alignItems: 'center',
+    marginTop: 20,
   },
   emptySlotsText: {
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '600',
     color: Colors.textSecondary,
   },
   slotCard: {
-    padding: 14,
-    marginBottom: 8,
+    marginBottom: 10,
+    padding: 12,
   },
   slotCardNow: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0FDF4',
     borderColor: Colors.success,
   },
   slotRow: {
@@ -429,17 +668,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   slotTimeWrap: {
-    width: 90,
+    width: 86,
   },
   slotNum: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
+  customSlotBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  customSlotBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#B45309',
+  },
   slotTimes: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textSecondary,
     marginTop: 2,
+    fontWeight: '500',
+  },
+  slotTimesCustom: {
+    color: '#B45309',
+    fontWeight: '700',
   },
   slotDivider: {
     width: 1,
@@ -456,26 +711,26 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   slotClass: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.primaryDark,
   },
   nowBadge: {
-    backgroundColor: Colors.successLight,
+    backgroundColor: Colors.success,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   nowBadgeText: {
+    color: '#fff',
     fontSize: 10,
-    fontWeight: '800',
-    color: Colors.successDark,
+    fontWeight: '700',
   },
   slotCourse: {
     fontSize: 13,
-    color: Colors.primary,
+    color: Colors.textSecondary,
     fontWeight: '600',
-    marginTop: 2,
+    marginTop: 1,
   },
   slotRoom: {
     fontSize: 11,
@@ -487,13 +742,13 @@ const styles = StyleSheet.create({
   },
   emptySlotLabel: {
     fontSize: 14,
-    fontWeight: '600',
     color: Colors.textMuted,
+    fontWeight: '600',
   },
   emptySlotSub: {
     fontSize: 11,
     color: Colors.textMuted,
-    marginTop: 2,
+    marginTop: 1,
   },
   modalOverlay: {
     flex: 1,
@@ -510,7 +765,7 @@ const styles = StyleSheet.create({
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 16,
   },
   modalTitle: {
@@ -520,16 +775,49 @@ const styles = StyleSheet.create({
   },
   modalSub: {
     fontSize: 13,
-    color: Colors.primary,
+    color: Colors.textSecondary,
+  },
+  timeEditToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.cardSubtle,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  timeEditToggleText: {
+    fontSize: 12,
     fontWeight: '600',
-    marginTop: 2,
+    color: Colors.primary,
+  },
+  inlineTimeCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  inlineTimeTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  inlineTimeInputsRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   selectLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: Colors.textPrimary,
+    color: Colors.textSecondary,
     marginBottom: 8,
-    marginTop: 6,
+    marginTop: 4,
   },
   selectGrid: {
     flexDirection: 'row',
@@ -539,7 +827,7 @@ const styles = StyleSheet.create({
   },
   selOption: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: 8,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1,
@@ -552,14 +840,32 @@ const styles = StyleSheet.create({
   selOptionText: {
     fontSize: 13,
     fontWeight: '600',
-    color: Colors.textPrimary,
+    color: Colors.textSecondary,
   },
   selOptionTextActive: {
-    color: Colors.textInverse,
+    color: '#fff',
+    fontWeight: '700',
   },
   modalActions: {
     flexDirection: 'row',
     gap: 12,
     marginTop: 16,
+  },
+  courseTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  courseCodeBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  courseCodeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

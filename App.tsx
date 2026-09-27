@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, StatusBar } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { View, Text, ActivityIndicator, StyleSheet, StatusBar, Platform } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -26,6 +26,10 @@ const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 function MainTabs() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 8);
+  const tabHeight = 56 + bottomInset;
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -36,8 +40,8 @@ function MainTabs() {
           backgroundColor: Colors.card,
           borderTopWidth: 1,
           borderTopColor: Colors.border,
-          height: 60,
-          paddingBottom: 8,
+          height: tabHeight,
+          paddingBottom: bottomInset,
           paddingTop: 6,
         },
         tabBarLabelStyle: {
@@ -153,7 +157,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent={true} />
       <NavigationContainer>
         <Stack.Navigator
           screenOptions={{
@@ -162,6 +166,7 @@ export default function App() {
           }}
         >
           <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen name="StudentNotesTab" component={StudentNotesScreen} />
           <Stack.Screen name="ClassDetail" component={ClassDetailScreen} />
           <Stack.Screen name="AssignmentCreate" component={AssignmentCreateScreen} />
           <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />

@@ -7,7 +7,9 @@ import {
   TouchableOpacity,
   RefreshControl,
   Platform,
+  StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../theme/colors';
@@ -16,17 +18,23 @@ import { Badge } from '../components/Badge';
 import {
   getActiveAndTodayLessons,
   ActiveLessonInfo,
+  getScheduleByDay,
 } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
 import { getAssignments } from '../database/operations/assignmentOperations';
 import { getCurrentTopicForClass } from '../database/operations/yearlyPlanOperations';
 import { DAYS_OF_WEEK, getDayOfWeekIndex, formatDateToTR, getCurrentTimeString } from '../utils/dateUtils';
-import { YearlyPlanItem } from '../types';
+import { YearlyPlanItem, ScheduleItem } from '../types';
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const [refreshing, setRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(getCurrentTimeString());
+
+  const todayIndex = getDayOfWeekIndex();
+  const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
+  const [displayedLessons, setDisplayedLessons] = useState<ScheduleItem[]>([]);
+
   const [lessonInfo, setLessonInfo] = useState<ActiveLessonInfo>({
     currentLesson: null,
     nextLesson: null,
@@ -39,11 +47,21 @@ export const HomeScreen: React.FC = () => {
     pendingAssignments: 0,
   });
 
+  const loadDaySchedule = async (day: number) => {
+    try {
+      const items = await getScheduleByDay(day);
+      setDisplayedLessons(items.filter((item) => item.class_id || item.course_id));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const loadData = async () => {
     try {
       setCurrentTime(getCurrentTimeString());
       const info = await getActiveAndTodayLessons();
       setLessonInfo(info);
+      await loadDaySchedule(selectedDay);
 
       if (info.currentLesson && info.currentLesson.class_id) {
         const topic = await getCurrentTopicForClass(
@@ -87,13 +105,36 @@ export const HomeScreen: React.FC = () => {
     setRefreshing(false);
   };
 
-  const todayIndex = getDayOfWeekIndex();
+  useEffect(() => {
+    loadDaySchedule(selectedDay);
+  }, [selectedDay]);
+
+  const handlePrevDay = () => {
+    setSelectedDay((prev) => (prev <= 1 ? 7 : prev - 1));
+  };
+
+  const handleNextDay = () => {
+    setSelectedDay((prev) => (prev >= 7 ? 1 : prev + 1));
+  };
+
+  const handleJumpToToday = () => {
+    setSelectedDay(todayIndex);
+  };
+
+  const isViewingToday = selectedDay === todayIndex;
+  const selectedDayObj = DAYS_OF_WEEK.find((d) => d.id === selectedDay);
   const todayName = DAYS_OF_WEEK.find((d) => d.id === todayIndex)?.name || 'Bugün';
+
+  const insets = useSafeAreaInsets();
+  const topInset = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 20
+  );
 
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.contentContainer}
+      contentContainerStyle={[styles.contentContainer, { paddingTop: topInset + 8 }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       showsVerticalScrollIndicator={false}
     >
@@ -132,6 +173,7 @@ export const HomeScreen: React.FC = () => {
                 {lessonInfo.currentLesson.class_name || 'Şube Belirtilmemiş'}
               </Text>
               <Text style={styles.activeCourse}>
+                {lessonInfo.currentLesson.course_code ? `[${lessonInfo.currentLesson.course_code}] ` : ''}
                 {lessonInfo.currentLesson.course_name || 'Ders Belirtilmemiş'} •{' '}
                 {lessonInfo.currentLesson.slot_name || ''}
               </Text>
@@ -223,70 +265,58 @@ export const HomeScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* QUICK ACTION BUTTONS */}
-      <Text style={styles.sectionHeader}>Hızlı İşlemler</Text>
-      <View style={styles.quickGrid}>
-        <TouchableOpacity
-          style={styles.quickBtn}
-          onPress={() => navigation.navigate('AssignmentCreate')}
-          activeOpacity={0.8}
-        >
-          <View style={[styles.quickIconWrap, { backgroundColor: Colors.primaryLight }]}>
-            <Ionicons name="document-text" size={24} color={Colors.primary} />
-          </View>
-          <Text style={styles.quickTitle}>Yeni Ödev Ver</Text>
-          <Text style={styles.quickSub}>Şube & Muafiyet</Text>
-        </TouchableOpacity>
+      {/* SCHEDULE SECTION WITH DAY NAVIGATOR (PREV / NEXT ARROWS) */}
+      <View style={styles.scheduleHeaderRow}>
+        <View style={styles.dayNavigator}>
+          <TouchableOpacity
+            style={styles.navArrowBtn}
+            onPress={handlePrevDay}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chevron-back" size={18} color={Colors.primary} />
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.quickBtn}
-          onPress={() => navigation.navigate('StudentNotesTab')}
-          activeOpacity={0.8}
-        >
-          <View style={[styles.quickIconWrap, { backgroundColor: Colors.warningLight }]}>
-            <Ionicons name="chatbubbles" size={24} color={Colors.warningDark} />
+          <View style={styles.dayTitleContainer}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.dayMainTitle}>
+                {isViewingToday ? 'Bugünkü Derslerim' : `${selectedDayObj?.name} Dersleri`}
+              </Text>
+              {isViewingToday ? (
+                <View style={styles.todayPill}>
+                  <Text style={styles.todayPillText}>Bugün</Text>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={handleJumpToToday} style={styles.returnTodayBtn}>
+                  <Ionicons name="return-down-back" size={11} color={Colors.primary} />
+                  <Text style={styles.returnTodayBtnText}>Bugün</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={styles.daySubTitle}>
+              {isViewingToday ? `${selectedDayObj?.name} Programı` : `${selectedDayObj?.name} Günü Programı`}
+            </Text>
           </View>
-          <Text style={styles.quickTitle}>Öğrenci Görüşü</Text>
-          <Text style={styles.quickSub}>Not & Değerlendirme</Text>
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.quickBtn}
-          onPress={() => navigation.navigate('ScheduleTab')}
-          activeOpacity={0.8}
-        >
-          <View style={[styles.quickIconWrap, { backgroundColor: Colors.secondaryLight }]}>
-            <Ionicons name="calendar" size={24} color={Colors.secondary} />
-          </View>
-          <Text style={styles.quickTitle}>Ders Programı</Text>
-          <Text style={styles.quickSub}>Saat & Şubeler</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.navArrowBtn}
+            onPress={handleNextDay}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chevron-forward" size={18} color={Colors.primary} />
+          </TouchableOpacity>
+        </View>
 
-        <TouchableOpacity
-          style={styles.quickBtn}
-          onPress={() => navigation.navigate('ReportsTab')}
-          activeOpacity={0.8}
-        >
-          <View style={[styles.quickIconWrap, { backgroundColor: Colors.successLight }]}>
-            <Ionicons name="stats-chart" size={24} color={Colors.successDark} />
-          </View>
-          <Text style={styles.quickTitle}>Excel Raporları</Text>
-          <Text style={styles.quickSub}>Dışa Aktar & Paylaş</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* TODAY'S LESSONS SCHEDULE */}
-      <View style={styles.sectionRow}>
-        <Text style={styles.sectionHeader}>Bugünkü Derslerim ({todayName})</Text>
         <TouchableOpacity onPress={() => navigation.navigate('ScheduleTab')}>
-          <Text style={styles.seeAllText}>Tümünü Gör</Text>
+          <Text style={styles.seeAllText}>Tüm Program</Text>
         </TouchableOpacity>
       </View>
 
-      {lessonInfo.todayLessons.length === 0 ? (
+      {displayedLessons.length === 0 ? (
         <Card style={styles.emptyTodayCard}>
           <Ionicons name="calendar-outline" size={32} color={Colors.textMuted} />
-          <Text style={styles.emptyTodayText}>Bugün için ders tanımlanmamış.</Text>
+          <Text style={styles.emptyTodayText}>
+            {selectedDayObj?.name} günü için planlanmış ders bulunmuyor.
+          </Text>
           <TouchableOpacity
             style={styles.addScheduleLink}
             onPress={() => navigation.navigate('ScheduleTab')}
@@ -295,9 +325,11 @@ export const HomeScreen: React.FC = () => {
           </TouchableOpacity>
         </Card>
       ) : (
-        lessonInfo.todayLessons.map((item, index) => {
+        displayedLessons.map((item, index) => {
           const isCurrent =
-            lessonInfo.currentLesson && lessonInfo.currentLesson.slot_id === item.slot_id;
+            isViewingToday &&
+            lessonInfo.currentLesson &&
+            lessonInfo.currentLesson.slot_id === item.slot_id;
 
           return (
             <Card
@@ -322,7 +354,10 @@ export const HomeScreen: React.FC = () => {
                       <Badge label="Ders İşleniyor" status="yapildi" size="sm" />
                     )}
                   </View>
-                  <Text style={styles.lessonCourse}>{item.course_name || '-'}</Text>
+                  <Text style={styles.lessonCourse}>
+                    {item.course_code ? `[${item.course_code}] ` : ''}
+                    {item.course_name || '-'}
+                  </Text>
                   {item.classroom && (
                     <Text style={styles.classroomSmall}>Derslik: {item.classroom}</Text>
                   )}
@@ -332,6 +367,70 @@ export const HomeScreen: React.FC = () => {
           );
         })
       )}
+
+      {/* QUICK ACTION BUTTONS */}
+      <Text style={styles.sectionHeader}>Hızlı İşlemler</Text>
+      <View style={styles.quickGrid}>
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('AssignmentCreate')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: Colors.primaryLight }]}>
+              <Ionicons name="document-text" size={22} color={Colors.primary} />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>Yeni Ödev Ver</Text>
+              <Text style={styles.quickSub}>Şube & Muafiyet</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('StudentNotesTab')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: Colors.warningLight }]}>
+              <Ionicons name="chatbubbles" size={22} color={Colors.warningDark} />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>Öğrenci Görüşü</Text>
+              <Text style={styles.quickSub}>Not & Değerlendirme</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('ScheduleTab')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: Colors.secondaryLight }]}>
+              <Ionicons name="calendar" size={22} color={Colors.secondary} />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>Ders Programı</Text>
+              <Text style={styles.quickSub}>Saat & Şubeler</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('ReportsTab')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: Colors.successLight }]}>
+              <Ionicons name="stats-chart" size={22} color={Colors.successDark} />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>Excel Raporları</Text>
+              <Text style={styles.quickSub}>Dışa Aktar & Paylaş</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      </View>
     </ScrollView>
   );
 };
@@ -530,6 +629,7 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: Colors.textPrimary,
+    marginTop: 16,
     marginBottom: 10,
   },
   seeAllText: {
@@ -537,16 +637,81 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.primary,
   },
-  quickGrid: {
+  scheduleHeaderRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  dayNavigator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  navArrowBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.small,
+  },
+  dayTitleContainer: {
+    justifyContent: 'center',
+  },
+  dayMainTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  daySubTitle: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  todayPill: {
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#31C48D',
+  },
+  todayPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#03543F',
+  },
+  returnTodayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  returnTodayBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.primaryDark,
+  },
+  quickGrid: {
     marginBottom: 20,
+    gap: 10,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   quickBtn: {
-    width: '48.5%',
+    flex: 1,
     backgroundColor: Colors.card,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -560,13 +725,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 10,
   },
+  quickTextWrap: {
+    flex: 1,
+  },
   quickTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
   quickSub: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textSecondary,
     marginTop: 2,
   },

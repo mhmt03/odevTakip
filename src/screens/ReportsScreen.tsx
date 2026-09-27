@@ -24,7 +24,10 @@ import {
   generateStudentTemplateExcel,
   exportStudentNotesToExcel,
   exportScheduleToExcel,
+  pickAndParseStudentsExcel,
+  validateBulkStudentImport,
 } from '../utils/excelService';
+import { bulkCreateStudentsMultipleClasses } from '../database/operations/studentOperations';
 import { formatDateToTR, DAYS_OF_WEEK } from '../utils/dateUtils';
 
 export const ReportsScreen: React.FC = () => {
@@ -176,15 +179,85 @@ export const ReportsScreen: React.FC = () => {
     }
   };
 
-  // 5. Download Sample Template
+  // 5. Download Sample Template (Multi-sheet with registered classes)
   const handleDownloadTemplate = async () => {
     try {
       setLoading(true);
       await generateStudentTemplateExcel();
-    } catch (e) {
-      Alert.alert('Hata', 'Şablon dosyası oluşturulamadı.');
+    } catch (e: any) {
+      Alert.alert('Hata', 'Şablon dosyası oluşturulamadı: ' + (e?.message || e));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 6. Bulk Import Students to All Classes
+  const handleBulkImportStudents = async () => {
+    try {
+      setLoading(true);
+      const parsed = await pickAndParseStudentsExcel();
+      if (parsed.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const classes = await getClasses();
+      if (classes.length === 0) {
+        setLoading(false);
+        Alert.alert(
+          'Kayıtlı Şube Yok',
+          'Sistemde henüz kayıtlı şube bulunmamaktadır. Lütfen önce "Şubeler" ekranından şubelerinizi oluşturunuz.'
+        );
+        return;
+      }
+
+      const val = validateBulkStudentImport(parsed, classes);
+
+      if (val.validCount === 0) {
+        setLoading(false);
+        let errorMsg = 'Excel dosyasındaki şube adları sistemdeki şubelerle eşleşmedi.';
+        if (val.unmatchedClasses.length > 0) {
+          errorMsg += '\n\nBulunamayan Şubeler:\n' + val.unmatchedClasses.map((u) => `• ${u.rawClassName}`).join('\n');
+        }
+        errorMsg += '\n\nLütfen şablondaki "Kayıtlı Şubeler" sayfasındaki isimleri birebir aynı şekilde kullanınız.';
+        Alert.alert('Geçersiz Şube Girişi', errorMsg);
+        return;
+      }
+
+      let message = `Toplam ${val.totalStudents} öğrenci tespit edildi.\n\nEşleşen Şubeler:\n` +
+        val.validPayloads.map((p) => `• ${p.className}: ${p.students.length} öğrenci`).join('\n');
+
+      if (val.unmatchedClasses.length > 0) {
+        message += '\n\n⚠️ Bulunamayan ve Atlanacak Şubeler:\n' +
+          val.unmatchedClasses.map((u) => `• ${u.rawClassName}: ${u.count} öğrenci`).join('\n');
+      }
+
+      Alert.alert(
+        'Toplu Öğrenci Yükleme',
+        message + `\n\n${val.validCount} öğrenci sisteme kaydedilsin mi?`,
+        [
+          { text: 'Vazgeç', style: 'cancel', onPress: () => setLoading(false) },
+          {
+            text: 'Onayla ve Yükle',
+            onPress: async () => {
+              try {
+                const res = await bulkCreateStudentsMultipleClasses(val.validPayloads);
+                Alert.alert(
+                  'Başarılı',
+                  `Toplam ${res.totalAdded} öğrenci şubelerine başarıyla eklendi!`
+                );
+              } catch (e: any) {
+                Alert.alert('Hata', 'Yükleme sırasında hata oluştu: ' + (e?.message || e));
+              } finally {
+                setLoading(false);
+              }
+            },
+          },
+        ]
+      );
+    } catch (e: any) {
+      setLoading(false);
+      Alert.alert('Hata', e?.message || 'Excel dosyası okunamadı.');
     }
   };
 
@@ -289,13 +362,38 @@ export const ReportsScreen: React.FC = () => {
         </Card>
       </TouchableOpacity>
 
-      {/* Template Card */}
+      {/* Excel Import & Template Section */}
       <View style={styles.templateSection}>
         <Text style={styles.sectionHeader}>Excel İçe Aktarma Araçları</Text>
+
+        {/* Bulk Student Import Card */}
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={handleBulkImportStudents}
+          disabled={loading}
+        >
+          <Card style={[styles.reportCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1 }]}>
+            <View style={styles.cardRow}>
+              <View style={[styles.iconWrap, { backgroundColor: '#DCFCE7' }]}>
+                <Ionicons name="cloud-upload" size={26} color="#16A34A" />
+              </View>
+              <View style={styles.cardTextWrap}>
+                <Text style={[styles.reportTitle, { color: '#15803D' }]}>Tüm Şubelere Toplu Öğrenci Yükle</Text>
+                <Text style={styles.reportDesc}>
+                  Excel dosyasındaki şube bilgisine göre tüm sınıfların öğrencilerini tek tıkla sisteme aktarın.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color="#16A34A" />
+            </View>
+          </Card>
+        </TouchableOpacity>
+
+        {/* Template Download Card */}
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={handleDownloadTemplate}
           disabled={loading}
+          style={{ marginTop: 10 }}
         >
           <Card style={[styles.reportCard, styles.templateCard]}>
             <View style={styles.cardRow}>
@@ -305,7 +403,7 @@ export const ReportsScreen: React.FC = () => {
               <View style={styles.cardTextWrap}>
                 <Text style={styles.reportTitle}>Örnek Öğrenci Excel Şablonu İndir</Text>
                 <Text style={styles.reportDesc}>
-                  Şubelere toplu öğrenci eklemek için hazır sütun başlıklı şablon Excel dosyası.
+                  Tüm şubeler için 2 sayfalı şablon. 2. sayfada sistemde kayıtlı şubeleriniz yer alır.
                 </Text>
               </View>
               <Ionicons name="share-social-outline" size={22} color="#7C3AED" />

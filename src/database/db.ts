@@ -2,17 +2,27 @@ import * as SQLite from 'expo-sqlite';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 
+export const resetDB = () => {
+  dbInstance = null;
+};
+
 export const getDB = async (): Promise<SQLite.SQLiteDatabase> => {
-  if (!dbInstance) {
-    dbInstance = await SQLite.openDatabaseAsync('sinif_takip.db');
-    await dbInstance.execAsync('PRAGMA foreign_keys = ON;');
+  if (dbInstance) {
+    try {
+      await dbInstance.getFirstAsync('SELECT 1');
+      return dbInstance;
+    } catch (e) {
+      console.warn('Native SQLite handle was stale or closed, reopening...', e);
+      dbInstance = null;
+    }
   }
+
+  dbInstance = await SQLite.openDatabaseAsync('sinif_takip.db');
+  await dbInstance.execAsync('PRAGMA foreign_keys = ON;');
   return dbInstance;
 };
 
-export const initDatabase = async (): Promise<void> => {
-  const db = await getDB();
-
+const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
   await db.execAsync(`
     PRAGMA foreign_keys = ON;
 
@@ -30,6 +40,7 @@ export const initDatabase = async (): Promise<void> => {
       first_name TEXT NOT NULL,
       last_name TEXT NOT NULL,
       notes TEXT,
+      photo_uri TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
@@ -84,6 +95,16 @@ export const initDatabase = async (): Promise<void> => {
       end_time TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS day_slot_times (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day_of_week INTEGER NOT NULL,
+      slot_id INTEGER NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      FOREIGN KEY (slot_id) REFERENCES lesson_slots(id) ON DELETE CASCADE,
+      UNIQUE(day_of_week, slot_id)
+    );
+
     CREATE TABLE IF NOT EXISTS schedules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       day_of_week INTEGER NOT NULL,
@@ -109,7 +130,20 @@ export const initDatabase = async (): Promise<void> => {
       FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS quick_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      text TEXT NOT NULL,
+      sort_order INTEGER DEFAULT 0
+    );
   `);
+
+  // Migrate: ensure photo_uri column exists in students table
+  try {
+    await db.runAsync('ALTER TABLE students ADD COLUMN photo_uri TEXT;');
+  } catch {
+    // Column already exists
+  }
 
   // Seed default courses if table is empty
   const courseCountRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM courses');
@@ -156,5 +190,42 @@ export const initDatabase = async (): Promise<void> => {
         s.end
       );
     }
+  }
+
+  // Seed default quick notes if empty
+  const quickNoteCountRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM quick_notes');
+  if (quickNoteCountRow && quickNoteCountRow.count === 0) {
+    const starterQuickNotes = [
+      'Derste çok aktifti 👍',
+      'Ödevini getirmedi ❌',
+      'Derste konuştu / dikkati dağınıktı ⚠️',
+      'Soruları doğru çözdü ⭐',
+      'Dersi dikkatle dinledi 📖',
+      'Rehberlik görüşmesi yapıldı 💬',
+      'Söz hakkı aldı ve katkı sağladı 👏',
+      'Kitap / defter getirmedi 📚',
+    ];
+    for (let i = 0; i < starterQuickNotes.length; i++) {
+      await db.runAsync(
+        'INSERT INTO quick_notes (text, sort_order) VALUES (?, ?)',
+        starterQuickNotes[i],
+        i + 1
+      );
+    }
+  }
+};
+
+export const initDatabase = async (): Promise<void> => {
+  dbInstance = null;
+  try {
+    const db = await getDB();
+    await runSchema(db);
+  } catch (err) {
+    console.warn('Initial initDatabase failed, recreating connection...', err);
+    dbInstance = null;
+    const db = await SQLite.openDatabaseAsync('sinif_takip.db');
+    dbInstance = db;
+    await db.execAsync('PRAGMA foreign_keys = ON;');
+    await runSchema(db);
   }
 };
