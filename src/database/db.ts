@@ -122,6 +122,8 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       course_id INTEGER NOT NULL,
       class_id INTEGER,
+      grade_level INTEGER,
+      lesson_hours INTEGER DEFAULT 0,
       week_number INTEGER NOT NULL,
       date_start TEXT,
       date_end TEXT,
@@ -141,6 +143,18 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
   // Migrate: ensure photo_uri column exists in students table
   try {
     await db.runAsync('ALTER TABLE students ADD COLUMN photo_uri TEXT;');
+  } catch {
+    // Column already exists
+  }
+
+  // Migrate: ensure grade_level and lesson_hours exist in yearly_plans table
+  try {
+    await db.runAsync('ALTER TABLE yearly_plans ADD COLUMN grade_level INTEGER;');
+  } catch {
+    // Column already exists
+  }
+  try {
+    await db.runAsync('ALTER TABLE yearly_plans ADD COLUMN lesson_hours INTEGER DEFAULT 0;');
   } catch {
     // Column already exists
   }

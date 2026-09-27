@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Modal,
   Alert,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,30 +23,55 @@ import {
   createYearlyPlan,
   updateYearlyPlan,
   deleteYearlyPlan,
+  getScheduleInfoForCourseAndGrade,
+  bulkCreateYearlyPlanItems,
+  CourseGradeScheduleInfo,
 } from '../database/operations/yearlyPlanOperations';
 import { getCourses } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
+import {
+  generateYearlyPlanTemplateExcel,
+  pickAndParseYearlyPlanExcel,
+  ParsedYearlyPlanRow,
+} from '../utils/excelService';
 import { getTodayDateString, formatDateToTR } from '../utils/dateUtils';
 import { YearlyPlanItem, CourseName, ClassItem } from '../types';
+
+const GRADE_LEVELS = [
+  { level: 11, label: '11. Sınıf' },
+  { level: 12, label: '12. Sınıf' },
+  { level: 9, label: '9. Sınıf' },
+  { level: 10, label: '10. Sınıf' },
+];
 
 export const YearlyPlanScreen: React.FC = () => {
   const navigation = useNavigation<any>();
 
   const [courses, setCourses] = useState<CourseName[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<number>(11);
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [plans, setPlans] = useState<YearlyPlanItem[]>([]);
 
-  // Add / Edit Modal
+  // Schedule verification for selected course + grade level
+  const [scheduleInfo, setScheduleInfo] = useState<CourseGradeScheduleInfo | null>(null);
+
+  // Single Add / Edit Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [editingPlan, setEditingPlan] = useState<YearlyPlanItem | null>(null);
   const [formCourseId, setFormCourseId] = useState<number | null>(null);
-  const [formClassId, setFormClassId] = useState<number | null>(null);
+  const [formGradeLevel, setFormGradeLevel] = useState<number>(11);
+  const [formLessonHours, setFormLessonHours] = useState('4');
   const [formWeek, setFormWeek] = useState('1');
   const [formTopic, setFormTopic] = useState('');
   const [formOutcomes, setFormOutcomes] = useState('');
   const [formStartDate, setFormStartDate] = useState('');
   const [formEndDate, setFormEndDate] = useState('');
+
+  // Bulk Excel Import Modal State
+  const [bulkModalVisible, setBulkModalVisible] = useState(false);
+  const [parsedRows, setParsedRows] = useState<ParsedYearlyPlanRow[]>([]);
+  const [loadingExcel, setLoadingExcel] = useState(false);
 
   const loadData = async () => {
     try {
@@ -55,39 +81,61 @@ export const YearlyPlanScreen: React.FC = () => {
 
       let targetCourseId = selectedCourseId;
       if (!targetCourseId && crs.length > 0) {
-        targetCourseId = crs[0].id;
+        // Try selecting S.FZK or first course
+        const defaultCourse = crs.find((c) => c.code === 'S.FZK') || crs[0];
+        targetCourseId = defaultCourse.id;
         setSelectedCourseId(targetCourseId);
       }
 
       if (targetCourseId) {
-        const planList = await getYearlyPlans(targetCourseId);
+        // Verify schedule for selected course and grade
+        const schedInfo = await getScheduleInfoForCourseAndGrade(targetCourseId, selectedGradeLevel);
+        setScheduleInfo(schedInfo);
+
+        // Fetch plans for this grade level and course
+        const planList = await getYearlyPlans(targetCourseId, selectedGradeLevel);
         setPlans(planList);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Error loading yearly plans:', e);
     }
   };
 
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [selectedCourseId])
+    }, [selectedCourseId, selectedGradeLevel])
   );
 
-  const handleSelectCourse = async (courseId: number) => {
-    setSelectedCourseId(courseId);
-    try {
-      const planList = await getYearlyPlans(courseId);
-      setPlans(planList);
-    } catch (e) {
-      console.error(e);
-    }
+  const handleSelectGrade = (grade: number) => {
+    setSelectedGradeLevel(grade);
   };
 
+  const handleSelectCourse = (courseId: number) => {
+    setSelectedCourseId(courseId);
+  };
+
+  // Single Add / Edit
   const handleOpenAdd = () => {
+    if (!scheduleInfo?.hasSchedule) {
+      Alert.alert(
+        'Ders Programı Bulunamadı',
+        `${selectedGradeLevel}. Sınıf için seçilen derse ait ders programı henüz tanımlanmamıştır. Yıllık plan konularının haftalık ders saatlerinize göre dağıtılabilmesi için önce Ders Programınızı oluşturunuz.`,
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'Ders Programına Git',
+            onPress: () => navigation.navigate('ScheduleTab'),
+          },
+        ]
+      );
+      return;
+    }
+
     setEditingPlan(null);
     setFormCourseId(selectedCourseId || (courses[0]?.id ?? null));
-    setFormClassId(null);
+    setFormGradeLevel(selectedGradeLevel);
+    setFormLessonHours(String(scheduleInfo?.totalWeeklyHours || 4));
     const nextWeek = plans.length > 0 ? Math.max(...plans.map((p) => p.week_number)) + 1 : 1;
     setFormWeek(String(nextWeek));
     setFormTopic('');
@@ -100,7 +148,8 @@ export const YearlyPlanScreen: React.FC = () => {
   const handleOpenEdit = (item: YearlyPlanItem) => {
     setEditingPlan(item);
     setFormCourseId(item.course_id);
-    setFormClassId(item.class_id || null);
+    setFormGradeLevel(item.grade_level || selectedGradeLevel);
+    setFormLessonHours(String(item.lesson_hours || scheduleInfo?.totalWeeklyHours || 4));
     setFormWeek(String(item.week_number));
     setFormTopic(item.subject_topic);
     setFormOutcomes(item.learning_outcomes || '');
@@ -115,7 +164,7 @@ export const YearlyPlanScreen: React.FC = () => {
       return;
     }
     if (!formTopic.trim()) {
-      Alert.alert('Uyarı', 'Lütfen anlatılacak konuyu giriniz.');
+      Alert.alert('Uyarı', 'Lütfen deftere yazılacak konuyu giriniz.');
       return;
     }
     const weekNum = parseInt(formWeek, 10);
@@ -123,6 +172,7 @@ export const YearlyPlanScreen: React.FC = () => {
       Alert.alert('Uyarı', 'Geçerli bir hafta numarası giriniz.');
       return;
     }
+    const hoursNum = parseInt(formLessonHours, 10) || 0;
 
     try {
       if (editingPlan) {
@@ -131,20 +181,24 @@ export const YearlyPlanScreen: React.FC = () => {
           formCourseId,
           weekNum,
           formTopic.trim(),
-          formClassId,
+          null,
           formStartDate.trim() || undefined,
           formEndDate.trim() || undefined,
-          formOutcomes.trim() || undefined
+          formOutcomes.trim() || undefined,
+          formGradeLevel,
+          hoursNum
         );
       } else {
         await createYearlyPlan(
           formCourseId,
           weekNum,
           formTopic.trim(),
-          formClassId,
+          null,
           formStartDate.trim() || undefined,
           formEndDate.trim() || undefined,
-          formOutcomes.trim() || undefined
+          formOutcomes.trim() || undefined,
+          formGradeLevel,
+          hoursNum
         );
       }
       setModalVisible(false);
@@ -155,30 +209,125 @@ export const YearlyPlanScreen: React.FC = () => {
   };
 
   const handleDelete = (item: YearlyPlanItem) => {
-    Alert.alert('Planı Sil', `"${item.week_number}. Hafta: ${item.subject_topic}" kaydını silmek istiyor musunuz?`, [
-      { text: 'İptal', style: 'cancel' },
-      {
-        text: 'Sil',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteYearlyPlan(item.id);
-            loadData();
-          } catch (e) {
-            Alert.alert('Hata', 'Kayıt silinemedi.');
-          }
+    Alert.alert(
+      'Planı Sil',
+      `"${item.week_number}. Hafta: ${item.subject_topic}" konusunu silmek istiyor musunuz?`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteYearlyPlan(item.id);
+              loadData();
+            } catch (e) {
+              Alert.alert('Hata', 'Kayıt silinemedi.');
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
+  };
+
+  // Bulk Excel Handlers
+  const handleOpenBulkModal = () => {
+    if (!scheduleInfo?.hasSchedule) {
+      Alert.alert(
+        'Ders Programı Bulunamadı',
+        `${selectedGradeLevel}. Sınıf için seçilen derse ait ders programı henüz tanımlanmamıştır. Yıllık plan konularının haftalık ders saatlerinize göre dağıtılabilmesi için önce Ders Programınızı oluşturunuz.`,
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'Ders Programına Git',
+            onPress: () => navigation.navigate('ScheduleTab'),
+          },
+        ]
+      );
+      return;
+    }
+    setParsedRows([]);
+    setBulkModalVisible(true);
+  };
+
+  const handleDownloadTemplate = async () => {
+    const activeCourse = courses.find((c) => c.id === selectedCourseId);
+    const courseName = activeCourse ? activeCourse.name : 'Ders';
+    const weeklyHours = scheduleInfo?.totalWeeklyHours || 4;
+
+    try {
+      setLoadingExcel(true);
+      await generateYearlyPlanTemplateExcel(courseName, selectedGradeLevel, weeklyHours);
+    } catch (e: any) {
+      Alert.alert('Hata', 'Şablon dosyası oluşturulamadı: ' + (e?.message || e));
+    } finally {
+      setLoadingExcel(false);
+    }
+  };
+
+  const handlePickExcel = async () => {
+    try {
+      setLoadingExcel(true);
+      const rows = await pickAndParseYearlyPlanExcel();
+      if (rows.length === 0) {
+        setLoadingExcel(false);
+        return;
+      }
+      setParsedRows(rows);
+    } catch (e: any) {
+      Alert.alert('Hata', e?.message || 'Excel dosyası okunamadı.');
+    } finally {
+      setLoadingExcel(false);
+    }
+  };
+
+  const handleConfirmBulkSave = async () => {
+    if (!selectedCourseId || parsedRows.length === 0) return;
+
+    try {
+      setLoadingExcel(true);
+      const payload = parsedRows.map((r) => ({
+        weekNumber: r.weekNumber,
+        dateStart: r.dateStart || undefined,
+        dateEnd: r.dateEnd || undefined,
+        lessonHours: r.lessonHours || scheduleInfo?.totalWeeklyHours || 4,
+        subjectTopic: r.subjectTopic,
+        learningOutcomes: r.learningOutcomes || undefined,
+      }));
+
+      const res = await bulkCreateYearlyPlanItems(
+        selectedCourseId,
+        selectedGradeLevel,
+        payload,
+        true // replace existing
+      );
+
+      setBulkModalVisible(false);
+      setParsedRows([]);
+      await loadData();
+
+      Alert.alert(
+        'Yıllık Plan Yüklendi 🎉',
+        `${selectedGradeLevel}. Sınıf için toplam ${res.insertedCount} haftalık müfredat planı başarıyla kaydedildi!\n\n` +
+          `Haftalık ders saatleriniz: ${scheduleInfo?.totalWeeklyHours} Saat\n` +
+          `Şubeler: ${scheduleInfo?.distinctClasses.join(', ')}\n\n` +
+          `Derse girdiğinizde deftere yazılacak konu ana sayfada otomatik gösterilecektir.`
+      );
+    } catch (e: any) {
+      Alert.alert('Hata', 'Yıllık plan kaydedilirken bir hata oluştu: ' + (e?.message || e));
+    } finally {
+      setLoadingExcel(false);
+    }
   };
 
   const today = getTodayDateString();
+  const activeCourseObj = courses.find((c) => c.id === selectedCourseId);
 
   return (
     <View style={styles.container}>
       <Header
         title="Yıllık Müfredat Planı"
-        subtitle="Haftalık konu ve kazanım takibi"
+        subtitle="Haftalık konu ve defter takibi"
         showBack
         onBack={() => navigation.goBack()}
         rightAction={{
@@ -188,7 +337,28 @@ export const YearlyPlanScreen: React.FC = () => {
         }}
       />
 
-      {/* Course Selector Chips */}
+      {/* 1. Sınıf Düzeyi Seçicisi (9, 10, 11, 12) */}
+      <View style={styles.levelBar}>
+        <Text style={styles.levelBarLabel}>Sınıf Düzeyi:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.levelScroll}>
+          {GRADE_LEVELS.map((g) => {
+            const isSel = selectedGradeLevel === g.level;
+            return (
+              <TouchableOpacity
+                key={g.level}
+                style={[styles.levelChip, isSel && styles.levelChipActive]}
+                onPress={() => handleSelectGrade(g.level)}
+              >
+                <Text style={[styles.levelChipText, isSel && styles.levelChipTextActive]}>
+                  {g.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* 2. Ders Seçicisi */}
       <View style={styles.courseChipsBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
           {courses.map((crs) => {
@@ -200,6 +370,7 @@ export const YearlyPlanScreen: React.FC = () => {
                 onPress={() => handleSelectCourse(crs.id)}
               >
                 <Text style={[styles.chipText, isSelected && styles.chipTextActive]}>
+                  {crs.code ? `[${crs.code}] ` : ''}
                   {crs.name}
                 </Text>
               </TouchableOpacity>
@@ -208,6 +379,75 @@ export const YearlyPlanScreen: React.FC = () => {
         </ScrollView>
       </View>
 
+      {/* 3. Ders Programı Doğrulama ve Saat Bilgi Kartı */}
+      <View style={styles.statusSection}>
+        {scheduleInfo?.hasSchedule ? (
+          <View style={styles.verifiedScheduleCard}>
+            <View style={styles.verifiedRow}>
+              <View style={styles.verifiedIconWrap}>
+                <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.verifiedTitle}>
+                    {selectedGradeLevel}. Sınıf Ders Programı Doğrulandı
+                  </Text>
+                  <View style={styles.hoursBadge}>
+                    <Text style={styles.hoursBadgeText}>
+                      Haftalık {scheduleInfo.totalWeeklyHours} Saat
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.verifiedSub}>
+                  Şubeler: {scheduleInfo.distinctClasses.join(', ')} ({scheduleInfo.daysSummary})
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.warningScheduleCard}>
+            <View style={styles.warningRow}>
+              <Ionicons name="warning-outline" size={20} color="#B45309" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.warningTitle}>
+                  {selectedGradeLevel}. Sınıf İçin Ders Programı Bulunamadı
+                </Text>
+                <Text style={styles.warningSub}>
+                  Haftalık ders saatinin hesaplanması ve günlere dağıtılabilmesi için önce ders programınızı oluşturunuz.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.goToScheduleBtn}
+                onPress={() => navigation.navigate('ScheduleTab')}
+              >
+                <Text style={styles.goToScheduleBtnText}>Programa Git</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* 4. Hızlı Aksiyon Şeridi (Excel Yükle & Şablon İndir) */}
+      <View style={styles.actionStrip}>
+        <TouchableOpacity
+          style={styles.actionStripBtn}
+          onPress={handleOpenBulkModal}
+        >
+          <Ionicons name="cloud-upload-outline" size={17} color={Colors.primary} />
+          <Text style={styles.actionStripBtnText}>Excel ile Yıllık Plan Yükle</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionStripSecondaryBtn}
+          onPress={handleDownloadTemplate}
+          disabled={loadingExcel}
+        >
+          <Ionicons name="document-text-outline" size={16} color={Colors.textSecondary} />
+          <Text style={styles.actionStripSecondaryBtnText}>Şablon İndir</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 5. Yıllık Plan Listesi */}
       <FlatList
         data={plans}
         keyExtractor={(item) => item.id.toString()}
@@ -215,10 +455,10 @@ export const YearlyPlanScreen: React.FC = () => {
         ListEmptyComponent={
           <EmptyState
             icon="calendar-outline"
-            title="Yıllık Plan Bulunmuyor"
-            description="Bu ders için henüz haftalık müfredat planı girilmemiş."
-            actionTitle="Haftalık Plan Ekle"
-            onAction={handleOpenAdd}
+            title={`${selectedGradeLevel}. Sınıf Planı Bulunmuyor`}
+            description={`Bu ders ve sınıf düzeyi için henüz haftalık müfredat planı yüklenmemiş. Hazır Excel dosyanızı tek tıkla yükleyebilirsiniz.`}
+            actionTitle="Excel ile Yükle"
+            onAction={handleOpenBulkModal}
           />
         }
         renderItem={({ item }) => {
@@ -235,15 +475,21 @@ export const YearlyPlanScreen: React.FC = () => {
                   <Text style={styles.weekText}>{item.week_number}. Hafta</Text>
                 </View>
 
-                {item.class_name ? (
-                  <View style={styles.classBadge}>
-                    <Text style={styles.classBadgeText}>{item.class_name}</Text>
+                <View style={styles.gradeBadge}>
+                  <Text style={styles.gradeBadgeText}>
+                    {item.grade_level || selectedGradeLevel}. Sınıf
+                  </Text>
+                </View>
+
+                {item.lesson_hours ? (
+                  <View style={styles.hoursPill}>
+                    <Text style={styles.hoursPillText}>{item.lesson_hours} Saat</Text>
                   </View>
                 ) : null}
 
                 {isCurrentWeek ? (
                   <View style={styles.currentBadge}>
-                    <Text style={styles.currentBadgeText}>Bu Hafta</Text>
+                    <Text style={styles.currentBadgeText}>Bu Hafta (Aktif)</Text>
                   </View>
                 ) : null}
 
@@ -282,13 +528,131 @@ export const YearlyPlanScreen: React.FC = () => {
         }}
       />
 
-      {/* Add / Edit Plan Modal */}
+      {/* BULK EXCEL IMPORT MODAL */}
+      <Modal visible={bulkModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { maxHeight: '92%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>
+                  {selectedGradeLevel}. Sınıf Yıllık Plan Yükle
+                </Text>
+                <Text style={styles.modalSub}>
+                  {activeCourseObj?.name} • Haftalık {scheduleInfo?.totalWeeklyHours || 4} Saat
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setBulkModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {loadingExcel ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={Colors.primary} />
+                  <Text style={styles.loadingText}>İşleniyor, lütfen bekleyiniz...</Text>
+                </View>
+              ) : parsedRows.length === 0 ? (
+                <View>
+                  <View style={styles.guideCard}>
+                    <Text style={styles.guideStepTitle}>Adım 1: Hazır Şablonu İndirin</Text>
+                    <Text style={styles.guideStepDesc}>
+                      Ders programınızdaki haftalık {scheduleInfo?.totalWeeklyHours || 4} saatlik dağılıma göre hazırlanmış hazır Excel şablonudur.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.templateDownloadBtn}
+                      onPress={handleDownloadTemplate}
+                    >
+                      <Ionicons name="download-outline" size={16} color={Colors.primary} />
+                      <Text style={styles.templateDownloadBtnText}>
+                        {selectedGradeLevel}. Sınıf Şablonunu İndir (.xlsx)
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={[styles.guideCard, { marginTop: 12 }]}>
+                    <Text style={styles.guideStepTitle}>Adım 2: Excel Dosyasını Yükleyin</Text>
+                    <Text style={styles.guideStepDesc}>
+                      1. sütunda başlangıç tarihi, 2. sütunda bitiş tarihi, 3. sütunda ders saati ve 4. sütunda deftere yazılacak konu olan Excel dosyanızı seçin.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.pickExcelBtn}
+                      onPress={handlePickExcel}
+                    >
+                      <Ionicons name="folder-open-outline" size={20} color="#fff" />
+                      <Text style={styles.pickExcelBtnText}>Excel Dosyası Seç</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View>
+                  <View style={styles.previewHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                      <Text style={styles.previewTitle}>
+                        Toplam {parsedRows.length} Hafta Tespit Edildi
+                      </Text>
+                    </View>
+                    <Text style={styles.previewSub}>
+                      {selectedGradeLevel}. Sınıf ({scheduleInfo?.distinctClasses.join(', ')}) şubelerinin tamamında geçerli olacaktır.
+                    </Text>
+                  </View>
+
+                  <Text style={styles.previewListTitle}>İlk 3 Hafta Önizlemesi:</Text>
+                  {parsedRows.slice(0, 3).map((r) => (
+                    <View key={r.weekNumber} style={styles.previewItemCard}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={styles.previewItemWeek}>{r.weekNumber}. Hafta</Text>
+                        <Text style={styles.previewItemHours}>{r.lessonHours} Saat</Text>
+                      </View>
+                      <Text style={styles.previewItemTopic}>{r.subjectTopic}</Text>
+                      <Text style={styles.previewItemDates}>
+                        {r.dateStart || '-'} — {r.dateEnd || '-'}
+                      </Text>
+                    </View>
+                  ))}
+                  {parsedRows.length > 3 && (
+                    <Text style={styles.moreWeeksText}>
+                      ... ve diğer {parsedRows.length - 3} haftalık müfredat konusu
+                    </Text>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Button
+                title={parsedRows.length > 0 ? 'Geri' : 'Kapat'}
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => {
+                  if (parsedRows.length > 0) {
+                    setParsedRows([]);
+                  } else {
+                    setBulkModalVisible(false);
+                  }
+                }}
+              />
+              {parsedRows.length > 0 && (
+                <Button
+                  title={`Onayla ve Kaydet (${parsedRows.length} Hafta)`}
+                  style={{ flex: 2 }}
+                  onPress={handleConfirmBulkSave}
+                  loading={loadingExcel}
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* SINGLE ADD / EDIT PLAN MODAL */}
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingPlan ? 'Planı Düzenle' : 'Yeni Müfredat Konusu Ekle'}
+                {editingPlan ? 'Müfredat Konusunu Düzenle' : 'Yeni Konu Ekle'}
               </Text>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
                 <Ionicons name="close" size={24} color={Colors.textSecondary} />
@@ -296,16 +660,29 @@ export const YearlyPlanScreen: React.FC = () => {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
-              <Input
-                label="Hafta Numarası (1 - 36) *"
-                placeholder="Örn: 3"
-                value={formWeek}
-                onChangeText={setFormWeek}
-                keyboardType="numeric"
-              />
+              <View style={styles.formRow}>
+                <View style={{ flex: 1 }}>
+                  <Input
+                    label="Hafta No *"
+                    placeholder="Örn: 3"
+                    value={formWeek}
+                    onChangeText={setFormWeek}
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Input
+                    label="Ders Saati *"
+                    placeholder="Örn: 4"
+                    value={formLessonHours}
+                    onChangeText={setFormLessonHours}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
 
               <Input
-                label="İşlenecek Konu *"
+                label="Deftere Yazılacak Konu *"
                 placeholder="Örn: Vektörler ve Kuvvet Dengesi"
                 value={formTopic}
                 onChangeText={setFormTopic}
@@ -361,9 +738,48 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  levelBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 10,
+  },
+  levelBarLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  levelScroll: {
+    gap: 8,
+  },
+  levelChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  levelChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  levelChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  levelChipTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   courseChipsBar: {
     backgroundColor: Colors.card,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
@@ -372,27 +788,144 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   chipActive: {
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
     borderColor: Colors.primary,
   },
   chipText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     color: Colors.textSecondary,
   },
   chipTextActive: {
-    color: Colors.textInverse,
+    color: Colors.primaryDark,
+    fontWeight: '700',
+  },
+  statusSection: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
+  verifiedScheduleCard: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
+    padding: 10,
+  },
+  verifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  verifiedIconWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verifiedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  hoursBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  hoursBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  verifiedSub: {
+    fontSize: 11,
+    color: '#166534',
+    marginTop: 2,
+  },
+  warningScheduleCard: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 10,
+  },
+  warningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  warningTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B45309',
+  },
+  warningSub: {
+    fontSize: 11,
+    color: '#92400E',
+    marginTop: 1,
+    lineHeight: 15,
+  },
+  goToScheduleBtn: {
+    backgroundColor: '#F59E0B',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  goToScheduleBtnText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  actionStrip: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  actionStripBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primaryLight,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  actionStripBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primaryDark,
+  },
+  actionStripSecondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 5,
+  },
+  actionStripSecondaryBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
   },
   listContent: {
     padding: 16,
+    paddingTop: 4,
+    paddingBottom: 32,
   },
   planCard: {
     padding: 14,
@@ -405,29 +938,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
-    gap: 8,
+    gap: 6,
   },
   weekBadge: {
     backgroundColor: Colors.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 6,
   },
   weekText: {
     fontSize: 12,
     fontWeight: '800',
-    color: Colors.primary,
+    color: Colors.primaryDark,
   },
-  classBadge: {
+  gradeBadge: {
     backgroundColor: Colors.cardSubtle,
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  classBadgeText: {
+  gradeBadgeText: {
     fontSize: 11,
     fontWeight: '700',
     color: Colors.textSecondary,
+  },
+  hoursPill: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  hoursPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
   },
   currentBadge: {
     backgroundColor: Colors.successLight,
@@ -446,25 +992,25 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   topicTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: Colors.textPrimary,
     marginBottom: 4,
   },
   outcomesText: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textSecondary,
     marginBottom: 6,
-    lineHeight: 18,
+    lineHeight: 17,
   },
   dateRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 4,
+    marginTop: 2,
   },
   dateText: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textMuted,
   },
   modalOverlay: {
@@ -482,21 +1028,150 @@ const styles = StyleSheet.create({
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    alignItems: 'flex-start',
+    marginBottom: 14,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
+  modalSub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  formRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
   datesRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   modalActions: {
     flexDirection: 'row',
     gap: 12,
     marginTop: 16,
+  },
+  guideCard: {
+    backgroundColor: Colors.cardSubtle,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  guideStepTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  guideStepDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 17,
+    marginBottom: 8,
+  },
+  templateDownloadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    paddingVertical: 9,
+    borderRadius: 8,
+    gap: 6,
+  },
+  templateDownloadBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  pickExcelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    paddingVertical: 11,
+    borderRadius: 8,
+    gap: 6,
+  },
+  pickExcelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  loadingContainer: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  previewHeader: {
+    backgroundColor: '#ECFDF5',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginBottom: 12,
+  },
+  previewTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#065F46',
+  },
+  previewSub: {
+    fontSize: 11,
+    color: '#047857',
+    marginTop: 2,
+  },
+  previewListTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    marginBottom: 6,
+  },
+  previewItemCard: {
+    backgroundColor: Colors.cardSubtle,
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  previewItemWeek: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  previewItemHours: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  previewItemTopic: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginTop: 2,
+  },
+  previewItemDates: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  moreWeeksText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginVertical: 8,
   },
 });

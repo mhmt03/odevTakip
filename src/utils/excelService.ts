@@ -549,3 +549,238 @@ export const exportScheduleToExcel = async (
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Ders Programı');
   return await saveAndShareWorkbook(workbook, 'Haftalik_Ders_Programi.xlsx');
 };
+
+// 8. YEARLY PLAN EXCEL IMPORT & TEMPLATE
+export interface ParsedYearlyPlanRow {
+  weekNumber: number;
+  dateStart: string;
+  dateEnd: string;
+  lessonHours: number;
+  subjectTopic: string;
+  learningOutcomes: string;
+}
+
+const parseExcelDateValue = (val: any): string => {
+  if (!val && val !== 0) return '';
+  if (typeof val === 'number') {
+    try {
+      const parsed = XLSX.SSF.parse_date_code(val);
+      if (parsed) {
+        const y = String(parsed.y).padStart(4, '0');
+        const m = String(parsed.m).padStart(2, '0');
+        const d = String(parsed.d).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    } catch {}
+  }
+  const str = String(val).trim();
+  // Match DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
+  const trMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (trMatch) {
+    const d = trMatch[1].padStart(2, '0');
+    const m = trMatch[2].padStart(2, '0');
+    const y = trMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+  // Match YYYY-MM-DD
+  const isoMatch = str.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  if (isoMatch) {
+    const y = isoMatch[1];
+    const m = isoMatch[2].padStart(2, '0');
+    const d = isoMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return str;
+};
+
+/**
+ * Kullanıcı için 4-5 sütunlu örnek yıllık plan Excel şablonu oluşturur ve paylaşır.
+ */
+export const generateYearlyPlanTemplateExcel = async (
+  courseName: string,
+  gradeLevel: number,
+  weeklyHours: number = 4
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+
+  // Tablo Başlıkları:
+  // 1: Hafta Başlangıç Tarihi, 2: Hafta Bitiş Tarihi, 3: Ders Saati, 4: Deftere Yazılacak Konu, 5: Kazanımlar / Açıklamalar
+  const header = [
+    'Hafta Başlangıç Tarihi (YYYY-AA-GG veya GG.AA.YYYY)',
+    'Hafta Bitiş Tarihi (YYYY-AA-GG veya GG.AA.YYYY)',
+    'Ders Saati',
+    'Deftere Yazılacak Konu *',
+    'Kazanımlar / Açıklamalar (Opsiyonel)',
+  ];
+
+  // 36 haftalık örnek satırlar üret (Eylül'den Haziran'a varsayılan haftalık takvim örneği)
+  const rows: any[][] = [header];
+
+  // 2026-2027 veya güncel eğitim öğretim dönemi için örnek 36 hafta
+  let monday = new Date(2026, 8, 14); // 14 Eylül 2026 Pazartesi
+
+  for (let w = 1; w <= 36; w++) {
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const startStr = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+    const endStr = `${friday.getFullYear()}-${pad(friday.getMonth() + 1)}-${pad(friday.getDate())}`;
+
+    let sampleTopic = '';
+    let sampleOutcome = '';
+
+    if (w === 1) {
+      sampleTopic = 'Dersin Tanıtımı ve Temel Kavramlar';
+      sampleOutcome = 'Öğrencilerle müfredat ve çalışma planı paylaşılır.';
+    } else if (w === 2) {
+      sampleTopic = '1. Ünite Giriş ve Temel İlkeler';
+      sampleOutcome = 'Konuya ilişkin temel bağıntılar açıklanır.';
+    } else {
+      sampleTopic = `${w}. Hafta Konusu`;
+    }
+
+    rows.push([startStr, endStr, weeklyHours || 4, sampleTopic, sampleOutcome]);
+
+    // Sonraki haftanın Pazartesi gününe geç (+7 gün)
+    monday.setDate(monday.getDate() + 7);
+  }
+
+  const sheetName = `${gradeLevel}. Sınıf Planı`;
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+
+  // Sütun genişlikleri
+  worksheet['!cols'] = [
+    { wch: 24 }, // Başlangıç
+    { wch: 24 }, // Bitiş
+    { wch: 12 }, // Ders Saati
+    { wch: 45 }, // Konu
+    { wch: 45 }, // Kazanımlar
+  ];
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+
+  // Bilgilendirme sayfası
+  const infoRows = [
+    ['YILLIK MÜFREDAT PLANI EXCEL DOLDURMA KILAVUZU'],
+    [],
+    ['Ders Adı:', courseName],
+    ['Sınıf Düzeyi:', `${gradeLevel}. Sınıf`],
+    ['Haftalık Ders Saati:', `${weeklyHours} Saat`],
+    [],
+    ['Sütun Açıklamaları:'],
+    ['1. Sütun (Hafta Başlangıç Tarihi):', 'O haftanın Pazartesi tarihi (Örn: 14.09.2026 veya 2026-09-14)'],
+    ['2. Sütun (Hafta Bitiş Tarihi):', 'O haftanın Cuma tarihi (Örn: 18.09.2026 veya 2026-09-18)'],
+    ['3. Sütun (Ders Saati):', 'O hafta için ders saati sayısı (Ders programınızdaki saatle uyumlu)'],
+    ['4. Sütun (Deftere Yazılacak Konu):', 'Derse girdiğinizde deftere yazacağınız konu başlığı (ZORUNLU)'],
+    ['5. Sütun (Kazanımlar / Açıklamalar):', 'Kazanım kodu ve detay açıklamalar (İsteğe bağlı)'],
+  ];
+  const infoSheet = XLSX.utils.aoa_to_sheet(infoRows);
+  infoSheet['!cols'] = [{ wch: 32 }, { wch: 50 }];
+  XLSX.utils.book_append_sheet(workbook, infoSheet, 'Kılavuz');
+
+  const cleanCourse = courseName.replace(/[^a-zA-Z0-9]/g, '_');
+  const fileName = `Yillik_Plan_${gradeLevel}_Sinif_${cleanCourse}_Sablon.xlsx`;
+  return await saveAndShareWorkbook(workbook, fileName);
+};
+
+/**
+ * Kullanıcının seçtiği Excel dosyasından yıllık plan satırlarını okur ve doğrular.
+ */
+export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow[]> => {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+    ],
+    copyToCacheDirectory: true,
+  });
+
+  if (result.canceled || !result.assets || result.assets.length === 0) {
+    return [];
+  }
+
+  const asset = result.assets[0];
+  const workbook = await readWorkbookFromAsset(asset);
+
+  // İlk çalışma sayfasını al
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error('Excel dosyasında geçerli bir sayfa bulunamadı.');
+  }
+
+  const rawRows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+  if (rawRows.length < 2) {
+    throw new Error('Excel dosyasında veri satırı bulunamadı.');
+  }
+
+  // Başlık satırını tespit et
+  let headerIndex = 0;
+  for (let i = 0; i < Math.min(rawRows.length, 5); i++) {
+    const row = rawRows[i] || [];
+    const joined = row.map((c) => String(c).toLowerCase()).join(' ');
+    if (
+      joined.includes('konu') ||
+      joined.includes('tarih') ||
+      joined.includes('başlangıç') ||
+      joined.includes('saat')
+    ) {
+      headerIndex = i;
+      break;
+    }
+  }
+
+  const parsedItems: ParsedYearlyPlanRow[] = [];
+  let weekCounter = 1;
+
+  for (let i = headerIndex + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.length === 0) continue;
+
+    // Sütun eşleştirme:
+    // Kolon 0: Başlangıç Tarihi
+    // Kolon 1: Bitiş Tarihi
+    // Kolon 2: Ders Saati
+    // Kolon 3: Konu
+    // Kolon 4: Kazanım / Açıklama
+    const col0 = row[0];
+    const col1 = row[1];
+    const col2 = row[2];
+    const col3 = row[3];
+    const col4 = row[4];
+
+    // Eğer konu boşsa veya sadece boşluksa bu satırı atla
+    const subjectTopic = col3 !== undefined ? String(col3).trim() : '';
+    if (!subjectTopic) continue;
+
+    const dateStart = parseExcelDateValue(col0);
+    const dateEnd = parseExcelDateValue(col1);
+
+    let lessonHours = 0;
+    if (col2 !== undefined) {
+      const parsedHours = parseInt(String(col2).replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(parsedHours)) lessonHours = parsedHours;
+    }
+
+    const learningOutcomes = col4 !== undefined ? String(col4).trim() : '';
+
+    parsedItems.push({
+      weekNumber: weekCounter++,
+      dateStart,
+      dateEnd,
+      lessonHours,
+      subjectTopic,
+      learningOutcomes,
+    });
+  }
+
+  if (parsedItems.length === 0) {
+    throw new Error(
+      'Excel dosyasından geçerli yıllık plan konusu okunamadı. Lütfen şablon sütun sırasını kontrol ediniz.'
+    );
+  }
+
+  return parsedItems;
+};
+

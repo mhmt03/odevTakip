@@ -111,11 +111,14 @@ export interface YearlyPlanItem {
   id: number;
   course_id: number;
   course_name?: string;
+  course_code?: string;
   class_id?: number | null;
   class_name?: string | null;
+  grade_level?: number; // 9, 10, 11, 12
+  lesson_hours?: number; // e.g. 4
   week_number: number; // 1 to 36
   date_start?: string; // YYYY-MM-DD
   date_end?: string; // YYYY-MM-DD
-  subject_topic: string; // Anlatılacak konu
+  subject_topic: string; // Deftere yazılacak konu
   learning_outcomes?: string; // Kazanımlar / Açıklama
 }

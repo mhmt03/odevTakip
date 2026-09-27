@@ -188,7 +188,7 @@ export const HomeScreen: React.FC = () => {
               <View style={styles.topicBox}>
                 <Ionicons name="book-outline" size={16} color={Colors.primary} />
                 <Text style={styles.topicText} numberOfLines={2}>
-                  Planlanan Konu: {currentTopic.subject_topic}
+                  Deftere Yazılacak: {currentTopic.week_number ? `${currentTopic.week_number}. Hafta - ` : ''}{currentTopic.subject_topic}
                 </Text>
               </View>
             ) : null}
