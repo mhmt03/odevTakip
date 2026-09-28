@@ -6,10 +6,15 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "scheme": "siniftakip",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gunnermg.siniftakip",
+      "buildNumber": "1"
     },
     "android": {
+      "package": "com.gunnermg.siniftakip",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -25,6 +30,12 @@
       "expo-sqlite",
       "expo-sharing",
       "@react-native-community/datetimepicker"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0d695b3e-d7ed-4681-9539-020586bb4157"
+      }
+    },
+    "owner": "gunnermg"
   }
 }
