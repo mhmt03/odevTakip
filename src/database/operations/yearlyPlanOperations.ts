@@ -268,10 +268,14 @@ export const bulkCreateYearlyPlanItems = async (
 /**
  * Dersteki aktif sınıf ve derse göre deftere yazılacak güncel konuyu tespit eder.
  * Sınıf düzeyine (`grade_level`) göre otomatik eşleştirme yapar.
+ * Bir haftada birden fazla alt konu varsa (Örn: Kuvvet 2 saat, Hareket 2 saat),
+ * dersin haftalık kaçıncı saat olduğuna bakarak o saate denk gelen konuyu gösterir.
  */
 export const getCurrentTopicForClass = async (
   classId: number,
-  courseId?: number
+  courseId?: number,
+  dayOfWeek?: number,
+  slotId?: number
 ): Promise<YearlyPlanItem | null> => {
   const db = await getDB();
   const today = getTodayDateString();
@@ -287,6 +291,7 @@ export const getCurrentTopicForClass = async (
     if (m) gradeLevel = parseInt(m[0], 10);
   }
 
+  // O haftaya denk gelen tüm plan satırlarını çek (aynı haftada birden fazla alt konu olabilir: Kuvvet 2 saat, Hareket 2 saat)
   let query = `
     SELECT 
       yp.id,
@@ -311,14 +316,53 @@ export const getCurrentTopicForClass = async (
     )
     ${courseId ? 'AND yp.course_id = ?' : ''}
     AND yp.date_start <= ? AND yp.date_end >= ?
-    ORDER BY yp.class_id DESC, yp.grade_level DESC, yp.id DESC
-    LIMIT 1;
+    ORDER BY yp.class_id DESC, yp.grade_level DESC, yp.id ASC;
   `;
 
   const params: any[] = [classId, gradeLevel, gradeLevel];
   if (courseId) params.push(courseId);
   params.push(today, today);
 
-  const item = await db.getFirstAsync<YearlyPlanItem>(query, ...params);
-  return item || null;
+  const items = await db.getAllAsync<YearlyPlanItem>(query, ...params);
+  if (!items || items.length === 0) {
+    return null;
+  }
+
+  // Eğer bu haftada sadece 1 konu varsa doğrudan o konuyu döndür
+  if (items.length === 1) {
+    return items[0];
+  }
+
+  // Eğer bu haftada birden fazla konu varsa (örneğin Kuvvet 2 saat, Hareket 2 saat):
+  // Bu ders saatinin haftalık kaçıncı ders saati olduğunu haftalık programdan tespit et
+  if (dayOfWeek && slotId && courseId) {
+    const scheduleSlots = await db.getAllAsync<{ day_of_week: number; slot_id: number }>(`
+      SELECT s.day_of_week, s.slot_id
+      FROM schedules s
+      JOIN lesson_slots ls ON ls.id = s.slot_id
+      WHERE s.class_id = ? AND s.course_id = ?
+      ORDER BY s.day_of_week ASC, ls.slot_number ASC
+    `, classId, courseId);
+
+    const matchIndex = scheduleSlots.findIndex(
+      (s) => s.day_of_week === dayOfWeek && s.slot_id === slotId
+    );
+
+    if (matchIndex >= 0) {
+      const currentLessonHourInWeek = matchIndex + 1; // 1, 2, 3, 4...
+
+      // Konuların ders saati sınırlarına göre kümülatif olarak hangi konuya denk geldiğini bul:
+      let accumulatedHours = 0;
+      for (const item of items) {
+        const hours = item.lesson_hours && item.lesson_hours > 0 ? item.lesson_hours : 2;
+        accumulatedHours += hours;
+        if (currentLessonHourInWeek <= accumulatedHours) {
+          return item;
+        }
+      }
+      return items[items.length - 1];
+    }
+  }
+
+  return items[0];
 };

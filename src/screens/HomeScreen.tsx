@@ -66,7 +66,9 @@ export const HomeScreen: React.FC = () => {
       if (info.currentLesson && info.currentLesson.class_id) {
         const topic = await getCurrentTopicForClass(
           info.currentLesson.class_id,
-          info.currentLesson.course_id || undefined
+          info.currentLesson.course_id || undefined,
+          info.currentLesson.day_of_week,
+          info.currentLesson.slot_id
         );
         setCurrentTopic(topic);
       } else {
@@ -93,7 +95,20 @@ export const HomeScreen: React.FC = () => {
       loadData();
       const interval = setInterval(() => {
         setCurrentTime(getCurrentTimeString());
-        getActiveAndTodayLessons().then(setLessonInfo);
+        getActiveAndTodayLessons().then(async (info) => {
+          setLessonInfo(info);
+          if (info.currentLesson && info.currentLesson.class_id) {
+            const topic = await getCurrentTopicForClass(
+              info.currentLesson.class_id,
+              info.currentLesson.course_id || undefined,
+              info.currentLesson.day_of_week,
+              info.currentLesson.slot_id
+            );
+            setCurrentTopic(topic);
+          } else {
+            setCurrentTopic(null);
+          }
+        });
       }, 30000); // 30 sec tick
       return () => clearInterval(interval);
     }, [])
@@ -188,7 +203,7 @@ export const HomeScreen: React.FC = () => {
               <View style={styles.topicBox}>
                 <Ionicons name="book-outline" size={16} color={Colors.primary} />
                 <Text style={styles.topicText} numberOfLines={2}>
-                  Deftere Yazılacak: {currentTopic.week_number ? `${currentTopic.week_number}. Hafta - ` : ''}{currentTopic.subject_topic}
+                  Deftere Yazılacak: {currentTopic.week_number ? `${currentTopic.week_number}. Hafta ` : ''}{currentTopic.lesson_hours ? `(${currentTopic.lesson_hours} Saat) - ` : '- '}{currentTopic.subject_topic}
                 </Text>
               </View>
             ) : null}

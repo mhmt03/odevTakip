@@ -173,6 +173,10 @@ export const YearlyPlanScreen: React.FC = () => {
       return;
     }
     const hoursNum = parseInt(formLessonHours, 10) || 0;
+    if (hoursNum < 1) {
+      Alert.alert('Uyarı', 'Lütfen bu konu için geçerli bir ders saati giriniz (Zorunlu - Örn: 2 veya 4).');
+      return;
+    }
 
     try {
       if (editingPlan) {
@@ -672,14 +676,18 @@ export const YearlyPlanScreen: React.FC = () => {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Input
-                    label="Ders Saati *"
-                    placeholder="Örn: 4"
+                    label="Ders Saati (Zorunlu) *"
+                    placeholder="Örn: 2"
                     value={formLessonHours}
                     onChangeText={setFormLessonHours}
                     keyboardType="numeric"
                   />
                 </View>
               </View>
+
+              <Text style={{ fontSize: 11, color: Colors.textMuted, marginBottom: 12, marginTop: -4 }}>
+                💡 Bir haftada birden fazla konu varsa aynı hafta numarasıyla konuları sırayla ekleyebilirsiniz (Örn: Kuvvet 2 saat, Hareket 2 saat).
+              </Text>
 
               <Input
                 label="Deftere Yazılacak Konu *"

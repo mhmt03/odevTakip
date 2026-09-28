@@ -619,23 +619,37 @@ export const generateYearlyPlanTemplateExcel = async (
   // 2026-2027 veya güncel eğitim öğretim dönemi için örnek 36 hafta
   let monday = new Date(2026, 8, 14); // 14 Eylül 2026 Pazartesi
 
-  for (let w = 1; w <= 36; w++) {
-    const friday = new Date(monday);
+  // 1. Hafta: İki farklı alt konu örneği (Örn: 2 saat Kuvvet + 2 saat Hareket)
+  const pad = (n: number) => String(n).padStart(2, '0');
+  let friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4);
+  const w1Start = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+  const w1End = `${friday.getFullYear()}-${pad(friday.getMonth() + 1)}-${pad(friday.getDate())}`;
+
+  if ((weeklyHours || 4) >= 4) {
+    rows.push([w1Start, w1End, 2, 'Kuvvet ve Denge (İlk 2 Ders)', 'Vektörlerin bileşkesi ve kuvvet dengesi']);
+    rows.push([w1Start, w1End, 2, 'Bağıl Hareket (Son 2 Ders)', 'Bir ve iki boyutta bağıl hız']);
+  } else {
+    rows.push([w1Start, w1End, weeklyHours || 2, 'Dersin Tanıtımı ve Temel Kavramlar', 'Müfredat ve hedefler']);
+  }
+  monday.setDate(monday.getDate() + 7);
+
+  for (let w = 2; w <= 36; w++) {
+    friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
 
-    const pad = (n: number) => String(n).padStart(2, '0');
     const startStr = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
     const endStr = `${friday.getFullYear()}-${pad(friday.getMonth() + 1)}-${pad(friday.getDate())}`;
 
     let sampleTopic = '';
     let sampleOutcome = '';
 
-    if (w === 1) {
-      sampleTopic = 'Dersin Tanıtımı ve Temel Kavramlar';
-      sampleOutcome = 'Öğrencilerle müfredat ve çalışma planı paylaşılır.';
-    } else if (w === 2) {
-      sampleTopic = '1. Ünite Giriş ve Temel İlkeler';
-      sampleOutcome = 'Konuya ilişkin temel bağıntılar açıklanır.';
+    if (w === 2) {
+      sampleTopic = "Newton'un Hareket Yasaları";
+      sampleOutcome = 'Kuvvet, kütle ve ivme bağıntısı açıklanır.';
+    } else if (w === 3) {
+      sampleTopic = 'Sürtünme Kuvveti ve Uygulamaları';
+      sampleOutcome = 'Statik ve kinetik sürtünme katsayıları hesaplanır.';
     } else {
       sampleTopic = `${w}. Hafta Konusu`;
     }
@@ -668,10 +682,22 @@ export const generateYearlyPlanTemplateExcel = async (
     ['Sınıf Düzeyi:', `${gradeLevel}. Sınıf`],
     ['Haftalık Ders Saati:', `${weeklyHours} Saat`],
     [],
+    ['ÖNEMLİ ÖZELLİK: Bir Haftada Birden Fazla Konu (Ders Saati Bazlı Dağıtım):'],
+    [
+      'Aynı haftaya birden fazla konu girebilirsiniz.',
+      'Örn: Haftalık 4 saat dersiniz varsa:',
+    ],
+    ['  - Satır 1:', '14.09.2026 | 18.09.2026 | 2 Saat | Kuvvet'],
+    ['  - Satır 2:', '14.09.2026 | 18.09.2026 | 2 Saat | Hareket'],
+    [
+      'Sonuç:',
+      'Haftanın ilk 2 saatinde dersteyken ekranda "Kuvvet", son 2 saatindeki derste ekranda "Hareket" görünecektir.',
+    ],
+    [],
     ['Sütun Açıklamaları:'],
     ['1. Sütun (Hafta Başlangıç Tarihi):', 'O haftanın Pazartesi tarihi (Örn: 14.09.2026 veya 2026-09-14)'],
     ['2. Sütun (Hafta Bitiş Tarihi):', 'O haftanın Cuma tarihi (Örn: 18.09.2026 veya 2026-09-18)'],
-    ['3. Sütun (Ders Saati):', 'O hafta için ders saati sayısı (Ders programınızdaki saatle uyumlu)'],
+    ['3. Sütun (Ders Saati):', 'Bu konunun işleneceği saat sayısı (ZORUNLU - Örn: 2 veya 4)'],
     ['4. Sütun (Deftere Yazılacak Konu):', 'Derse girdiğinizde deftere yazacağınız konu başlığı (ZORUNLU)'],
     ['5. Sütun (Kazanımlar / Açıklamalar):', 'Kazanım kodu ve detay açıklamalar (İsteğe bağlı)'],
   ];
@@ -733,6 +759,7 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
 
   const parsedItems: ParsedYearlyPlanRow[] = [];
   let weekCounter = 1;
+  let previousDateStart = '';
 
   for (let i = headerIndex + 1; i < rawRows.length; i++) {
     const row = rawRows[i];
@@ -757,16 +784,31 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
     const dateStart = parseExcelDateValue(col0);
     const dateEnd = parseExcelDateValue(col1);
 
+    // Zorunlu Ders Saati (col2)
     let lessonHours = 0;
     if (col2 !== undefined) {
       const parsedHours = parseInt(String(col2).replace(/[^0-9]/g, ''), 10);
-      if (!isNaN(parsedHours)) lessonHours = parsedHours;
+      if (!isNaN(parsedHours) && parsedHours > 0) lessonHours = parsedHours;
+    }
+    if (lessonHours <= 0) {
+      lessonHours = 2; // Varsayılan en az 2 saat
     }
 
     const learningOutcomes = col4 !== undefined ? String(col4).trim() : '';
 
+    // Akıllı Hafta Numaralandırması:
+    // Eğer aynı haftanın tarihleri tekrar ediyorsa aynı hafta numarasını koru (aynı haftanın 2. konusu)
+    if (parsedItems.length > 0 && dateStart && dateStart === previousDateStart) {
+      // Aynı haftanın devam konusu, weekCounter artmaz
+    } else {
+      if (parsedItems.length > 0) {
+        weekCounter++;
+      }
+      previousDateStart = dateStart;
+    }
+
     parsedItems.push({
-      weekNumber: weekCounter++,
+      weekNumber: weekCounter,
       dateStart,
       dateEnd,
       lessonHours,
