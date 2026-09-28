@@ -161,9 +161,18 @@ export const HomeScreen: React.FC = () => {
           </Text>
           <Text style={styles.greetingTitle}>Sınıf Takip & Ajanda</Text>
         </View>
-        <View style={styles.clockBadge}>
-          <Ionicons name="time-outline" size={16} color={Colors.primary} />
-          <Text style={styles.clockText}>{currentTime}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={styles.clockBadge}>
+            <Ionicons name="time-outline" size={16} color={Colors.primary} />
+            <Text style={styles.clockText}>{currentTime}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.settingsHeaderBtn}
+            onPress={() => navigation.navigate('Operations')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="options-outline" size={20} color={Colors.primary} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -445,6 +454,36 @@ export const HomeScreen: React.FC = () => {
             </View>
           </TouchableOpacity>
         </View>
+
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('YearlyPlan')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: '#EDE9FE' }]}>
+              <Ionicons name="book" size={22} color="#7C3AED" />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>Yıllık Plan</Text>
+              <Text style={styles.quickSub}>Müfredat & Konular</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('Operations')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="construct" size={22} color="#DC2626" />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>İşlemler</Text>
+              <Text style={styles.quickSub}>Yedekleme & Ayarlar</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
     </ScrollView>
   );
@@ -494,6 +533,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: Colors.primary,
+  },
+  settingsHeaderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.small,
   },
   heroCardContainer: {
     marginBottom: 16,

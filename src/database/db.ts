@@ -6,6 +6,17 @@ export const resetDB = () => {
   dbInstance = null;
 };
 
+export const closeDatabase = async (): Promise<void> => {
+  if (dbInstance) {
+    try {
+      await dbInstance.closeAsync();
+    } catch (e) {
+      console.warn('Error closing database:', e);
+    }
+    dbInstance = null;
+  }
+};
+
 export const getDB = async (): Promise<SQLite.SQLiteDatabase> => {
   if (dbInstance) {
     try {
