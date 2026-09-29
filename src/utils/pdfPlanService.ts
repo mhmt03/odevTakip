@@ -42,15 +42,30 @@ export const pickAndSaveYearlyPlanPdf = async (
       await FileSystem.deleteAsync(targetUri, { idempotent: true });
     }
 
-    // Try copying; if copyAsync fails on cache permissions, try downloadAsync fallback
+    // Try copying; if copyAsync fails on Android permissions/scoped storage, use fetch -> blob -> writeAsStringAsync fallback
     try {
       await FileSystem.copyAsync({
         from: sourceUri,
         to: targetUri,
       });
     } catch (copyErr) {
-      console.warn('copyAsync failed, trying downloadAsync fallback:', copyErr);
-      await FileSystem.downloadAsync(sourceUri, targetUri);
+      console.warn('copyAsync failed, trying fetch/blob fallback:', copyErr);
+      const res = await fetch(sourceUri);
+      const blob = await res.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const str = reader.result as string;
+          const cleanB64 = str.includes(',') ? str.split(',')[1] : str;
+          resolve(cleanB64);
+        };
+        reader.onerror = (e) => reject(e);
+        reader.readAsDataURL(blob);
+      });
+
+      await FileSystem.writeAsStringAsync(targetUri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
     }
 
     // Save metadata in database
