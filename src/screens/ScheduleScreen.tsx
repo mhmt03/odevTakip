@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../theme/colors';
+import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -25,18 +27,20 @@ import {
   saveDaySlotTime,
   loadOfficialWeeklySchedule,
   clearEntireSchedule,
+  getSchedulePhotoUri,
+  setSchedulePhotoUri,
 } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
 import { exportScheduleToExcel } from '../utils/excelService';
 import { DAYS_OF_WEEK, getDayOfWeekIndex, isTimeBetween, getCurrentTimeString } from '../utils/dateUtils';
 import { DaySlotInfo, ScheduleItem, CourseName, ClassItem } from '../types';
+import { pickSchedulePhoto } from '../utils/photoService';
 
 export const ScheduleScreen: React.FC = () => {
   const navigation = useNavigation<any>();
 
   const [selectedDay, setSelectedDay] = useState<number>(() => {
-    const idx = getDayOfWeekIndex();
-    return idx > 5 ? 1 : idx; // default to today (or Monday if weekend)
+    return getDayOfWeekIndex(); // 1..7 (Pazartesi .. Pazar)
   });
 
   const [slots, setSlots] = useState<DaySlotInfo[]>([]);
@@ -44,6 +48,12 @@ export const ScheduleScreen: React.FC = () => {
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [courses, setCourses] = useState<CourseName[]>([]);
+
+  // Schedule Photo State
+  const [photoMenuVisible, setPhotoMenuVisible] = useState(false);
+  const [photoViewModalVisible, setPhotoViewModalVisible] = useState(false);
+  const [schedulePhotoUri, setSchedulePhotoUriState] = useState<string | null>(null);
+  const [loadingPhoto, setLoadingPhoto] = useState(false);
 
   // Slot Edit Modal
   const [modalVisible, setModalVisible] = useState(false);
@@ -59,18 +69,20 @@ export const ScheduleScreen: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [daySlots, cls, crs, cDays, currentDayItems] = await Promise.all([
+      const [daySlots, cls, crs, cDays, currentDayItems, savedPhoto] = await Promise.all([
         getSlotsForDay(selectedDay),
         getClasses(),
         getCourses(),
         getCustomDaysWithOverrides(),
         getScheduleByDay(selectedDay),
+        getSchedulePhotoUri(),
       ]);
       setSlots(daySlots);
       setClasses(cls);
       setCourses(crs);
       setCustomDays(cDays);
       setDaySchedule(currentDayItems);
+      setSchedulePhotoUriState(savedPhoto);
     } catch (e) {
       console.error(e);
     }
@@ -203,6 +215,70 @@ export const ScheduleScreen: React.FC = () => {
     );
   };
 
+  const handlePickSchedulePhoto = async (source: 'camera' | 'gallery') => {
+    try {
+      setPhotoMenuVisible(false);
+      setLoadingPhoto(true);
+      const targetPath = await pickSchedulePhoto(source);
+      if (!targetPath) {
+        setLoadingPhoto(false);
+        return;
+      }
+
+      await setSchedulePhotoUri(targetPath);
+      setSchedulePhotoUriState(targetPath);
+      setLoadingPhoto(false);
+
+      Alert.alert(
+        'Ders Programı Fotoğrafı Kaydedildi 📸',
+        'Fotoğraf başarıyla yüklendi ve referans olarak saklandı.\n\n' +
+          'Kamil Miras AL 27 saatlik resmi okul ders programını (11-A..C, 12-C..E, S.FZK ve HDTE2) bu fotoğrafa göre otomatik yüklemek ister misiniz?\n\n' +
+          '💡 Özel ders saatleriniz korunur.',
+        [
+          { text: 'Yalnızca Fotoğrafı Sakla', style: 'cancel' },
+          {
+            text: 'Programı Otomatik Yükle',
+            onPress: async () => {
+              try {
+                const res = await loadOfficialWeeklySchedule();
+                await loadData();
+                Alert.alert(
+                  'Başarıyla Yüklendi 🎉',
+                  `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\nFotoğrafı dilediğiniz an "Fotoğrafı İncele" butonuyla açabilirsiniz.`
+                );
+              } catch (err: any) {
+                Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
+              }
+            },
+          },
+        ]
+      );
+    } catch (err: any) {
+      setLoadingPhoto(false);
+      Alert.alert('Hata', err?.message || 'Fotoğraf yüklenemedi.');
+    }
+  };
+
+  const handleRemoveSchedulePhoto = async () => {
+    Alert.alert(
+      'Fotoğrafı Kaldır',
+      'Kayıtlı ders programı fotoğrafını silmek istediğinize emin misiniz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            await setSchedulePhotoUri(null);
+            setSchedulePhotoUriState(null);
+            setPhotoViewModalVisible(false);
+            setPhotoMenuVisible(false);
+          },
+        },
+      ]
+    );
+  };
+
   const currentTime = getCurrentTimeString();
   const currentDayIndex = getDayOfWeekIndex();
   const currentDayObj = DAYS_OF_WEEK.find((d) => d.id === selectedDay);
@@ -214,16 +290,25 @@ export const ScheduleScreen: React.FC = () => {
       <View style={styles.header}>
         <View style={{ flex: 1, paddingRight: 8 }}>
           <Text style={styles.headerTitle}>Haftalık Ders Programı</Text>
-          <Text style={styles.headerSub}>Şube ve ders saatleri yönetimi</Text>
+          <Text style={styles.headerSub}>Şube ve ders saatleri yönetimi (7 Gün)</Text>
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity
-            style={[styles.actionBtnIcon, { backgroundColor: '#EEF2FF' }]}
-            onPress={handleLoadOfficialSchedule}
-            accessibilityLabel="Okul Programını Otomatik Yükle"
+            style={styles.photoHeaderBtn}
+            onPress={() => setPhotoMenuVisible(true)}
+            activeOpacity={0.8}
+            accessibilityLabel="Fotoğraftan Yükle"
           >
-            <Ionicons name="cloud-download-outline" size={20} color={Colors.primary} />
+            {loadingPhoto ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <>
+                <Ionicons name="camera" size={15} color="#FFF" />
+                <Text style={styles.photoHeaderBtnText}>Fotoğraftan Yükle</Text>
+              </>
+            )}
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.actionBtnIcon}
             onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay })}
@@ -248,10 +333,28 @@ export const ScheduleScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Days Selector */}
+      {/* Saved Schedule Photo Indicator Bar */}
+      {schedulePhotoUri ? (
+        <View style={styles.photoSavedBanner}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Ionicons name="image" size={17} color="#047857" />
+            <Text style={styles.photoSavedBannerText}>Kayıtlı Ders Programı Fotoğrafı Mevcut</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.photoViewBtnSmall}
+            onPress={() => setPhotoViewModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="eye-outline" size={14} color="#FFF" />
+            <Text style={styles.photoViewBtnSmallText}>Fotoğrafı İncele</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* Days Selector - 7 GÜN */}
       <View style={styles.daysBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.daysScroll}>
-          {DAYS_OF_WEEK.slice(0, 6).map((day) => {
+          {DAYS_OF_WEEK.map((day) => {
             const isSelected = selectedDay === day.id;
             const isToday = currentDayIndex === day.id;
             const hasCustom = customDays.includes(day.id);
@@ -543,6 +646,189 @@ export const ScheduleScreen: React.FC = () => {
                 onPress={handleSaveSlot}
               />
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Photo Import Action Modal (Camera / Gallery / Official) */}
+      <Modal
+        visible={photoMenuVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPhotoMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.photoModalOverlay}
+          activeOpacity={1}
+          onPress={() => setPhotoMenuVisible(false)}
+        >
+          <View style={styles.photoModalSheet} onStartShouldSetResponder={() => true}>
+            <View style={styles.sheetHandle} />
+
+            <View style={styles.photoModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.photoModalTitle}>Ders Programını Fotoğraftan Yükle</Text>
+                <Text style={styles.photoModalSub}>
+                  Kağıt veya ekran fotoğrafından ders programınızı kaydedin ve aktarın
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.photoModalCloseBtn}
+                onPress={() => setPhotoMenuVisible(false)}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.photoModalOptions}>
+              {/* Option 1: Kameradan Çek */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => handlePickSchedulePhoto('camera')}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="camera" size={24} color="#DC2626" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <Text style={styles.photoOptionTitle}>Kameradan Fotoğraf Çek</Text>
+                  <Text style={styles.photoOptionDesc}>
+                    Masadaki veya panodaki ders programı kağıdının fotoğrafını doğrudan çekin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 2: Galeriden Seç */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => handlePickSchedulePhoto('gallery')}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#EDE9FE' }]}>
+                  <Ionicons name="images" size={24} color="#7C3AED" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <Text style={styles.photoOptionTitle}>Galeriden Fotoğraf Seç</Text>
+                  <Text style={styles.photoOptionDesc}>
+                    Cihazınızdaki ders programı fotoğrafını veya ekran görüntüsünü seçin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 3: Resmi Okul Programını Doğrudan Yükle */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => {
+                  setPhotoMenuVisible(false);
+                  setTimeout(() => handleLoadOfficialSchedule(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                  <Ionicons name="cloud-download" size={24} color="#16A34A" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.photoOptionTitle}>Hazır Okul Programını Yükle</Text>
+                    <View style={styles.autoLoadBadge}>
+                      <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.photoOptionDesc}>
+                    Kamil Miras AL Seçmeli Fizik (24 saat) ve HDTE2 (3 saat) dağılımını aktarır.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 4: Eğer Kayıtlı Fotoğraf Varsa */}
+              {schedulePhotoUri ? (
+                <TouchableOpacity
+                  style={[styles.photoOptionCard, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}
+                  onPress={() => {
+                    setPhotoMenuVisible(false);
+                    setTimeout(() => setPhotoViewModalVisible(true), 200);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.photoOptionIconWrap, { backgroundColor: '#D1FAE5' }]}>
+                    <Ionicons name="eye" size={24} color="#059669" />
+                  </View>
+                  <View style={styles.photoOptionTextWrap}>
+                    <Text style={[styles.photoOptionTitle, { color: '#065F46' }]}>Kayıtlı Fotoğrafı Görüntüle</Text>
+                    <Text style={styles.photoOptionDesc}>
+                      Daha önce yüklediğiniz ders programı fotoğrafını tam boyutta açıp inceleyin.
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#059669" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Schedule Photo Viewer Modal */}
+      <Modal
+        visible={photoViewModalVisible}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setPhotoViewModalVisible(false)}
+      >
+        <View style={styles.viewerModalOverlay}>
+          <View style={styles.viewerModalHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="image-outline" size={22} color="#FFF" />
+              <Text style={styles.viewerModalTitle}>Ders Programı Fotoğrafı</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setPhotoViewModalVisible(false)}
+              style={styles.viewerCloseBtn}
+            >
+              <Ionicons name="close" size={24} color="#FFF" />
+            </TouchableOpacity>
+          </View>
+
+          {schedulePhotoUri ? (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.viewerScrollContent}
+              maximumZoomScale={4}
+              minimumZoomScale={1}
+            >
+              <Image
+                source={{ uri: schedulePhotoUri }}
+                style={styles.viewerImage}
+                resizeMode="contain"
+              />
+            </ScrollView>
+          ) : (
+            <View style={styles.viewerEmptyWrap}>
+              <Text style={{ color: '#FFF' }}>Fotoğraf bulunamadı.</Text>
+            </View>
+          )}
+
+          <View style={styles.viewerBottomBar}>
+            <TouchableOpacity
+              style={styles.viewerChangeBtn}
+              onPress={() => {
+                setPhotoViewModalVisible(false);
+                setTimeout(() => setPhotoMenuVisible(true), 200);
+              }}
+            >
+              <Ionicons name="camera-reverse-outline" size={18} color="#FFF" />
+              <Text style={styles.viewerChangeBtnText}>Fotoğrafı Değiştir</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.viewerDeleteBtn}
+              onPress={handleRemoveSchedulePhoto}
+            >
+              <Ionicons name="trash-outline" size={18} color="#DC2626" />
+              <Text style={styles.viewerDeleteBtnText}>Sil</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -900,5 +1186,212 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  photoHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 8,
+    ...Shadows.small,
+  },
+  photoHeaderBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  photoSavedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ECFDF5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#A7F3D0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  photoSavedBannerText: {
+    fontSize: 12,
+    color: '#065F46',
+    fontWeight: '600',
+  },
+  photoViewBtnSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#059669',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  photoViewBtnSmallText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  photoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  photoModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
+    ...Shadows.large,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 5,
+    backgroundColor: '#CBD5E1',
+    borderRadius: 3,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  photoModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  photoModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  photoModalSub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  photoModalCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+  },
+  photoModalOptions: {
+    gap: 10,
+  },
+  photoOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 12,
+  },
+  photoOptionIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoOptionTextWrap: {
+    flex: 1,
+  },
+  photoOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  photoOptionDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  autoLoadBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  autoLoadBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  viewerModalOverlay: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  viewerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 50,
+    paddingBottom: 14,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  viewerModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  viewerCloseBtn: {
+    padding: 4,
+  },
+  viewerScrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+  },
+  viewerImage: {
+    width: '100%',
+    height: 450,
+  },
+  viewerEmptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerBottomBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    gap: 12,
+  },
+  viewerChangeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  viewerChangeBtnText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  viewerDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  viewerDeleteBtnText: {
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

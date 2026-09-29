@@ -601,3 +601,24 @@ export const loadOfficialWeeklySchedule = async (): Promise<LoadScheduleResult> 
     message: '27 saatlik resmi okul ders programı başarıyla yüklendi. Ders saatleriniz korundu.',
   };
 };
+
+export const getSchedulePhotoUri = async (): Promise<string | null> => {
+  const db = await getDB();
+  const row = await db.getFirstAsync<{ value: string }>(
+    "SELECT value FROM app_settings WHERE key = 'schedule_photo_uri'"
+  );
+  return row?.value || null;
+};
+
+export const setSchedulePhotoUri = async (uri: string | null): Promise<void> => {
+  const db = await getDB();
+  if (uri) {
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('schedule_photo_uri', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      uri
+    );
+  } else {
+    await db.runAsync("DELETE FROM app_settings WHERE key = 'schedule_photo_uri'");
+  }
+};
+

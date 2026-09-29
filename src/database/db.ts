@@ -214,6 +214,11 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
       UNIQUE(quiz_id, student_id)
     );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
 
   // Migrate: ensure photo_uri column exists in students table

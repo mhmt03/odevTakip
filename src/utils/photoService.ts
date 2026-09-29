@@ -102,6 +102,56 @@ export const pickSinglePhotoFromSource = async (
   };
 };
 
+/**
+ * Pick a full schedule photo using Camera or Gallery (without 1:1 cropping constraint)
+ */
+export const pickSchedulePhoto = async (
+  source: 'camera' | 'gallery'
+): Promise<string | null> => {
+  let result: ImagePicker.ImagePickerResult;
+
+  if (source === 'camera') {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      throw new Error('Kamera izni verilmedi.');
+    }
+    result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.9,
+    });
+  } else {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      throw new Error('Galeri erişim izni verilmedi.');
+    }
+    result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.9,
+    });
+  }
+
+  if (result.canceled || !result.assets || result.assets.length === 0) {
+    return null;
+  }
+
+  const asset = result.assets[0];
+  const dir = `${FileSystem.documentDirectory}schedule/`;
+  const dirInfo = await FileSystem.getInfoAsync(dir);
+  if (!dirInfo.exists) {
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  }
+
+  const targetPath = `${dir}official_schedule_photo.jpg`;
+  await FileSystem.copyAsync({
+    from: asset.uri,
+    to: targetPath,
+  });
+
+  return targetPath;
+};
+
 export interface MatchedPhotoItem {
   student: Student;
   fileUri: string;

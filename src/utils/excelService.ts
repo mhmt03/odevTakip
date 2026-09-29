@@ -517,10 +517,10 @@ export const exportScheduleToExcel = async (
 ): Promise<boolean> => {
   const workbook = XLSX.utils.book_new();
 
-  // Header row: Saat, Pazartesi, Salı, Çarşamba, Perşembe, Cuma, Cumartesi
-  const header = ['Ders / Saat', ...DAYS_OF_WEEK.slice(0, 5).map((d) => d.name)];
+  // Header row: Saat, Pazartesi, Salı, Çarşamba, Perşembe, Cuma, Cumartesi, Pazar
+  const header = ['Ders / Saat', ...DAYS_OF_WEEK.map((d) => d.name)];
   const rows: string[][] = [
-    ['HAFTALIK ÖĞRETMEN DERS PROGRAMI'],
+    ['HAFTALIK ÖĞRETMEN DERS PROGRAMI (7 GÜN)'],
     [`Oluşturulma Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
     [],
     header,
@@ -528,7 +528,7 @@ export const exportScheduleToExcel = async (
 
   slots.forEach((slot) => {
     const row = [`${slot.slot_name} (${slot.start_time}-${slot.end_time})`];
-    for (let day = 1; day <= 5; day++) {
+    for (let day = 1; day <= 7; day++) {
       const match = scheduleItems.find(
         (item) => item.slot_id === slot.id && item.day_of_week === day
       );
