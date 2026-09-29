@@ -32,6 +32,13 @@ import {
 } from '../database/operations/studentOperations';
 import { getClasses } from '../database/operations/classOperations';
 import {
+  getNotesByStudent,
+  createNote,
+  deleteNote,
+  getQuickNotes,
+  QuickNoteItem,
+} from '../database/operations/noteOperations';
+import {
   pickAndParseStudentsExcel,
   generateStudentTemplateExcel,
   exportClassStudentsToExcel,
@@ -45,7 +52,11 @@ import {
   MAX_PHOTO_SIZE_LABEL,
   BulkPhotoMatchResult,
 } from '../utils/photoService';
-import { Student, ClassItem } from '../types';
+import {
+  extractPhotosFromPdf,
+  PdfExtractedStudentPhoto,
+} from '../utils/pdfPhotoExtractor';
+import { Student, ClassItem, StudentNote } from '../types';
 
 export const ClassDetailScreen: React.FC = () => {
   const route = useRoute<any>();
@@ -69,10 +80,25 @@ export const ClassDetailScreen: React.FC = () => {
   const [photoModalVisible, setPhotoModalVisible] = useState(false);
   const [photoTargetStudent, setPhotoTargetStudent] = useState<Student | null>(null);
 
-  // Bulk Photo Modal state
+  // Bulk Photo Files Modal state
   const [bulkPhotoModalVisible, setBulkPhotoModalVisible] = useState(false);
   const [bulkPhotoResult, setBulkPhotoResult] = useState<BulkPhotoMatchResult | null>(null);
   const [bulkPhotoSaving, setBulkPhotoSaving] = useState(false);
+
+  // PDF Photo Extract Modal state
+  const [pdfPhotoModalVisible, setPdfPhotoModalVisible] = useState(false);
+  const [pdfExtracting, setPdfExtracting] = useState(false);
+  const [pdfExtractItems, setPdfExtractItems] = useState<PdfExtractedStudentPhoto[]>([]);
+  const [savingPdfPhotos, setSavingPdfPhotos] = useState(false);
+
+  // Student Detail & Opinion Modal state
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [detailStudent, setDetailStudent] = useState<Student | null>(null);
+  const [studentNotesList, setStudentNotesList] = useState<StudentNote[]>([]);
+  const [quickNotesList, setQuickNotesList] = useState<QuickNoteItem[]>([]);
+  const [newNoteText, setNewNoteText] = useState('');
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
 
   // Multi-select / Bulk operations state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -213,6 +239,9 @@ export const ClassDetailScreen: React.FC = () => {
 
       // Save to DB
       await updateStudentPhoto(photoTargetStudent.id, permanentUri);
+      if (detailStudent && detailStudent.id === photoTargetStudent.id) {
+        setDetailStudent({ ...detailStudent, photo_uri: permanentUri });
+      }
       setPhotoModalVisible(false);
       loadStudents();
     } catch (error: any) {
@@ -224,6 +253,9 @@ export const ClassDetailScreen: React.FC = () => {
     if (!photoTargetStudent) return;
     try {
       await updateStudentPhoto(photoTargetStudent.id, null);
+      if (detailStudent && detailStudent.id === photoTargetStudent.id) {
+        setDetailStudent({ ...detailStudent, photo_uri: undefined });
+      }
       setPhotoModalVisible(false);
       loadStudents();
     } catch (error) {
@@ -279,6 +311,121 @@ export const ClassDetailScreen: React.FC = () => {
       Alert.alert('Hata', 'Fotoğraflar kaydedilirken bir hata oluştu.');
     } finally {
       setBulkPhotoSaving(false);
+    }
+  };
+
+  // --- PDF PHOTO EXTRACTION & MATCHING ---
+  const handleStartPdfPhoto = async () => {
+    if (students.length === 0) {
+      Alert.alert('Bilgi', 'Önce bu şubeye öğrenci eklemelisiniz.');
+      return;
+    }
+    try {
+      setPdfExtracting(true);
+      const res = await extractPhotosFromPdf(students);
+      if (!res.success) {
+        if (res.error && res.error !== 'Dosya seçilmedi.') {
+          Alert.alert('Hata', res.error);
+        }
+        return;
+      }
+      if (res.extractedPhotos.length === 0) {
+        Alert.alert('Bilgi', 'PDF içinde uygun vesikalık fotoğraf bulunamadı.');
+        return;
+      }
+      setPdfExtractItems(res.extractedPhotos);
+      setPdfPhotoModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Hata', e?.message || 'PDF işlenemedi.');
+    } finally {
+      setPdfExtracting(false);
+    }
+  };
+
+  const handleConfirmSavePdfPhotos = async () => {
+    const toSave = pdfExtractItems.filter((item) => item.matchedStudent !== null);
+    if (toSave.length === 0) {
+      Alert.alert('Uyarı', 'Eşleşen öğrenci bulunamadı.');
+      return;
+    }
+    setSavingPdfPhotos(true);
+    try {
+      let savedCount = 0;
+      for (const item of toSave) {
+        if (!item.matchedStudent) continue;
+        const permanentUri = await savePhotoPermanently(
+          item.tempUri,
+          item.matchedStudent.student_number || item.matchedStudent.id
+        );
+        await updateStudentPhoto(item.matchedStudent.id, permanentUri);
+        savedCount++;
+      }
+      setPdfPhotoModalVisible(false);
+      setPdfExtractItems([]);
+      loadStudents();
+      Alert.alert(
+        'Başarılı 🎉',
+        `PDF'ten toplam ${savedCount} öğrenci fotoğrafı başarıyla yüklendi ve öğrencilere atandı!`
+      );
+    } catch (e: any) {
+      Alert.alert('Hata', 'Fotoğraflar kaydedilirken bir hata oluştu.');
+    } finally {
+      setSavingPdfPhotos(false);
+    }
+  };
+
+  const handleUpdatePdfMatchStudent = (index: number, student: Student | null) => {
+    setPdfExtractItems((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], matchedStudent: student };
+      return copy;
+    });
+  };
+
+  // --- STUDENT DETAIL & OBSERVATION MODAL ---
+  const handleOpenStudentDetail = async (student: Student) => {
+    setDetailStudent(student);
+    setDetailModalVisible(true);
+    setNewNoteText('');
+    setLoadingNotes(true);
+    try {
+      const [notes, quicks] = await Promise.all([
+        getNotesByStudent(student.id),
+        getQuickNotes(),
+      ]);
+      setStudentNotesList(notes);
+      setQuickNotesList(quicks);
+    } catch (e) {
+      console.error('Error loading student detail:', e);
+    } finally {
+      setLoadingNotes(false);
+    }
+  };
+
+  const handleAddNoteFromDetail = async (textToAdd?: string) => {
+    const text = (textToAdd || newNoteText).trim();
+    if (!text || !detailStudent) return;
+    setSavingNote(true);
+    try {
+      await createNote(detailStudent.id, classId, text);
+      setNewNoteText('');
+      const updatedNotes = await getNotesByStudent(detailStudent.id);
+      setStudentNotesList(updatedNotes);
+    } catch (e) {
+      Alert.alert('Hata', 'Görüş kaydedilemedi.');
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleDeleteNoteFromDetail = async (noteId: number) => {
+    if (!detailStudent) return;
+    try {
+      await deleteNote(noteId);
+      const updatedNotes = await getNotesByStudent(detailStudent.id);
+      setStudentNotesList(updatedNotes);
+    } catch (e) {
+      Alert.alert('Hata', 'Görüş silinemedi.');
     }
   };
 
@@ -466,15 +613,31 @@ export const ClassDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Secondary Action Row: Bulk Photo & Bulk Operations */}
+        {/* Secondary Action Row: PDF Photo, Bulk Photo & Bulk Operations */}
         <View style={styles.actionRowSecond}>
+          <TouchableOpacity
+            style={styles.pdfPhotoBtn}
+            onPress={handleStartPdfPhoto}
+            activeOpacity={0.7}
+            disabled={pdfExtracting}
+          >
+            {pdfExtracting ? (
+              <ActivityIndicator size="small" color="#DC2626" />
+            ) : (
+              <Ionicons name="document-text" size={15} color="#DC2626" />
+            )}
+            <Text style={styles.pdfPhotoBtnText}>
+              {pdfExtracting ? 'PDF Okunuyor...' : "PDF'ten Fotoğraf"}
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.bulkPhotoBtn}
             onPress={handleStartBulkPhoto}
             activeOpacity={0.7}
           >
             <Ionicons name="images" size={15} color="#047857" />
-            <Text style={styles.bulkPhotoBtnText}>Toplu Fotoğraf Yükle</Text>
+            <Text style={styles.bulkPhotoBtnText}>Dosyalardan</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -493,7 +656,7 @@ export const ClassDetailScreen: React.FC = () => {
                 selectionMode && styles.selectionModeBtnTextActive,
               ]}
             >
-              {selectionMode ? 'İşlemleri Kapat' : 'Toplu İşlemler'}
+              {selectionMode ? 'Kapat' : 'Seçim'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -614,25 +777,30 @@ export const ClassDetailScreen: React.FC = () => {
                     </TouchableOpacity>
                   )}
 
-                  {/* Student Avatar / Photo */}
+                  {/* Student Avatar / Photo - Large Portrait */}
                   <TouchableOpacity
                     style={styles.avatarWrap}
-                    onPress={() => handleOpenPhotoOptions(item)}
+                    onPress={() => handleOpenStudentDetail(item)}
                     activeOpacity={0.8}
                   >
                     {item.photo_uri ? (
                       <Image source={{ uri: item.photo_uri }} style={styles.avatarImg} />
                     ) : (
                       <View style={styles.numberBadge}>
+                        <Ionicons name="person" size={22} color={Colors.textMuted} />
                         <Text style={styles.numberText}>{item.student_number || '-'}</Text>
                       </View>
                     )}
-                    <View style={styles.cameraIconBadge}>
-                      <Ionicons name="camera" size={9} color="#FFFFFF" />
+                    <View style={styles.zoomIconBadge}>
+                      <Ionicons name="expand" size={10} color="#FFFFFF" />
                     </View>
                   </TouchableOpacity>
 
-                  <View style={styles.studentInfo}>
+                  <TouchableOpacity
+                    style={styles.studentInfo}
+                    onPress={() => handleOpenStudentDetail(item)}
+                    activeOpacity={0.7}
+                  >
                     <Text style={styles.studentName}>
                       {item.first_name} {item.last_name}
                     </Text>
@@ -640,19 +808,14 @@ export const ClassDetailScreen: React.FC = () => {
                       No: {item.student_number || '-'}
                       {item.notes ? ` • ${item.notes}` : ''}
                     </Text>
-                  </View>
+                  </TouchableOpacity>
 
                   {!selectionMode && (
                     <View style={styles.studentActions}>
-                      {/* Quick opinion / note button */}
+                      {/* Quick opinion / student detail modal */}
                       <TouchableOpacity
                         style={[styles.smallIconBtn, { backgroundColor: Colors.warningLight }]}
-                        onPress={() => {
-                          navigation.navigate('StudentNotesTab', {
-                            initialClassId: classId,
-                            initialStudentId: item.id,
-                          });
-                        }}
+                        onPress={() => handleOpenStudentDetail(item)}
                       >
                         <Ionicons name="chatbox-ellipses" size={16} color={Colors.warningDark} />
                       </TouchableOpacity>
@@ -971,6 +1134,309 @@ export const ClassDetailScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* PDF Photo Import Modal */}
+      <Modal
+        visible={pdfPhotoModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPdfPhotoModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.detailHeaderInfo}>
+                <Text style={styles.modalTitle}>PDF'ten Fotoğraf Yükle</Text>
+                <Text style={styles.detailModalSubTitle}>
+                  {pdfExtractItems.length} vesikalık fotoğraf bulundu •{' '}
+                  {pdfExtractItems.filter((i) => i.matchedStudent !== null).length} eşleşti
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPdfPhotoModalVisible(false)}
+                style={styles.detailModalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pdfBannerBox}>
+              <Ionicons name="information-circle" size={18} color="#0369A1" />
+              <Text style={styles.pdfBannerText}>
+                Fotoğraflar PDF'teki okul numarası sırasına göre şube listenizle eşleştirildi. Kontrol edip onaylayınız.
+              </Text>
+            </View>
+
+            <ScrollView style={styles.pdfMatchScroll} showsVerticalScrollIndicator={true}>
+              {pdfExtractItems.map((item, idx) => {
+                const matched = item.matchedStudent;
+                return (
+                  <View key={idx} style={styles.pdfMatchRow}>
+                    <Image source={{ uri: item.tempUri }} style={styles.pdfMatchThumb} />
+                    <View style={styles.pdfMatchInfo}>
+                      <View style={styles.pdfMatchBadgeRow}>
+                        <Text style={styles.pdfOrderText}>#{idx + 1}. Fotoğraf</Text>
+                        {matched ? (
+                          <View style={styles.matchedBadgeSuccess}>
+                            <Ionicons name="checkmark-circle" size={12} color="#047857" />
+                            <Text style={styles.matchedBadgeSuccessText}>Eşleşti</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.matchedBadgeWarning}>
+                            <Text style={styles.matchedBadgeWarningText}>Eşleşmedi</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {matched ? (
+                        <Text style={styles.pdfMatchedStudentName}>
+                          {matched.student_number} - {matched.first_name} {matched.last_name}
+                        </Text>
+                      ) : (
+                        <Text style={styles.pdfUnmatchedText}>
+                          Sıradaki öğrenci bulunamadı
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setPdfPhotoModalVisible(false)}
+              />
+              <Button
+                title={`Kaydet (${pdfExtractItems.filter((i) => i.matchedStudent !== null).length})`}
+                icon="checkmark"
+                loading={savingPdfPhotos}
+                disabled={
+                  pdfExtractItems.filter((i) => i.matchedStudent !== null).length === 0 ||
+                  savingPdfPhotos
+                }
+                style={{ flex: 1.5 }}
+                onPress={handleConfirmSavePdfPhotos}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Student Detail & Opinion Modal */}
+      <Modal
+        visible={detailModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setDetailModalVisible(false)}
+      >
+        <View style={styles.detailModalOverlay}>
+          <View style={styles.detailModalContainer}>
+            {/* Header */}
+            <View style={styles.detailModalHeader}>
+              <View style={styles.detailHeaderInfo}>
+                <Text style={styles.detailModalTitle} numberOfLines={1}>
+                  {detailStudent?.first_name} {detailStudent?.last_name}
+                </Text>
+                <Text style={styles.detailModalSubTitle}>
+                  {className} • No: {detailStudent?.student_number || '-'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.detailModalCloseBtn}
+                onPress={() => setDetailModalVisible(false)}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.detailModalBody}
+              contentContainerStyle={{ paddingBottom: 28 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Photo & Basic Info Banner */}
+              <View style={styles.detailStudentCard}>
+                <View style={styles.detailPhotoWrap}>
+                  {detailStudent?.photo_uri ? (
+                    <Image
+                      source={{ uri: detailStudent.photo_uri }}
+                      style={styles.detailPhotoLarge}
+                    />
+                  ) : (
+                    <View style={styles.detailPhotoPlaceholder}>
+                      <Ionicons name="person" size={56} color={Colors.textMuted} />
+                      <Text style={styles.detailPlaceholderNo}>
+                        No: {detailStudent?.student_number || '-'}
+                      </Text>
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={styles.detailPhotoActionBtn}
+                    onPress={() => {
+                      if (detailStudent) handleOpenPhotoOptions(detailStudent);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="camera" size={13} color="#FFFFFF" />
+                    <Text style={styles.detailPhotoActionText}>Fotoğraf Değiştir</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.detailStudentMeta}>
+                  <View style={styles.detailMetaRow}>
+                    <Text style={styles.detailMetaLabel}>Okul No:</Text>
+                    <Text style={styles.detailMetaVal}>{detailStudent?.student_number || '-'}</Text>
+                  </View>
+                  <View style={styles.detailMetaRow}>
+                    <Text style={styles.detailMetaLabel}>Ad Soyad:</Text>
+                    <Text style={styles.detailMetaVal}>
+                      {detailStudent?.first_name} {detailStudent?.last_name}
+                    </Text>
+                  </View>
+                  <View style={styles.detailMetaRow}>
+                    <Text style={styles.detailMetaLabel}>Şube:</Text>
+                    <Text style={styles.detailMetaVal}>{className}</Text>
+                  </View>
+                  {detailStudent?.notes ? (
+                    <View style={styles.detailNotesBox}>
+                      <Text style={styles.detailMetaLabel}>Açıklama / Not:</Text>
+                      <Text style={styles.detailNotesText}>{detailStudent.notes}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+
+              {/* Quick Opinion Chips */}
+              <View style={styles.detailSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Ionicons name="sparkles" size={16} color={Colors.warningDark} />
+                  <Text style={styles.detailSectionTitle}>Hızlı Görüş Ekle</Text>
+                </View>
+                <Text style={styles.detailSectionSub}>
+                  Dokunarak öğrenciye hızlıca görüş veya gözlem kaydedin:
+                </Text>
+
+                <View style={styles.chipsContainer}>
+                  {[
+                    'Derse katılımı harika ⭐',
+                    'Ödevini eksiksiz yaptı ✍️',
+                    'Ders içi konuşuyor ⚠️',
+                    'Sorumlu ve düzenli 🌟',
+                    'Konuyu tekrar etmeli 📖',
+                    'Gelişim gösteriyor 📈',
+                    'Ders araç gereçleri eksik 🎒',
+                    'Örnek davranış sergiledi 👏',
+                    ...quickNotesList.map((q) => q.text),
+                  ]
+                    .filter((v, i, a) => a.indexOf(v) === i)
+                    .map((chipText, idx) => (
+                      <TouchableOpacity
+                        key={idx}
+                        style={styles.chipButton}
+                        onPress={() => handleAddNoteFromDetail(chipText)}
+                        disabled={savingNote}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.chipButtonText}>{chipText}</Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
+              </View>
+
+              {/* Custom Note Input */}
+              <View style={styles.detailSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Ionicons name="create-outline" size={16} color={Colors.primary} />
+                  <Text style={styles.detailSectionTitle}>Özel Görüş / Gözlem Yaz</Text>
+                </View>
+                <View style={styles.customNoteInputWrap}>
+                  <Input
+                    placeholder="Öğrenci hakkında gözlem veya görüşünüz..."
+                    value={newNoteText}
+                    onChangeText={setNewNoteText}
+                    multiline
+                    style={styles.customNoteInput}
+                  />
+                  <Button
+                    title="Görüşü Kaydet"
+                    icon="add-circle"
+                    size="sm"
+                    loading={savingNote}
+                    disabled={!newNoteText.trim() || savingNote}
+                    onPress={() => handleAddNoteFromDetail()}
+                    style={{ marginTop: 8 }}
+                  />
+                </View>
+              </View>
+
+              {/* Existing Notes List */}
+              <View style={styles.detailSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Ionicons name="chatbubbles-outline" size={16} color={Colors.textPrimary} />
+                  <Text style={styles.detailSectionTitle}>
+                    Kayıtlı Görüşler ({studentNotesList.length})
+                  </Text>
+                </View>
+
+                {loadingNotes ? (
+                  <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: 12 }} />
+                ) : studentNotesList.length === 0 ? (
+                  <View style={styles.emptyNotesBox}>
+                    <Text style={styles.emptyNotesText}>Henüz bu öğrenci için kaydedilmiş bir görüş yok.</Text>
+                  </View>
+                ) : (
+                  studentNotesList.map((n) => (
+                    <View key={n.id} style={styles.noteItemCard}>
+                      <View style={styles.noteItemContent}>
+                        <Text style={styles.noteItemText}>{n.note}</Text>
+                        <Text style={styles.noteItemDate}>
+                          {new Date(n.created_at || Date.now()).toLocaleDateString('tr-TR', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.deleteNoteBtn}
+                        onPress={() => handleDeleteNoteFromDetail(n.id)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+
+              {/* Navigate to full notes history tab */}
+              <TouchableOpacity
+                style={styles.fullHistoryBtn}
+                onPress={() => {
+                  setDetailModalVisible(false);
+                  if (detailStudent) {
+                    navigation.navigate('StudentNotesTab', {
+                      initialClassId: classId,
+                      initialStudentId: detailStudent.id,
+                    });
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="journal-outline" size={16} color={Colors.primary} />
+                <Text style={styles.fullHistoryBtnText}>Tüm Görüş Geçmişi Sayfasına Git</Text>
+                <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1015,8 +1481,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  pdfPhotoBtn: {
+    flex: 1.3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    gap: 5,
+  },
+  pdfPhotoBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
   bulkPhotoBtn: {
-    flex: 1.2,
+    flex: 1.1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1167,28 +1650,43 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   avatarImg: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 56,
+    height: 72,
+    borderRadius: 8,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1.5,
-    borderColor: Colors.primaryMuted,
+    borderColor: Colors.border,
+    resizeMode: 'cover',
   },
   numberBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 56,
+    height: 72,
+    borderRadius: 8,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
+    gap: 2,
   },
   numberText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '800',
-    color: Colors.textPrimary,
+    color: Colors.textSecondary,
+  },
+  zoomIconBadge: {
+    position: 'absolute',
+    bottom: -3,
+    right: -3,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
   cameraIconBadge: {
     position: 'absolute',
@@ -1429,5 +1927,325 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textSecondary,
     marginTop: 2,
+  },
+  // PDF Photo Import Modal Styles
+  pdfBannerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+    gap: 8,
+  },
+  pdfBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#0369A1',
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  pdfMatchScroll: {
+    maxHeight: 340,
+    marginBottom: 12,
+  },
+  pdfMatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 12,
+  },
+  pdfMatchThumb: {
+    width: 48,
+    height: 60,
+    borderRadius: 6,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    resizeMode: 'cover',
+  },
+  pdfMatchInfo: {
+    flex: 1,
+  },
+  pdfMatchBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  pdfOrderText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  matchedBadgeSuccess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 4,
+  },
+  matchedBadgeSuccessText: {
+    fontSize: 10,
+    color: '#047857',
+    fontWeight: '700',
+  },
+  matchedBadgeWarning: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  matchedBadgeWarningText: {
+    fontSize: 10,
+    color: '#B45309',
+    fontWeight: '700',
+  },
+  pdfMatchedStudentName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  pdfUnmatchedText: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+  },
+  // Student Detail Modal Styles
+  detailModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  detailModalContainer: {
+    backgroundColor: Colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '92%',
+    minHeight: '75%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  detailModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  detailHeaderInfo: {
+    flex: 1,
+  },
+  detailModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  detailModalSubTitle: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  detailModalCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: Colors.cardSubtle,
+  },
+  detailModalBody: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  detailStudentCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.background,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 16,
+    gap: 14,
+    alignItems: 'center',
+  },
+  detailPhotoWrap: {
+    alignItems: 'center',
+  },
+  detailPhotoLarge: {
+    width: 100,
+    height: 128,
+    borderRadius: 10,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 2,
+    borderColor: Colors.primaryMuted,
+    resizeMode: 'cover',
+  },
+  detailPhotoPlaceholder: {
+    width: 100,
+    height: 128,
+    borderRadius: 10,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  detailPlaceholderNo: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  detailPhotoActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    marginTop: 6,
+    gap: 4,
+  },
+  detailPhotoActionText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  detailStudentMeta: {
+    flex: 1,
+    gap: 6,
+  },
+  detailMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  detailMetaLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  detailMetaVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  detailNotesBox: {
+    marginTop: 2,
+  },
+  detailNotesText: {
+    fontSize: 12,
+    color: Colors.textPrimary,
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  detailSection: {
+    marginBottom: 16,
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  detailSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  detailSectionSub: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginBottom: 10,
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  chipButton: {
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  chipButtonText: {
+    fontSize: 12,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  customNoteInputWrap: {
+    marginTop: 4,
+  },
+  customNoteInput: {
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  emptyNotesBox: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  emptyNotesText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+  },
+  noteItemCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.card,
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 8,
+    gap: 8,
+  },
+  noteItemContent: {
+    flex: 1,
+  },
+  noteItemText: {
+    fontSize: 13,
+    color: Colors.textPrimary,
+    lineHeight: 18,
+  },
+  noteItemDate: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  deleteNoteBtn: {
+    padding: 4,
+  },
+  fullHistoryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primaryLight,
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 6,
+    marginTop: 4,
+  },
+  fullHistoryBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.primary,
   },
 });
