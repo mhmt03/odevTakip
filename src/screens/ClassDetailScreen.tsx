@@ -23,6 +23,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Header } from '../components/Header';
 import {
   getStudentsByClass,
+  getAllStudentsWithClass,
   createStudent,
   updateStudent,
   deleteStudent,
@@ -106,10 +107,12 @@ export const ClassDetailScreen: React.FC = () => {
   const [pdfExtracting, setPdfExtracting] = useState(false);
   const [pdfExtractItems, setPdfExtractItems] = useState<PdfExtractedStudentPhoto[]>([]);
   const [savingPdfPhotos, setSavingPdfPhotos] = useState(false);
+  const [pdfScope, setPdfScope] = useState<'class' | 'all'>('class');
 
   // Student Detail & Opinion Modal state
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [detailStudent, setDetailStudent] = useState<Student | null>(null);
+  const [detailStudentIndex, setDetailStudentIndex] = useState<number>(0);
   const [studentNotesList, setStudentNotesList] = useState<StudentNote[]>([]);
   const [quickNotesList, setQuickNotesList] = useState<QuickNoteItem[]>([]);
   const [newNoteText, setNewNoteText] = useState('');
@@ -542,14 +545,52 @@ export const ClassDetailScreen: React.FC = () => {
   };
 
   // --- PDF PHOTO EXTRACTION & MATCHING ---
-  const handleStartPdfPhoto = async () => {
-    if (students.length === 0) {
-      Alert.alert('Bilgi', 'Önce bu şubeye öğrenci eklemelisiniz.');
-      return;
-    }
+  const handleStartPdfPhoto = () => {
+    Alert.alert(
+      'PDF\'ten Fotoğraf Aktar',
+      'Hangi öğrenciler için eşleştirme yapılsın?',
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Sadece Bu Sınıf',
+          onPress: () => {
+            setPdfScope('class');
+            runPdfExtraction('class');
+          },
+        },
+        {
+          text: 'Tüm Öğrenciler',
+          onPress: () => {
+            setPdfScope('all');
+            runPdfExtraction('all');
+          },
+        },
+      ]
+    );
+  };
+
+  const runPdfExtraction = async (scope: 'class' | 'all') => {
     try {
       setPdfExtracting(true);
-      const res = await extractPhotosFromPdf(students);
+      let targetStudents: Student[] = students;
+      if (scope === 'all') {
+        const all = await getAllStudentsWithClass();
+        targetStudents = all.map((s) => ({
+          id: s.id,
+          class_id: s.class_id,
+          student_number: s.student_number,
+          first_name: s.first_name,
+          last_name: s.last_name,
+          notes: s.notes,
+          photo_uri: s.photo_uri,
+          created_at: s.created_at,
+        }));
+      }
+      if (targetStudents.length === 0) {
+        Alert.alert('Bilgi', 'Eşleştirilecek öğrenci bulunamadı.');
+        return;
+      }
+      const res = await extractPhotosFromPdf(targetStudents);
       if (!res.success) {
         if (res.error && res.error !== 'Dosya seçilmedi.') {
           Alert.alert('Hata', res.error);
@@ -611,6 +652,14 @@ export const ClassDetailScreen: React.FC = () => {
 
   // --- STUDENT DETAIL & OBSERVATION MODAL ---
   const handleOpenStudentDetail = async (student: Student) => {
+    const filteredStudents = students.filter((s) =>
+      searchQuery
+        ? (s.first_name + ' ' + s.last_name).toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase())
+        : true
+    );
+    const idx = filteredStudents.findIndex((s) => s.id === student.id);
+    setDetailStudentIndex(idx >= 0 ? idx : 0);
     setDetailStudent(student);
     setDetailModalVisible(true);
     setNewNoteText('');
@@ -618,6 +667,39 @@ export const ClassDetailScreen: React.FC = () => {
     try {
       const [notes, quicks, currentSched] = await Promise.all([
         getNotesByStudent(student.id),
+        getQuickNotes(),
+        getCurrentActiveLessonSummary(),
+      ]);
+      setStudentNotesList(notes);
+      setQuickNotesList(quicks);
+      setActiveLesson(currentSched);
+    } catch (e) {
+      console.error('Error loading student detail:', e);
+    } finally {
+      setLoadingNotes(false);
+    }
+  };
+
+  const handleNavigateDetailStudent = async (direction: 'prev' | 'next') => {
+    const filteredStudents = students.filter((s) =>
+      searchQuery
+        ? (s.first_name + ' ' + s.last_name).toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase())
+        : true
+    );
+    const newIdx =
+      direction === 'next'
+        ? Math.min(detailStudentIndex + 1, filteredStudents.length - 1)
+        : Math.max(detailStudentIndex - 1, 0);
+    const nextStudent = filteredStudents[newIdx];
+    if (!nextStudent) return;
+    setDetailStudentIndex(newIdx);
+    setDetailStudent(nextStudent);
+    setNewNoteText('');
+    setLoadingNotes(true);
+    try {
+      const [notes, quicks, currentSched] = await Promise.all([
+        getNotesByStudent(nextStudent.id),
         getQuickNotes(),
         getCurrentActiveLessonSummary(),
       ]);
@@ -1924,9 +2006,24 @@ export const ClassDetailScreen: React.FC = () => {
       >
         <View style={styles.detailModalOverlay}>
           <View style={styles.detailModalContainer}>
-            {/* Header */}
+            {/* Header with Prev/Next navigation */}
             <View style={styles.detailModalHeader}>
-              <View style={styles.detailHeaderInfo}>
+              <TouchableOpacity
+                style={[
+                  styles.detailNavBtn,
+                  detailStudentIndex <= 0 && styles.detailNavBtnDisabled,
+                ]}
+                onPress={() => handleNavigateDetailStudent('prev')}
+                disabled={detailStudentIndex <= 0}
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={detailStudentIndex <= 0 ? Colors.textMuted : Colors.primary}
+                />
+              </TouchableOpacity>
+
+              <View style={[styles.detailHeaderInfo, { flex: 1, alignItems: 'center' }]}>
                 <Text style={styles.detailModalTitle} numberOfLines={1}>
                   {detailStudent?.first_name} {detailStudent?.last_name}
                 </Text>
@@ -1934,6 +2031,22 @@ export const ClassDetailScreen: React.FC = () => {
                   {className} • No: {detailStudent?.student_number || '-'}
                 </Text>
               </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.detailNavBtn,
+                  detailStudentIndex >= (students.filter((s) => searchQuery ? (s.first_name + ' ' + s.last_name).toLowerCase().includes(searchQuery.toLowerCase()) || (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase()) : true).length - 1) && styles.detailNavBtnDisabled,
+                ]}
+                onPress={() => handleNavigateDetailStudent('next')}
+                disabled={detailStudentIndex >= (students.filter((s) => searchQuery ? (s.first_name + ' ' + s.last_name).toLowerCase().includes(searchQuery.toLowerCase()) || (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase()) : true).length - 1)}
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={detailStudentIndex >= (students.filter((s) => searchQuery ? (s.first_name + ' ' + s.last_name).toLowerCase().includes(searchQuery.toLowerCase()) || (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase()) : true).length - 1) ? Colors.textMuted : Colors.primary}
+                />
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.detailModalCloseBtn}
                 onPress={() => setDetailModalVisible(false)}
@@ -2101,29 +2214,23 @@ export const ClassDetailScreen: React.FC = () => {
                 </Text>
 
                 <View style={styles.chipsContainer}>
-                  {[
-                    'Derse katılımı harika ⭐',
-                    'Ödevini eksiksiz yaptı ✍️',
-                    'Ders içi konuşuyor ⚠️',
-                    'Sorumlu ve düzenli 🌟',
-                    'Konuyu tekrar etmeli 📖',
-                    'Gelişim gösteriyor 📈',
-                    'Ders araç gereçleri eksik 🎒',
-                    'Örnek davranış sergiledi 👏',
-                    ...quickNotesList.map((q) => q.text),
-                  ]
-                    .filter((v, i, a) => a.indexOf(v) === i)
-                    .map((chipText, idx) => (
+                  {quickNotesList.length === 0 ? (
+                    <Text style={{ fontSize: 13, color: Colors.textMuted, fontStyle: 'italic' }}>
+                      İşlemler sayfasından hızlı görüş metinleri ekleyin.
+                    </Text>
+                  ) : (
+                    quickNotesList.map((q, idx) => (
                       <TouchableOpacity
-                        key={idx}
+                        key={q.id ?? idx}
                         style={styles.chipButton}
-                        onPress={() => handleAddNoteFromDetail(chipText)}
+                        onPress={() => handleAddNoteFromDetail(q.text)}
                         disabled={savingNote}
                         activeOpacity={0.7}
                       >
-                        <Text style={styles.chipButtonText}>{chipText}</Text>
+                        <Text style={styles.chipButtonText}>{q.text}</Text>
                       </TouchableOpacity>
-                    ))}
+                    ))
+                  )}
                 </View>
               </View>
 
@@ -2723,18 +2830,18 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   avatarImg: {
-    width: 56,
-    height: 72,
-    borderRadius: 8,
+    width: 72,
+    height: 90,
+    borderRadius: 10,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1.5,
     borderColor: Colors.border,
     resizeMode: 'cover',
   },
   numberBadge: {
-    width: 56,
-    height: 72,
-    borderRadius: 8,
+    width: 72,
+    height: 90,
+    borderRadius: 10,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1,
     borderColor: Colors.border,
