@@ -25,6 +25,9 @@ import {
   restoreDatabaseBackup,
   DatabaseStats,
 } from '../utils/backupService';
+import Constants from 'expo-constants';
+import appConfig from '../../app.json';
+import pkg from '../../package.json';
 import {
   getQuickNotes,
   addQuickNote,
@@ -33,6 +36,12 @@ import {
   resetDefaultQuickNotes,
   QuickNoteItem,
 } from '../database/operations/noteOperations';
+
+const APP_VERSION =
+  Constants.expoConfig?.version ||
+  (appConfig as any)?.expo?.version ||
+  (pkg as any)?.version ||
+  '1.0.0';
 
 export const OperationsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -436,7 +445,7 @@ export const OperationsScreen: React.FC = () => {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.appTitle}>Sınıf Takip & Ajanda</Text>
-              <Text style={styles.appVersionBadge}>Sürüm 1.0.0 (Expo SDK 57)</Text>
+              <Text style={styles.appVersionBadge}>Sürüm {APP_VERSION}</Text>
             </View>
           </View>
 
