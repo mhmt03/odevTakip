@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Image,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -119,6 +120,7 @@ export const ClassDetailScreen: React.FC = () => {
   // Multi-select / Bulk operations state
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
+  const [actionMenuVisible, setActionMenuVisible] = useState(false);
 
   // Bulk Transfer Modal state
   const [transferModalVisible, setTransferModalVisible] = useState(false);
@@ -861,83 +863,6 @@ export const ClassDetailScreen: React.FC = () => {
 
       {activeViewTab === 'students' && (
         <>
-          {/* Action Bar */}
-      <View style={styles.actionBar}>
-        <View style={styles.actionRow}>
-          <Button
-            title="Manuel Ekle"
-            icon="person-add"
-            size="sm"
-            onPress={handleOpenAdd}
-            style={styles.actionBtn}
-          />
-          <Button
-            title="Excel'den Yükle"
-            icon="document-text"
-            size="sm"
-            variant="secondary"
-            onPress={handleExcelImport}
-            style={styles.actionBtn}
-          />
-          <TouchableOpacity
-            style={styles.templateBtn}
-            onPress={handleDownloadTemplate}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="download-outline" size={17} color={Colors.primary} />
-            <Text style={styles.templateBtnText}>Şablon</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Secondary Action Row: PDF Photo, Bulk Photo & Bulk Operations */}
-        <View style={styles.actionRowSecond}>
-          <TouchableOpacity
-            style={styles.pdfPhotoBtn}
-            onPress={handleStartPdfPhoto}
-            activeOpacity={0.7}
-            disabled={pdfExtracting}
-          >
-            {pdfExtracting ? (
-              <ActivityIndicator size="small" color="#DC2626" />
-            ) : (
-              <Ionicons name="document-text" size={15} color="#DC2626" />
-            )}
-            <Text style={styles.pdfPhotoBtnText}>
-              {pdfExtracting ? 'PDF Okunuyor...' : "PDF'ten Fotoğraf"}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.bulkPhotoBtn}
-            onPress={handleStartBulkPhoto}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="images" size={15} color="#047857" />
-            <Text style={styles.bulkPhotoBtnText}>Dosyalardan</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.selectionModeBtn, selectionMode && styles.selectionModeBtnActive]}
-            onPress={toggleSelectionMode}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={selectionMode ? 'checkmark-done-circle' : 'checkbox-outline'}
-              size={15}
-              color={selectionMode ? '#FFFFFF' : Colors.textSecondary}
-            />
-            <Text
-              style={[
-                styles.selectionModeBtnText,
-                selectionMode && styles.selectionModeBtnTextActive,
-              ]}
-            >
-              {selectionMode ? 'Kapat' : 'Seçim'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
       {/* Selection Mode Toolbar (When Active) */}
       {selectionMode && (
         <View style={styles.selectionToolbar}>
@@ -960,7 +885,7 @@ export const ClassDetailScreen: React.FC = () => {
               <Text style={{ fontWeight: '800', color: Colors.primary }}>
                 {selectedStudentIds.length}
               </Text>{' '}
-              öğrenci seçili
+              seçili
             </Text>
           </View>
 
@@ -975,7 +900,7 @@ export const ClassDetailScreen: React.FC = () => {
               onPress={handleOpenTransferModal}
             >
               <Ionicons name="swap-horizontal" size={14} color="#0369A1" />
-              <Text style={styles.transferBtnText}>Şube Değiştir</Text>
+              <Text style={styles.transferBtnText}>Şube Taşı</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -990,20 +915,37 @@ export const ClassDetailScreen: React.FC = () => {
               <Ionicons name="trash-outline" size={14} color="#B91C1C" />
               <Text style={styles.deleteBtnText}>Sil</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.selectionActionBtn, styles.closeSelectionBtn]}
+              onPress={toggleSelectionMode}
+            >
+              <Ionicons name="close" size={14} color={Colors.textSecondary} />
+              <Text style={styles.closeSelectionBtnText}>Kapat</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* Search Bar */}
+      {/* Search Bar & Counter */}
       <View style={styles.searchWrapper}>
-        <Input
-          placeholder="Öğrenci adı, soyadı veya no ile ara..."
-          icon="search"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onClear={() => setSearchQuery('')}
-          style={{ height: 40 }}
-        />
+        <View style={styles.searchRow}>
+          <View style={{ flex: 1 }}>
+            <Input
+              placeholder="Öğrenci adı, soyadı veya no ile ara..."
+              icon="search"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onClear={() => setSearchQuery('')}
+              style={{ height: 40 }}
+            />
+          </View>
+          <View style={styles.studentCountBadge}>
+            <Text style={styles.studentCountBadgeText}>
+              {filteredStudents.length} / {students.length}
+            </Text>
+          </View>
+        </View>
       </View>
 
       {loading ? (
@@ -1118,6 +1060,26 @@ export const ClassDetailScreen: React.FC = () => {
             );
           }}
         />
+      )}
+
+      {/* Floating Action Button (FAB) */}
+      {!selectionMode && (
+        <TouchableOpacity
+          style={styles.floatingActionPill}
+          onPress={() => setActionMenuVisible(true)}
+          activeOpacity={0.85}
+        >
+          {pdfExtracting ? (
+            <ActivityIndicator size="small" color="#FFF" />
+          ) : (
+            <>
+              <View style={styles.fabIconCircle}>
+                <Ionicons name="sparkles" size={17} color="#FFF" />
+              </View>
+              <Text style={styles.fabPillText}>İşlemler</Text>
+            </>
+          )}
+        </TouchableOpacity>
       )}
         </>
       )}
@@ -1396,6 +1358,180 @@ export const ClassDetailScreen: React.FC = () => {
           )}
         </View>
       )}
+
+      {/* Floating Action Menu Modal */}
+      <Modal
+        visible={actionMenuVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setActionMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.actionModalOverlay}
+          activeOpacity={1}
+          onPress={() => setActionMenuVisible(false)}
+        >
+          <View style={styles.actionModalSheet} onStartShouldSetResponder={() => true}>
+            {/* Sheet Handle */}
+            <View style={styles.sheetHandle} />
+
+            {/* Sheet Header */}
+            <View style={styles.actionSheetHeader}>
+              <View>
+                <Text style={styles.actionSheetTitle}>Şube & Öğrenci İşlemleri</Text>
+                <Text style={styles.actionSheetSub}>
+                  {className} • {students.length} Kayıtlı Öğrenci
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.actionSheetCloseBtn}
+                onPress={() => setActionMenuVisible(false)}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Action Items */}
+            <View style={styles.actionSheetContent}>
+              {/* 1. Manuel Öğrenci Ekle */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleOpenAdd(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#EEF2FF' }]}>
+                  <Ionicons name="person-add" size={22} color={Colors.primary} />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={styles.actionSheetItemTitle}>Manuel Öğrenci Ekle</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Numara, ad soyad ve fotoğraf ile tek tek öğrenci kaydı oluşturun.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 2. Excel'den Yükle */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleExcelImport(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                  <Ionicons name="document-text" size={22} color="#16A34A" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.actionSheetItemTitle}>Excel'den Öğrenci Yükle</Text>
+                    <View style={[styles.actionItemBadge, { backgroundColor: '#DCFCE7' }]}>
+                      <Text style={[styles.actionItemBadgeText, { color: '#15803D' }]}>Toplu Ekle</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.actionSheetItemDesc}>
+                    e-Okul veya hazır Excel listesindeki öğrencileri topluca şubeye aktarın.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 3. Örnek Excel Şablonu İndir */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  handleDownloadTemplate();
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#EDE9FE' }]}>
+                  <Ionicons name="download-outline" size={22} color="#7C3AED" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={styles.actionSheetItemTitle}>Örnek Excel Şablonu İndir</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Öğrenci yüklemesi için sütunları hazırlanmış örnek şablon dosyasını paylaşın.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 4. PDF'ten Fotoğraf Aktar */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleStartPdfPhoto(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="camera" size={22} color="#DC2626" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.actionSheetItemTitle}>PDF'ten Fotoğraf Aktar</Text>
+                    <View style={[styles.actionItemBadge, { backgroundColor: '#FEE2E2' }]}>
+                      <Text style={[styles.actionItemBadgeText, { color: '#B91C1C' }]}>Akıllı OCR</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.actionSheetItemDesc}>
+                    e-Okul fotoğraflı sınıf listesi PDF'inden resimleri otomatik kesip öğrencilere ata.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 5. Dosyalardan Fotoğraf Eşle */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleStartBulkPhoto(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#CCFBF1' }]}>
+                  <Ionicons name="images" size={22} color="#0D9488" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={styles.actionSheetItemTitle}>Dosyalardan Fotoğraf Eşle</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Galeriden veya klasörden numara/isim ile fotoğrafları otomatik eşleştirin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 6. Çoklu Seçim Modu */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  toggleSelectionMode();
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#FFEDD5' }]}>
+                  <Ionicons name="checkbox-outline" size={22} color="#EA580C" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={styles.actionSheetItemTitle}>Çoklu Seçim Modu</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Birden fazla öğrenciyi seçerek toplu şube transferi yapın veya silin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Manual Student Add/Edit Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent>
@@ -2327,98 +2463,144 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  actionBar: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: Colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    gap: 8,
-  },
-  actionRow: {
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
   },
-  actionBtn: {
-    flex: 1,
-  },
-  templateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  studentCountBadge: {
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: Colors.primaryLight,
-    gap: 4,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
   },
-  templateBtnText: {
+  studentCountBadgeText: {
     fontSize: 12,
     fontWeight: '700',
     color: Colors.primary,
   },
-  actionRowSecond: {
+  floatingActionPill: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  pdfPhotoBtn: {
-    flex: 1.3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    gap: 5,
-  },
-  pdfPhotoBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  bulkPhotoBtn: {
-    flex: 1.1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#D1FAE5',
-    borderWidth: 1,
-    borderColor: '#6EE7B7',
-    gap: 5,
-  },
-  bulkPhotoBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#047857',
-  },
-  selectionModeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: Colors.cardSubtle,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 5,
-  },
-  selectionModeBtnActive: {
     backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 30,
+    gap: 8,
+    ...Shadows.large,
+    elevation: 8,
+    zIndex: 99,
   },
-  selectionModeBtnText: {
-    fontSize: 12,
+  fabIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fabPillText: {
+    color: '#FFF',
+    fontSize: 14,
     fontWeight: '700',
-    color: Colors.textSecondary,
+    letterSpacing: 0.2,
   },
-  selectionModeBtnTextActive: {
-    color: '#FFFFFF',
+  actionModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  actionModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+    ...Shadows.large,
+    maxHeight: '85%',
+  },
+  sheetHandle: {
+    width: 40,
+    height: 5,
+    backgroundColor: '#CBD5E1',
+    borderRadius: 3,
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  actionSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  actionSheetTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  actionSheetSub: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  actionSheetCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+  },
+  actionSheetContent: {
+    gap: 10,
+  },
+  actionSheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 14,
+  },
+  actionSheetIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionSheetItemTextWrap: {
+    flex: 1,
+  },
+  actionSheetItemTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  actionSheetItemDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  actionItemBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  actionItemBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   selectionToolbar: {
     flexDirection: 'row',
@@ -2487,6 +2669,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#B91C1C',
   },
+  closeSelectionBtn: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
+  closeSelectionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
   btnDisabled: {
     opacity: 0.4,
   },
@@ -2498,6 +2689,7 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     paddingTop: 4,
+    paddingBottom: 90,
   },
   loadingWrap: {
     flex: 1,
