@@ -288,11 +288,12 @@ export const ScheduleScreen: React.FC = () => {
     <View style={styles.container}>
       {/* Top Header */}
       <View style={styles.header}>
-        <View style={{ flex: 1, paddingRight: 8 }}>
+        <View style={styles.headerTop}>
           <Text style={styles.headerTitle}>Haftalık Ders Programı</Text>
           <Text style={styles.headerSub}>Şube ve ders saatleri yönetimi (7 Gün)</Text>
         </View>
-        <View style={styles.headerActions}>
+
+        <View style={styles.headerActionsBar}>
           <TouchableOpacity
             style={styles.photoHeaderBtn}
             onPress={() => setPhotoMenuVisible(true)}
@@ -309,27 +310,29 @@ export const ScheduleScreen: React.FC = () => {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.actionBtnIcon}
-            onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay })}
-            accessibilityLabel="Saat & Ders Ayarları"
-          >
-            <Ionicons name="settings-outline" size={20} color={Colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionBtnIcon}
-            onPress={handleExportSchedule}
-            accessibilityLabel="Excel'e Aktar"
-          >
-            <Ionicons name="share-outline" size={20} color={Colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionBtnIcon, { backgroundColor: '#FEE2E2' }]}
-            onPress={handleClearEntireSchedule}
-            accessibilityLabel="Programı Temizle"
-          >
-            <Ionicons name="trash-outline" size={20} color={Colors.danger} />
-          </TouchableOpacity>
+          <View style={styles.headerIconButtonsGroup}>
+            <TouchableOpacity
+              style={styles.actionBtnIcon}
+              onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay })}
+              accessibilityLabel="Saat & Ders Ayarları"
+            >
+              <Ionicons name="settings-outline" size={19} color={Colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionBtnIcon}
+              onPress={handleExportSchedule}
+              accessibilityLabel="Excel'e Aktar"
+            >
+              <Ionicons name="share-outline" size={19} color={Colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtnIcon, { backgroundColor: '#FEE2E2' }]}
+              onPress={handleClearEntireSchedule}
+              accessibilityLabel="Programı Temizle"
+            >
+              <Ionicons name="trash-outline" size={19} color={Colors.danger} />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -842,17 +845,18 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
     backgroundColor: Colors.card,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  headerTop: {
+    marginBottom: 8,
+  },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
     color: Colors.textPrimary,
   },
@@ -861,9 +865,16 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 2,
   },
-  headerActions: {
+  headerActionsBar: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
+  },
+  headerIconButtonsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
   },
   actionBtnIcon: {
     padding: 8,
@@ -872,22 +883,23 @@ const styles = StyleSheet.create({
   },
   daysBar: {
     backgroundColor: Colors.card,
-    paddingVertical: 10,
+    paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
   daysScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
+    paddingHorizontal: 12,
+    gap: 6,
   },
   dayTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     backgroundColor: Colors.cardSubtle,
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
+    minWidth: 42,
   },
   dayTabActive: {
     backgroundColor: Colors.primary,
@@ -900,10 +912,11 @@ const styles = StyleSheet.create({
   dayTabContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'center',
+    gap: 3,
   },
   dayTabText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.textSecondary,
   },
@@ -911,9 +924,9 @@ const styles = StyleSheet.create({
     color: Colors.textInverse,
   },
   customIndicatorDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#F59E0B',
   },
   todayIndicator: {
@@ -921,7 +934,7 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: Colors.primary,
-    marginTop: 4,
+    marginTop: 2,
   },
   customBanner: {
     flexDirection: 'row',
