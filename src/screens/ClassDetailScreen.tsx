@@ -2561,6 +2561,46 @@ export const ClassDetailScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* PDF Extracting Loading Overlay */}
+      <Modal visible={pdfExtracting} transparent animationType="fade">
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: 20,
+            padding: 28,
+            alignItems: 'center',
+            width: '85%',
+            maxWidth: 340,
+            ...Shadows.large,
+          }}>
+            <ActivityIndicator size="large" color={Colors.primary} style={{ marginBottom: 18 }} />
+            <Text style={{
+              fontSize: 17,
+              fontWeight: '700',
+              color: Colors.textPrimary,
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>
+              PDF İşleniyor...
+            </Text>
+            <Text style={{
+              fontSize: 13,
+              color: Colors.textSecondary,
+              textAlign: 'center',
+              lineHeight: 18,
+            }}>
+              PDF dosyasındaki öğrenci resimleri ayıklanıyor ve eşleştiriliyor, lütfen bekleyiniz.
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -4042,5 +4082,14 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginBottom: 14,
     lineHeight: 18,
+  },
+  detailNavBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.primaryLight,
+  },
+  detailNavBtnDisabled: {
+    backgroundColor: Colors.cardSubtle,
+    opacity: 0.5,
   },
 });
