@@ -18,6 +18,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system/legacy';
+import { WebView } from 'react-native-webview';
 import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
 import { Badge } from '../components/Badge';
@@ -86,6 +88,33 @@ export const HomeScreen: React.FC = () => {
   } | null>(null);
   const [planSearchQuery, setPlanSearchQuery] = useState('');
   const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  useEffect(() => {
+    if (pdfViewerModalVisible && yearlyPlanPdf?.file_uri) {
+      let isMounted = true;
+      setPdfLoading(true);
+      FileSystem.readAsStringAsync(yearlyPlanPdf.file_uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      })
+        .then((b64) => {
+          if (isMounted) {
+            setPdfBase64(b64);
+            setPdfLoading(false);
+          }
+        })
+        .catch((err) => {
+          console.error('PDF Base64 read error:', err);
+          if (isMounted) setPdfLoading(false);
+        });
+      return () => {
+        isMounted = false;
+      };
+    } else {
+      setPdfBase64(null);
+    }
+  }, [pdfViewerModalVisible, yearlyPlanPdf]);
 
   const loadDaySchedule = async (day: number) => {
     try {
@@ -1138,18 +1167,55 @@ export const HomeScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
 
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-              <Ionicons name="document-text-outline" size={64} color={Colors.primary} style={{ marginBottom: 16 }} />
-              <Text style={{ fontSize: 16, fontWeight: '700', color: Colors.textPrimary, textAlign: 'center', marginBottom: 8 }}>
-                {yearlyPlanPdf?.file_name}
-              </Text>
-              <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center', marginBottom: 24, lineHeight: 18 }}>
-                Dosya Yolu: {yearlyPlanPdf?.file_uri.split('/').pop()}{'\n'}
-                Dosya Boyutu: {yearlyPlanPdf?.file_size ? `${(yearlyPlanPdf.file_size / 1024).toFixed(1)} KB` : 'Bilinmiyor'}
-              </Text>
+            <View style={{ flex: 1, overflow: 'hidden', borderRadius: 12, backgroundColor: '#F8FAFC' }}>
+              {pdfLoading ? (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={Colors.primary} />
+                  <Text style={{ marginTop: 12, fontSize: 14, color: Colors.textSecondary }}>
+                    PDF Yükleniyor...
+                  </Text>
+                </View>
+              ) : pdfBase64 ? (
+                <WebView
+                  originWhitelist={['*']}
+                  source={{
+                    html: `
+                      <!DOCTYPE html>
+                      <html>
+                        <head>
+                          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
+                          <style>
+                            body, html { margin: 0; padding: 0; height: 100%; background: #525659; }
+                            embed { width: 100%; height: 100%; }
+                          </style>
+                        </head>
+                        <body>
+                          <embed src="data:application/pdf;base64,${pdfBase64}" type="application/pdf" />
+                        </body>
+                      </html>
+                    `,
+                  }}
+                  style={{ flex: 1 }}
+                  startInLoadingState={true}
+                  renderLoading={() => (
+                    <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'center', alignItems: 'center' }}>
+                      <ActivityIndicator size="large" color={Colors.primary} />
+                    </View>
+                  )}
+                />
+              ) : (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                  <Ionicons name="alert-circle-outline" size={48} color={Colors.warning} />
+                  <Text style={{ fontSize: 14, color: Colors.textSecondary, marginTop: 12, textAlign: 'center' }}>
+                    PDF verisi okunamadı.
+                  </Text>
+                </View>
+              )}
+            </View>
 
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
               <TouchableOpacity
-                style={[styles.pdfOpenBtn, { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }]}
+                style={[styles.pdfOpenBtn, { flex: 1, backgroundColor: Colors.secondary }]}
                 onPress={() => {
                   if (yearlyPlanPdf) {
                     viewYearlyPlanPdf(
@@ -1159,8 +1225,14 @@ export const HomeScreen: React.FC = () => {
                   }
                 }}
               >
-                <Ionicons name="open-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={[styles.pdfOpenBtnText, { fontSize: 15 }]}>Sistem Görüntüleyicide Aç / Paylaş</Text>
+                <Ionicons name="open-outline" size={16} color="#FFFFFF" />
+                <Text style={styles.pdfOpenBtnText}>Dış Uygulama / Paylaş</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.planManageBtn, { paddingHorizontal: 16 }]}
+                onPress={() => setPdfViewerModalVisible(false)}
+              >
+                <Text style={styles.planManageBtnText}>Kapat</Text>
               </TouchableOpacity>
             </View>
           </View>
