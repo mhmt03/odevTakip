@@ -267,28 +267,6 @@ export const HomeScreen: React.FC = () => {
         )}
       </View>
 
-      {/* QUICK STATS */}
-      <View style={styles.statsRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{stats.classCount}</Text>
-          <Text style={styles.statLabel}>Şube</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{stats.studentCount}</Text>
-          <Text style={styles.statLabel}>Öğrenci</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{lessonInfo.todayLessons.length}</Text>
-          <Text style={styles.statLabel}>Bugünkü Ders</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={[styles.statValue, { color: Colors.warning }]}>
-            {stats.pendingAssignments}
-          </Text>
-          <Text style={styles.statLabel}>Bekleyen Ödev</Text>
-        </View>
-      </View>
-
       {/* SCHEDULE SECTION WITH DAY NAVIGATOR (PREV / NEXT ARROWS) */}
       <View style={styles.scheduleHeaderRow}>
         <View style={styles.dayNavigator}>
@@ -483,6 +461,29 @@ export const HomeScreen: React.FC = () => {
               <Text style={styles.quickSub}>Yedekleme & Ayarlar</Text>
             </View>
           </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* QUICK STATS (AT THE BOTTOM OF PAGE) */}
+      <Text style={styles.sectionHeader}>Genel İstatistikler</Text>
+      <View style={styles.statsRow}>
+        <View style={styles.statBox}>
+          <Text style={styles.statValue}>{stats.classCount}</Text>
+          <Text style={styles.statLabel}>Şube</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={styles.statValue}>{stats.studentCount}</Text>
+          <Text style={styles.statLabel}>Öğrenci</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={styles.statValue}>{lessonInfo.todayLessons.length}</Text>
+          <Text style={styles.statLabel}>Bugünkü Ders</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={[styles.statValue, { color: Colors.warning }]}>
+            {stats.pendingAssignments}
+          </Text>
+          <Text style={styles.statLabel}>Bekleyen Ödev</Text>
         </View>
       </View>
     </ScrollView>
