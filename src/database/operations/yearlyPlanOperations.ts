@@ -367,6 +367,185 @@ export const getCurrentTopicForClass = async (
   return items[0];
 };
 
+export interface LessonTopicSurroundingInfo {
+  found: boolean;
+  gradeLevel: number | null;
+  className: string;
+  courseName: string;
+  allTopics: YearlyPlanItem[];
+  currentIndex: number;
+  currentTopic: YearlyPlanItem | null;
+  previousTopics: { offset: number; item: YearlyPlanItem }[];
+  nextTopics: { offset: number; item: YearlyPlanItem }[];
+}
+
+/**
+ * Belirli bir ders saati için o derste deftere yazılacak metni, 
+ * önceki 2 dersin metnini ve sonraki 2 dersin metnini getirir.
+ */
+export const getSurroundingTopicsForLesson = async (
+  classId: number,
+  courseId: number,
+  dayOfWeek?: number,
+  slotId?: number,
+  referenceDate?: string
+): Promise<LessonTopicSurroundingInfo> => {
+  const db = await getDB();
+  const today = referenceDate || getTodayDateString();
+
+  // 1. Sınıf adını ve düzeyini al
+  const classRow = await db.getFirstAsync<{ id: number; name: string }>(
+    'SELECT id, name FROM classes WHERE id = ?',
+    classId
+  );
+  let gradeLevel: number | null = null;
+  const className = classRow?.name || '';
+  if (classRow) {
+    const m = classRow.name.match(/\d+/);
+    if (m) gradeLevel = parseInt(m[0], 10);
+  }
+
+  // 2. Ders adını al
+  const courseRow = await db.getFirstAsync<{ id: number; name: string }>(
+    'SELECT id, name FROM courses WHERE id = ?',
+    courseId
+  );
+  const courseName = courseRow?.name || '';
+
+  // 3. Bu sınıf ve ders için tüm yıllık plan konularını sırayla çek
+  const query = `
+    SELECT 
+      yp.id,
+      yp.course_id,
+      cr.name as course_name,
+      cr.code as course_code,
+      yp.class_id,
+      c.name as class_name,
+      yp.grade_level,
+      yp.lesson_hours,
+      yp.week_number,
+      yp.date_start,
+      yp.date_end,
+      yp.subject_topic,
+      yp.learning_outcomes
+    FROM yearly_plans yp
+    LEFT JOIN courses cr ON cr.id = yp.course_id
+    LEFT JOIN classes c ON c.id = yp.class_id
+    WHERE (
+      yp.class_id = ? 
+      OR (yp.class_id IS NULL AND (yp.grade_level = ? OR (yp.grade_level IS NULL AND ? IS NULL)))
+    )
+    AND yp.course_id = ?
+    ORDER BY yp.week_number ASC, yp.id ASC;
+  `;
+  const allTopics = await db.getAllAsync<YearlyPlanItem>(
+    query,
+    classId,
+    gradeLevel,
+    gradeLevel,
+    courseId
+  );
+
+  if (!allTopics || allTopics.length === 0) {
+    return {
+      found: false,
+      gradeLevel,
+      className,
+      courseName,
+      allTopics: [],
+      currentIndex: -1,
+      currentTopic: null,
+      previousTopics: [],
+      nextTopics: [],
+    };
+  }
+
+  // 4. Hedef konuyu belirle:
+  const weekItems = allTopics.filter(
+    (it) => it.date_start && it.date_end && it.date_start <= today && it.date_end >= today
+  );
+
+  let targetId: number | null = null;
+
+  if (weekItems.length === 1) {
+    targetId = weekItems[0].id;
+  } else if (weekItems.length > 1 && dayOfWeek && slotId) {
+    const scheduleSlots = await db.getAllAsync<{ day_of_week: number; slot_id: number }>(`
+      SELECT s.day_of_week, s.slot_id
+      FROM schedules s
+      JOIN lesson_slots ls ON ls.id = s.slot_id
+      WHERE s.class_id = ? AND s.course_id = ?
+      ORDER BY s.day_of_week ASC, ls.slot_number ASC
+    `, classId, courseId);
+
+    const matchIndex = scheduleSlots.findIndex(
+      (s) => s.day_of_week === dayOfWeek && s.slot_id === slotId
+    );
+    if (matchIndex >= 0) {
+      const currentLessonHourInWeek = matchIndex + 1;
+      let accumulatedHours = 0;
+      let picked = weekItems[0];
+      for (const item of weekItems) {
+        const hours = item.lesson_hours && item.lesson_hours > 0 ? item.lesson_hours : 1;
+        accumulatedHours += hours;
+        if (currentLessonHourInWeek <= accumulatedHours) {
+          picked = item;
+          break;
+        }
+      }
+      targetId = picked.id;
+    } else {
+      targetId = weekItems[0].id;
+    }
+  } else if (weekItems.length > 0) {
+    targetId = weekItems[0].id;
+  }
+
+  let currentIndex = -1;
+  if (targetId !== null) {
+    currentIndex = allTopics.findIndex((it) => it.id === targetId);
+  }
+
+  if (currentIndex < 0) {
+    const futureIndex = allTopics.findIndex(
+      (it) => it.date_start && it.date_start >= today
+    );
+    currentIndex = futureIndex >= 0 ? futureIndex : 0;
+  }
+
+  const currentTopic = allTopics[currentIndex] || null;
+
+  // Son iki ders
+  const previousTopics: { offset: number; item: YearlyPlanItem }[] = [];
+  if (currentIndex - 2 >= 0) {
+    previousTopics.push({ offset: -2, item: allTopics[currentIndex - 2] });
+  }
+  if (currentIndex - 1 >= 0) {
+    previousTopics.push({ offset: -1, item: allTopics[currentIndex - 1] });
+  }
+
+  // Gelecek iki ders
+  const nextTopics: { offset: number; item: YearlyPlanItem }[] = [];
+  if (currentIndex + 1 < allTopics.length) {
+    nextTopics.push({ offset: 1, item: allTopics[currentIndex + 1] });
+  }
+  if (currentIndex + 2 < allTopics.length) {
+    nextTopics.push({ offset: 2, item: allTopics[currentIndex + 2] });
+  }
+
+  return {
+    found: true,
+    gradeLevel,
+    className,
+    courseName,
+    allTopics,
+    currentIndex,
+    currentTopic,
+    previousTopics,
+    nextTopics,
+  };
+};
+
 // --- YEARLY PLAN PDF DOCUMENT ATTACHMENT ---
 export interface YearlyPlanDocument {
   id: number;
