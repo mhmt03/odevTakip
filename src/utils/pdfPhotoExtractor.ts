@@ -46,6 +46,65 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 }
 
 /**
+ * Safely reads PDF bytes from DocumentPickerAsset supporting Android Scoped Storage and Web
+ */
+async function readPdfBytes(asset: DocumentPicker.DocumentPickerAsset): Promise<Uint8Array> {
+  const uri = asset.uri;
+
+  // 1. Try FileSystem.readAsStringAsync
+  try {
+    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+    if (b64) {
+      return base64ToUint8Array(b64);
+    }
+  } catch (err) {
+    console.warn('readAsStringAsync failed on PDF URI, attempting fallback copy/fetch:', err);
+  }
+
+  // 2. Try copying to internal cache directory first (Android Scoped Storage bypass)
+  try {
+    const tempTarget = `${FileSystem.cacheDirectory}temp_read_${Date.now()}.pdf`;
+    await FileSystem.copyAsync({ from: uri, to: tempTarget });
+    const b64 = await FileSystem.readAsStringAsync(tempTarget, { encoding: 'base64' });
+    await FileSystem.deleteAsync(tempTarget, { idempotent: true });
+    if (b64) {
+      return base64ToUint8Array(b64);
+    }
+  } catch (copyErr) {
+    console.warn('copyAsync failed on PDF URI, falling back to fetch/blob:', copyErr);
+  }
+
+  // 3. Fallback: fetch(uri) -> blob -> FileReader (guaranteed to work across Android ContentResolver)
+  const res = await fetch(uri);
+  const blob = await res.blob();
+
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      try {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(new Uint8Array(reader.result));
+        } else if (typeof reader.result === 'string') {
+          const str = reader.result;
+          const cleanB64 = str.includes(',') ? str.split(',')[1] : str;
+          resolve(base64ToUint8Array(cleanB64));
+        } else {
+          reject(new Error('PDF dosyası okunamadı.'));
+        }
+      } catch (e) {
+        reject(e);
+      }
+    };
+    reader.onerror = reject;
+    if (typeof reader.readAsArrayBuffer === 'function') {
+      reader.readAsArrayBuffer(blob);
+    } else {
+      reader.readAsDataURL(blob);
+    }
+  });
+}
+
+/**
  * Extracts embedded JPEG images and student numbers from a PDF file.
  */
 export const extractPhotosFromPdf = async (
@@ -61,18 +120,15 @@ export const extractPhotosFromPdf = async (
       return { success: false, totalImages: 0, extractedPhotos: [], error: 'Dosya seçilmedi.' };
     }
 
-    const pdfUri = pickResult.assets[0].uri;
+    const asset = pickResult.assets[0];
 
-    // Read PDF file as Base64
-    const base64Data = await FileSystem.readAsStringAsync(pdfUri, {
-      encoding: 'base64',
-    });
+    // Read PDF file as byte array with robust fallbacks
+    const bytes = await readPdfBytes(asset);
 
-    if (!base64Data) {
+    if (!bytes || bytes.length === 0) {
       return { success: false, totalImages: 0, extractedPhotos: [], error: 'PDF dosyası okunamadı.' };
     }
 
-    const bytes = base64ToUint8Array(base64Data);
     const pdfLength = bytes.length;
 
     // Ensure cache directory for extracted photos
@@ -93,7 +149,7 @@ export const extractPhotosFromPdf = async (
         while (eoi < pdfLength - 1) {
           // JPEG End of Image: 0xFF, 0xD9
           if (bytes[eoi] === 0xff && bytes[eoi + 1] === 0xd9) {
-            // Filter out tiny icons (real photos are at least 1.5 KB)
+            // Filter out tiny icons (real photos are at least 1.2 KB)
             const sliceLen = eoi + 2 - offset;
             if (sliceLen >= 1200) {
               const slice = bytes.subarray(offset, eoi + 2);
@@ -118,8 +174,14 @@ export const extractPhotosFromPdf = async (
     }
 
     // 2. Try to detect student numbers from PDF raw string
-    // Convert first part or full text to latin1 string to scan for student numbers
-    const latin1Text = atob(base64Data.slice(0, Math.min(base64Data.length, 500000)));
+    let latin1Text = '';
+    const scanLen = Math.min(bytes.length, 300000);
+    const chunkSize = 8192;
+    for (let c = 0; c < scanLen; c += chunkSize) {
+      const slice = bytes.subarray(c, Math.min(c + chunkSize, scanLen));
+      latin1Text += String.fromCharCode.apply(null, slice as any);
+    }
+
     const numberMatches: string[] = [];
     const numberRegex = /\b([0-9]{2,6})\b/g;
     let m: RegExpExecArray | null;
