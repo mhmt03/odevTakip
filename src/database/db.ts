@@ -174,6 +174,46 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(course_id, grade_level)
     );
+
+    CREATE TABLE IF NOT EXISTS student_grades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_id INTEGER NOT NULL,
+      class_id INTEGER NOT NULL,
+      term INTEGER NOT NULL DEFAULT 1,
+      exam1 REAL,
+      exam2 REAL,
+      exam3 REAL,
+      perf1 REAL,
+      perf2 REAL,
+      perf3 REAL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+      UNIQUE(student_id, term)
+    );
+
+    CREATE TABLE IF NOT EXISTS quizzes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER NOT NULL,
+      term INTEGER NOT NULL DEFAULT 1,
+      title TEXT NOT NULL,
+      max_score REAL DEFAULT 100,
+      quiz_date TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quiz_scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      quiz_id INTEGER NOT NULL,
+      student_id INTEGER NOT NULL,
+      score REAL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE,
+      FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+      UNIQUE(quiz_id, student_id)
+    );
   `);
 
   // Migrate: ensure photo_uri column exists in students table

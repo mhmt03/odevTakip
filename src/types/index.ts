@@ -123,3 +123,54 @@ export interface YearlyPlanItem {
   subject_topic: string; // Deftere yazılacak konu
   learning_outcomes?: string; // Kazanımlar / Açıklama
 }
+
+export interface StudentGrades {
+  id?: number;
+  student_id: number;
+  class_id: number;
+  term: number; // 1 or 2
+  exam1?: number | null;
+  exam2?: number | null;
+  exam3?: number | null;
+  perf1?: number | null;
+  perf2?: number | null;
+  perf3?: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface QuizItem {
+  id: number;
+  class_id: number;
+  term: number;
+  title: string;
+  max_score: number;
+  quiz_date?: string;
+  created_at?: string;
+}
+
+export interface QuizScoreItem {
+  id?: number;
+  quiz_id: number;
+  student_id: number;
+  score?: number | null;
+}
+
+export interface StudentGradeRow {
+  student_id: number;
+  student_number: string;
+  first_name: string;
+  last_name: string;
+  photo_uri?: string | null;
+  exam1?: number | null;
+  exam2?: number | null;
+  exam3?: number | null;
+  perf1?: number | null;
+  perf2?: number | null;
+  perf3?: number | null;
+  quizScores: Record<number, number | null>; // quiz_id -> score
+  examAvg?: number | null;
+  perfAvg?: number | null;
+  quizAvg?: number | null;
+  overallAvg?: number | null;
+}

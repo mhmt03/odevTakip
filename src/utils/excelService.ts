@@ -5,7 +5,8 @@ import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import { StudentImportItem, ClassBulkImportPayload } from '../database/operations/studentOperations';
 import { getClasses } from '../database/operations/classOperations';
-import { Student, Assignment, AssignmentStudent, StudentNote, LessonSlot, ScheduleItem, ClassItem } from '../types';
+import { Student, Assignment, AssignmentStudent, StudentNote, LessonSlot, ScheduleItem, ClassItem, QuizItem, StudentGradeRow } from '../types';
+import { createQuiz, bulkSaveGradebookFromExcel } from '../database/operations/gradeOperations';
 import { formatDateToTR, DAYS_OF_WEEK } from './dateUtils';
 
 // Helper to save and share excel workbook across Web and Native
@@ -1023,3 +1024,371 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
   return parsedItems;
 };
 
+// 10. GRADEBOOK: Generate template for 3 Exams, 3 Performances and Quizzes
+export const generateGradebookTemplateExcel = async (
+  className: string,
+  term: number,
+  students: Student[],
+  existingQuizzes: QuizItem[] = []
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+
+  const quizTitles = existingQuizzes.length > 0 
+    ? existingQuizzes.map((q) => q.title) 
+    : ['Quiz 1', 'Quiz 2'];
+
+  const header = [
+    'Öğrenci No',
+    'Adı',
+    'Soyadı',
+    '1. Yazılı',
+    '2. Yazılı',
+    '3. Yazılı',
+    '1. Performans',
+    '2. Performans',
+    '3. Performans',
+    ...quizTitles,
+  ];
+
+  const data: (string | number)[][] = [
+    [`${className} - ${term}. Dönem Not Çizelgesi Şablonu`],
+    [
+      `Açıklama: Notları (0-100) ilgili sütunlara girip yükleyebilirsiniz. Yeni bir quiz için sütun başlığına "Quiz 3", "Tarama 1" vb. yazabilirsiniz.`,
+    ],
+    [],
+    header,
+  ];
+
+  const sorted = [...students].sort((a, b) => {
+    const na = parseInt(a.student_number || '0', 10);
+    const nb = parseInt(b.student_number || '0', 10);
+    return isNaN(na) || isNaN(nb)
+      ? (a.student_number || '').localeCompare(b.student_number || '')
+      : na - nb;
+  });
+
+  sorted.forEach((st) => {
+    const row: (string | number)[] = [
+      st.student_number || '-',
+      st.first_name,
+      st.last_name || '',
+      '', '', '',
+      '', '', '',
+      ...quizTitles.map(() => ''),
+    ];
+    data.push(row);
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(workbook, worksheet, `${term}. Dönem Notlar`);
+  const cleanName = className.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return await saveAndShareWorkbook(workbook, `Not_Sablonu_${cleanName}_${term}_Donem.xlsx`);
+};
+
+// 11. GRADEBOOK: Export full gradebook to Excel
+export const exportClassGradebookToExcel = async (
+  className: string,
+  term: number,
+  gradebook: { students: StudentGradeRow[]; quizzes: QuizItem[] }
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+
+  const quizHeaders = gradebook.quizzes.map((q) => q.title);
+
+  const header = [
+    'Sıra',
+    'Öğrenci No',
+    'Adı Soyadı',
+    '1. Yazılı',
+    '2. Yazılı',
+    '3. Yazılı',
+    'Yazılı Ort.',
+    '1. Performans',
+    '2. Performans',
+    '3. Performans',
+    'Perf. Ort.',
+    ...quizHeaders,
+    'Quiz Ort.',
+    'Genel Ortalama',
+  ];
+
+  const data: (string | number)[][] = [
+    [`${className} - ${term}. Dönem Not Çizelgesi`],
+    [`Tarih: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
+    [],
+    header,
+  ];
+
+  gradebook.students.forEach((st, idx) => {
+    const quizValues = gradebook.quizzes.map((q) => {
+      const val = st.quizScores[q.id];
+      return val !== null && val !== undefined ? val : '-';
+    });
+
+    data.push([
+      idx + 1,
+      st.student_number || '-',
+      `${st.first_name} ${st.last_name}`,
+      st.exam1 ?? '-',
+      st.exam2 ?? '-',
+      st.exam3 ?? '-',
+      st.examAvg ?? '-',
+      st.perf1 ?? '-',
+      st.perf2 ?? '-',
+      st.perf3 ?? '-',
+      st.perfAvg ?? '-',
+      ...quizValues,
+      st.quizAvg ?? '-',
+      st.overallAvg ?? '-',
+    ]);
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(workbook, worksheet, `${term}. Dönem Notlar`);
+  const cleanName = className.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return await saveAndShareWorkbook(workbook, `Not_Cizelgesi_${cleanName}_${term}_Donem.xlsx`);
+};
+
+// 12. GRADEBOOK: Pick and parse Excel to update student grades and quizzes
+export const pickAndParseGradebookExcel = async (
+  classId: number,
+  term: number,
+  students: Student[],
+  existingQuizzes: QuizItem[]
+): Promise<{
+  success: boolean;
+  error?: string;
+  updatedCount: number;
+  newQuizzesCreated: string[];
+}> => {
+  try {
+    const docRes = await DocumentPicker.getDocumentAsync({
+      type: [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+      ],
+      copyToCacheDirectory: true,
+    });
+
+    if (docRes.canceled || !docRes.assets || docRes.assets.length === 0) {
+      return { success: false, error: 'Dosya seçilmedi.', updatedCount: 0, newQuizzesCreated: [] };
+    }
+
+    const fileUri = docRes.assets[0].uri;
+    const base64Content = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const workbook = XLSX.read(base64Content, { type: 'base64' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1 });
+
+    if (!rows || rows.length < 2) {
+      return {
+        success: false,
+        error: 'Excel dosyası boş veya okunamadı.',
+        updatedCount: 0,
+        newQuizzesCreated: [],
+      };
+    }
+
+    // Find header row: look for row containing "Öğrenci No", "No", or "Yazılı"
+    let headerRowIdx = -1;
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const r = rows[i];
+      if (Array.isArray(r)) {
+        const text = r.map((c) => String(c || '').toLowerCase().trim()).join(' ');
+        if (text.includes('no') || text.includes('yazılı') || text.includes('ad')) {
+          headerRowIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (headerRowIdx === -1) {
+      headerRowIdx = 0;
+    }
+
+    const headerRow = rows[headerRowIdx] || [];
+
+    // Map column indices
+    let noCol = -1;
+    let exam1Col = -1;
+    let exam2Col = -1;
+    let exam3Col = -1;
+    let perf1Col = -1;
+    let perf2Col = -1;
+    let perf3Col = -1;
+
+    // Quizzes: col index -> quiz title
+    const quizCols: Array<{ colIdx: number; title: string }> = [];
+
+    for (let c = 0; c < headerRow.length; c++) {
+      const rawHeader = String(headerRow[c] || '').trim();
+      const norm = rawHeader.toLowerCase().replace(/[\s._-]+/g, '');
+
+      if (
+        norm === 'öğrencino' ||
+        norm === 'okulno' ||
+        norm === 'no' ||
+        norm === 'numara' ||
+        norm === 'ogrno'
+      ) {
+        if (noCol === -1) noCol = c;
+      } else if (norm.includes('1yazılı') || norm === 'y1' || norm === 'yazılı1' || norm === '1sınav') {
+        exam1Col = c;
+      } else if (norm.includes('2yazılı') || norm === 'y2' || norm === 'yazılı2' || norm === '2sınav') {
+        exam2Col = c;
+      } else if (norm.includes('3yazılı') || norm === 'y3' || norm === 'yazılı3' || norm === '3sınav') {
+        exam3Col = c;
+      } else if (
+        norm.includes('1performans') ||
+        norm === 'p1' ||
+        norm === 'performans1' ||
+        norm.includes('1etkinlik')
+      ) {
+        perf1Col = c;
+      } else if (
+        norm.includes('2performans') ||
+        norm === 'p2' ||
+        norm === 'performans2' ||
+        norm.includes('2etkinlik')
+      ) {
+        perf2Col = c;
+      } else if (
+        norm.includes('3performans') ||
+        norm === 'p3' ||
+        norm === 'performans3' ||
+        norm.includes('3etkinlik')
+      ) {
+        perf3Col = c;
+      } else if (
+        norm.includes('quiz') ||
+        norm.includes('tarama') ||
+        norm.includes('kısasınav') ||
+        norm.startsWith('q')
+      ) {
+        quizCols.push({ colIdx: c, title: rawHeader || `Quiz ${quizCols.length + 1}` });
+      }
+    }
+
+    if (noCol === -1) {
+      return {
+        success: false,
+        error:
+          'Excel dosyasında öğrenci numarası ("Öğrenci No", "Okul No" veya "No") sütunu bulunamadı.',
+        updatedCount: 0,
+        newQuizzesCreated: [],
+      };
+    }
+
+    // Ensure or match quizzes
+    const quizMap = new Map<number, number>(); // colIdx -> quizId
+    const newQuizzesCreated: string[] = [];
+
+    for (const qCol of quizCols) {
+      let matchedQuiz = existingQuizzes.find(
+        (eq) => eq.title.trim().toLowerCase() === qCol.title.trim().toLowerCase()
+      );
+      if (!matchedQuiz) {
+        const newQuizId = await createQuiz(classId, term, qCol.title);
+        matchedQuiz = {
+          id: newQuizId,
+          class_id: classId,
+          term,
+          title: qCol.title,
+          max_score: 100,
+        };
+        newQuizzesCreated.push(qCol.title);
+      }
+      quizMap.set(qCol.colIdx, matchedQuiz.id);
+    }
+
+    // Map student numbers to Student objects
+    const studentMap = new Map<string, Student>();
+    for (const st of students) {
+      if (st.student_number) {
+        studentMap.set(st.student_number.trim(), st);
+        studentMap.set(String(parseInt(st.student_number.trim(), 10)), st);
+      }
+    }
+
+    const parseScore = (val: any): number | null => {
+      if (val === undefined || val === null || val === '' || val === '-') return null;
+      const num = parseFloat(String(val).replace(',', '.'));
+      if (isNaN(num)) return null;
+      return Math.min(100, Math.max(0, Math.round(num * 10) / 10));
+    };
+
+    const updateRecords: Array<{
+      studentId: number;
+      exam1?: number | null;
+      exam2?: number | null;
+      exam3?: number | null;
+      perf1?: number | null;
+      perf2?: number | null;
+      perf3?: number | null;
+      quizScores?: Record<number, number | null>;
+    }> = [];
+
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || !Array.isArray(row)) continue;
+
+      const rawNo = String(row[noCol] || '').trim();
+      if (!rawNo) continue;
+
+      const student = studentMap.get(rawNo) || studentMap.get(String(parseInt(rawNo, 10)));
+      if (!student) continue;
+
+      const rec: (typeof updateRecords)[0] = {
+        studentId: student.id,
+      };
+
+      if (exam1Col !== -1) rec.exam1 = parseScore(row[exam1Col]);
+      if (exam2Col !== -1) rec.exam2 = parseScore(row[exam2Col]);
+      if (exam3Col !== -1) rec.exam3 = parseScore(row[exam3Col]);
+      if (perf1Col !== -1) rec.perf1 = parseScore(row[perf1Col]);
+      if (perf2Col !== -1) rec.perf2 = parseScore(row[perf2Col]);
+      if (perf3Col !== -1) rec.perf3 = parseScore(row[perf3Col]);
+
+      if (quizCols.length > 0) {
+        rec.quizScores = {};
+        for (const qCol of quizCols) {
+          const quizId = quizMap.get(qCol.colIdx);
+          if (quizId) {
+            rec.quizScores[quizId] = parseScore(row[qCol.colIdx]);
+          }
+        }
+      }
+
+      updateRecords.push(rec);
+    }
+
+    if (updateRecords.length === 0) {
+      return {
+        success: false,
+        error:
+          'Şubedeki öğrencilerle eşleşen numara bulunamadı. Lütfen öğrenci numaralarını kontrol ediniz.',
+        updatedCount: 0,
+        newQuizzesCreated: [],
+      };
+    }
+
+    const { updatedCount } = await bulkSaveGradebookFromExcel(classId, term, updateRecords);
+
+    return {
+      success: true,
+      updatedCount,
+      newQuizzesCreated,
+    };
+  } catch (e: any) {
+    return {
+      success: false,
+      error: e?.message || 'Excel dosyası işlenirken bir hata oluştu.',
+      updatedCount: 0,
+      newQuizzesCreated: [],
+    };
+  }
+};

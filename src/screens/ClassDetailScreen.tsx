@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   FlatList,
   TouchableOpacity,
@@ -46,7 +47,17 @@ import {
   pickAndParseStudentsExcel,
   generateStudentTemplateExcel,
   exportClassStudentsToExcel,
+  generateGradebookTemplateExcel,
+  exportClassGradebookToExcel,
+  pickAndParseGradebookExcel,
 } from '../utils/excelService';
+import {
+  getFullClassGradebook,
+  saveStudentGrades,
+  createQuiz,
+  deleteQuiz,
+  saveQuizScore,
+} from '../database/operations/gradeOperations';
 import {
   pickSinglePhotoFromSource,
   savePhotoPermanently,
@@ -60,7 +71,7 @@ import {
   extractPhotosFromPdf,
   PdfExtractedStudentPhoto,
 } from '../utils/pdfPhotoExtractor';
-import { Student, ClassItem, StudentNote } from '../types';
+import { Student, ClassItem, StudentNote, StudentGradeRow, QuizItem } from '../types';
 
 export const ClassDetailScreen: React.FC = () => {
   const route = useRoute<any>();
@@ -114,6 +125,45 @@ export const ClassDetailScreen: React.FC = () => {
   const [availableClasses, setAvailableClasses] = useState<ClassItem[]>([]);
   const [selectedTargetClassId, setSelectedTargetClassId] = useState<number | null>(null);
 
+  // Top Segment Tab: 'students' (Öğrenci Listesi) vs 'gradebook' (Not Çizelgesi)
+  const [activeViewTab, setActiveViewTab] = useState<'students' | 'gradebook'>('students');
+
+  // Gradebook State
+  const [activeTerm, setActiveTerm] = useState<1 | 2>(1);
+  const [gradebookData, setGradebookData] = useState<{
+    students: StudentGradeRow[];
+    quizzes: QuizItem[];
+  }>({ students: [], quizzes: [] });
+  const [loadingGradebook, setLoadingGradebook] = useState(false);
+  const [gradeSearchQuery, setGradeSearchQuery] = useState('');
+
+  // Add Quiz Modal State
+  const [quizModalVisible, setQuizModalVisible] = useState(false);
+  const [quizTitleInput, setQuizTitleInput] = useState('');
+  const [savingQuiz, setSavingQuiz] = useState(false);
+
+  // Single Student Grade Edit Modal State
+  const [editGradeModalVisible, setEditGradeModalVisible] = useState(false);
+  const [editingGradeRow, setEditingGradeRow] = useState<StudentGradeRow | null>(null);
+  const [gradeInputs, setGradeInputs] = useState<{
+    exam1: string;
+    exam2: string;
+    exam3: string;
+    perf1: string;
+    perf2: string;
+    perf3: string;
+    quizScores: Record<number, string>;
+  }>({
+    exam1: '',
+    exam2: '',
+    exam3: '',
+    perf1: '',
+    perf2: '',
+    perf3: '',
+    quizScores: {},
+  });
+  const [savingSingleGrade, setSavingSingleGrade] = useState(false);
+
   const loadStudents = async () => {
     try {
       setLoading(true);
@@ -126,10 +176,180 @@ export const ClassDetailScreen: React.FC = () => {
     }
   };
 
+  const loadGradebook = async (termToLoad?: 1 | 2) => {
+    const term = termToLoad || activeTerm;
+    try {
+      setLoadingGradebook(true);
+      const data = await getFullClassGradebook(classId, term);
+      setGradebookData(data);
+    } catch (e) {
+      console.error('Error loading gradebook:', e);
+    } finally {
+      setLoadingGradebook(false);
+    }
+  };
+
+  const handleChangeTerm = (term: 1 | 2) => {
+    setActiveTerm(term);
+    loadGradebook(term);
+  };
+
+  const handleOpenAddQuiz = () => {
+    const nextQuizNum = gradebookData.quizzes.length + 1;
+    setQuizTitleInput(`Quiz ${nextQuizNum}`);
+    setQuizModalVisible(true);
+  };
+
+  const handleSaveNewQuiz = async () => {
+    if (!quizTitleInput.trim()) {
+      Alert.alert('Uyarı', 'Lütfen quiz başlığı giriniz.');
+      return;
+    }
+    setSavingQuiz(true);
+    try {
+      await createQuiz(classId, activeTerm, quizTitleInput.trim());
+      setQuizModalVisible(false);
+      setQuizTitleInput('');
+      await loadGradebook();
+      Alert.alert('Başarılı', `"${quizTitleInput.trim()}" quizi başarıyla eklendi.`);
+    } catch (e) {
+      Alert.alert('Hata', 'Quiz eklenemedi.');
+    } finally {
+      setSavingQuiz(false);
+    }
+  };
+
+  const handleDeleteQuizConfirm = (quiz: QuizItem) => {
+    Alert.alert(
+      'Quiz Sil',
+      `"${quiz.title}" quizini ve öğrencilerin bu quizdeki notlarını silmek istediğinize emin misiniz?`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteQuiz(quiz.id);
+              await loadGradebook();
+            } catch (e) {
+              Alert.alert('Hata', 'Quiz silinemedi.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleOpenEditGrade = (row: StudentGradeRow) => {
+    setEditingGradeRow(row);
+    const qs: Record<number, string> = {};
+    for (const q of gradebookData.quizzes) {
+      const val = row.quizScores[q.id];
+      qs[q.id] = val !== null && val !== undefined ? String(val) : '';
+    }
+    setGradeInputs({
+      exam1: row.exam1 !== null && row.exam1 !== undefined ? String(row.exam1) : '',
+      exam2: row.exam2 !== null && row.exam2 !== undefined ? String(row.exam2) : '',
+      exam3: row.exam3 !== null && row.exam3 !== undefined ? String(row.exam3) : '',
+      perf1: row.perf1 !== null && row.perf1 !== undefined ? String(row.perf1) : '',
+      perf2: row.perf2 !== null && row.perf2 !== undefined ? String(row.perf2) : '',
+      perf3: row.perf3 !== null && row.perf3 !== undefined ? String(row.perf3) : '',
+      quizScores: qs,
+    });
+    setEditGradeModalVisible(true);
+  };
+
+  const handleSaveSingleGrade = async () => {
+    if (!editingGradeRow) return;
+
+    const parseVal = (str: string): number | null => {
+      const trimmed = str.trim().replace(',', '.');
+      if (!trimmed) return null;
+      const num = parseFloat(trimmed);
+      if (isNaN(num)) return null;
+      return Math.min(100, Math.max(0, Math.round(num * 10) / 10));
+    };
+
+    setSavingSingleGrade(true);
+    try {
+      await saveStudentGrades(editingGradeRow.student_id, classId, activeTerm, {
+        exam1: parseVal(gradeInputs.exam1),
+        exam2: parseVal(gradeInputs.exam2),
+        exam3: parseVal(gradeInputs.exam3),
+        perf1: parseVal(gradeInputs.perf1),
+        perf2: parseVal(gradeInputs.perf2),
+        perf3: parseVal(gradeInputs.perf3),
+      });
+
+      for (const q of gradebookData.quizzes) {
+        const valStr = gradeInputs.quizScores[q.id];
+        const valNum = valStr !== undefined ? parseVal(valStr) : null;
+        await saveQuizScore(q.id, editingGradeRow.student_id, valNum);
+      }
+
+      setEditGradeModalVisible(false);
+      await loadGradebook();
+    } catch (e) {
+      Alert.alert('Hata', 'Notlar kaydedilemedi.');
+    } finally {
+      setSavingSingleGrade(false);
+    }
+  };
+
+  const handleDownloadGradebookTemplate = async () => {
+    try {
+      await generateGradebookTemplateExcel(
+        className,
+        activeTerm,
+        students,
+        gradebookData.quizzes
+      );
+    } catch (e) {
+      Alert.alert('Hata', 'Not şablonu oluşturulamadı.');
+    }
+  };
+
+  const handleExportGradebookExcel = async () => {
+    try {
+      await exportClassGradebookToExcel(className, activeTerm, gradebookData);
+    } catch (e) {
+      Alert.alert('Hata', 'Not çizelgesi Excel çıktısı oluşturulamadı.');
+    }
+  };
+
+  const handleImportGradebookExcel = async () => {
+    try {
+      const res = await pickAndParseGradebookExcel(
+        classId,
+        activeTerm,
+        students,
+        gradebookData.quizzes
+      );
+
+      if (!res.success) {
+        if (res.error && res.error !== 'Dosya seçilmedi.') {
+          Alert.alert('Hata', res.error);
+        }
+        return;
+      }
+
+      await loadGradebook();
+      let msg = `${res.updatedCount} öğrencinin ${activeTerm}. Dönem notları başarıyla güncellendi!`;
+      if (res.newQuizzesCreated.length > 0) {
+        msg += `\n\nOluşturulan yeni quizler: ${res.newQuizzesCreated.join(', ')}`;
+      }
+      Alert.alert('Başarılı 🎉', msg);
+    } catch (e: any) {
+      Alert.alert('Hata', e?.message || 'Excel not yüklemesi başarısız.');
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadStudents();
-    }, [classId])
+      loadGradebook();
+    }, [classId, activeTerm])
   );
 
   // --- MANUAL ADD / EDIT ---
@@ -578,6 +798,18 @@ export const ClassDetailScreen: React.FC = () => {
     return fullName.includes(term) || no.includes(term);
   });
 
+  const formatScore = (val: number | null | undefined): string => {
+    if (val === null || val === undefined || isNaN(val)) return '-';
+    return String(val);
+  };
+
+  const getScoreStyle = (val: number | null | undefined) => {
+    if (val === null || val === undefined || isNaN(val)) return styles.textEmptyScore;
+    if (val < 50) return styles.textFailScore;
+    if (val >= 85) return styles.textHighScore;
+    return styles.textNormalScore;
+  };
+
   return (
     <View style={styles.container}>
       <Header
@@ -588,11 +820,53 @@ export const ClassDetailScreen: React.FC = () => {
         rightAction={{
           icon: 'share-outline',
           label: 'Excel',
-          onPress: handleExcelExport,
+          onPress: activeViewTab === 'gradebook' ? handleExportGradebookExcel : handleExcelExport,
         }}
       />
 
-      {/* Action Bar */}
+      {/* View Segment Switch: Öğrenciler / Not Çizelgesi & Quizler */}
+      <View style={styles.segmentSwitchWrap}>
+        <TouchableOpacity
+          style={[styles.segmentBtn, activeViewTab === 'students' && styles.segmentBtnActive]}
+          onPress={() => setActiveViewTab('students')}
+          activeOpacity={0.8}
+        >
+          <Ionicons
+            name="people"
+            size={17}
+            color={activeViewTab === 'students' ? '#FFFFFF' : Colors.textSecondary}
+          />
+          <Text
+            style={[styles.segmentBtnText, activeViewTab === 'students' && styles.segmentBtnTextActive]}
+          >
+            Öğrenciler ({students.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.segmentBtn, activeViewTab === 'gradebook' && styles.segmentBtnActive]}
+          onPress={() => {
+            setActiveViewTab('gradebook');
+            loadGradebook();
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons
+            name="calculator"
+            size={17}
+            color={activeViewTab === 'gradebook' ? '#FFFFFF' : Colors.textSecondary}
+          />
+          <Text
+            style={[styles.segmentBtnText, activeViewTab === 'gradebook' && styles.segmentBtnTextActive]}
+          >
+            Not Çizelgesi & Quizler
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {activeViewTab === 'students' && (
+        <>
+          {/* Action Bar */}
       <View style={styles.actionBar}>
         <View style={styles.actionRow}>
           <Button
@@ -849,6 +1123,283 @@ export const ClassDetailScreen: React.FC = () => {
             );
           }}
         />
+      )}
+        </>
+      )}
+
+      {/* Gradebook View */}
+      {activeViewTab === 'gradebook' && (
+        <View style={styles.gradebookContainer}>
+          {/* Term Switcher & Gradebook Actions */}
+          <View style={styles.gradebookControlBar}>
+            {/* Term selector (1. Dönem / 2. Dönem) */}
+            <View style={styles.termSelector}>
+              <TouchableOpacity
+                style={[styles.termBtn, activeTerm === 1 && styles.termBtnActive]}
+                onPress={() => handleChangeTerm(1)}
+              >
+                <Text style={[styles.termBtnText, activeTerm === 1 && styles.termBtnTextActive]}>
+                  1. Dönem
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.termBtn, activeTerm === 2 && styles.termBtnActive]}
+                onPress={() => handleChangeTerm(2)}
+              >
+                <Text style={[styles.termBtnText, activeTerm === 2 && styles.termBtnTextActive]}>
+                  2. Dönem
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.gradeActionsRow}>
+              <TouchableOpacity
+                style={styles.gradeActionBtnPrimary}
+                onPress={handleOpenAddQuiz}
+              >
+                <Ionicons name="add-circle-outline" size={15} color="#FFFFFF" />
+                <Text style={styles.gradeActionBtnPrimaryText}>+ Quiz</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gradeActionBtnSecondary}
+                onPress={handleImportGradebookExcel}
+              >
+                <Ionicons name="cloud-upload-outline" size={15} color={Colors.primary} />
+                <Text style={styles.gradeActionBtnSecondaryText}>Excel Yükle</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gradeActionBtnOutline}
+                onPress={handleDownloadGradebookTemplate}
+              >
+                <Ionicons name="download-outline" size={15} color={Colors.textSecondary} />
+                <Text style={styles.gradeActionBtnOutlineText}>Şablon</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.gradeActionBtnOutline}
+                onPress={handleExportGradebookExcel}
+              >
+                <Ionicons name="share-outline" size={15} color={Colors.textSecondary} />
+                <Text style={styles.gradeActionBtnOutlineText}>Excel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Search bar for gradebook */}
+          <View style={styles.gradeSearchWrap}>
+            <View style={styles.gradeSearchInput}>
+              <Ionicons name="search" size={16} color={Colors.textMuted} />
+              <TextInput
+                style={styles.gradeSearchTextInput}
+                placeholder="Öğrenci adı veya no ile filtrele..."
+                placeholderTextColor={Colors.textMuted}
+                value={gradeSearchQuery}
+                onChangeText={setGradeSearchQuery}
+              />
+              {gradeSearchQuery ? (
+                <TouchableOpacity onPress={() => setGradeSearchQuery('')}>
+                  <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Gradebook Info & Hint */}
+          <View style={styles.gradebookSummaryBar}>
+            <Text style={styles.gradebookSummaryText}>
+              <Text style={{ fontWeight: '700' }}>{gradebookData.students.length} Öğrenci</Text> •{' '}
+              {gradebookData.quizzes.length} Quiz tanımlı
+            </Text>
+            <Text style={styles.gradebookHintText}>💡 Not düzenlemek için öğrenci satırına dokunun</Text>
+          </View>
+
+          {/* Gradebook Table */}
+          {loadingGradebook ? (
+            <View style={styles.gradebookLoadingWrap}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.gradebookLoadingText}>Notlar yükleniyor...</Text>
+            </View>
+          ) : gradebookData.students.length === 0 ? (
+            <View style={styles.gradebookEmptyWrap}>
+              <Ionicons name="school-outline" size={48} color={Colors.textMuted} />
+              <Text style={styles.gradebookEmptyTitle}>Bu sınıfta henüz kayıtlı öğrenci yok</Text>
+              <Text style={styles.gradebookEmptySub}>
+                "Öğrenciler" sekmesinden öğrenci ekleyebilir veya Excel ile yükleyebilirsiniz.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.tableScrollX}>
+              <View>
+                {/* Table Header Row */}
+                <View style={styles.tableHeaderRow}>
+                  <Text style={[styles.thCell, styles.colNo]}>No</Text>
+                  <Text style={[styles.thCell, styles.colName]}>Öğrenci</Text>
+
+                  {/* 3 Yazılı */}
+                  <Text style={[styles.thCell, styles.colExam]}>1.Yaz</Text>
+                  <Text style={[styles.thCell, styles.colExam]}>2.Yaz</Text>
+                  <Text style={[styles.thCell, styles.colExam]}>3.Yaz</Text>
+                  <Text style={[styles.thCell, styles.colAvg, styles.bgExamAvg]}>Y.Ort</Text>
+
+                  {/* 3 Performans */}
+                  <Text style={[styles.thCell, styles.colPerf]}>1.Perf</Text>
+                  <Text style={[styles.thCell, styles.colPerf]}>2.Perf</Text>
+                  <Text style={[styles.thCell, styles.colPerf]}>3.Perf</Text>
+                  <Text style={[styles.thCell, styles.colAvg, styles.bgPerfAvg]}>P.Ort</Text>
+
+                  {/* Dinamik Quiz Sütunları */}
+                  {gradebookData.quizzes.map((q) => (
+                    <TouchableOpacity
+                      key={q.id}
+                      style={[styles.thCellClickable, styles.colQuiz]}
+                      onLongPress={() => handleDeleteQuizConfirm(q)}
+                      onPress={() =>
+                        Alert.alert(
+                          q.title,
+                          'Bu quizi silmek ister misiniz?',
+                          [
+                            { text: 'Vazgeç', style: 'cancel' },
+                            {
+                              text: 'Quizi Sil',
+                              style: 'destructive',
+                              onPress: () => handleDeleteQuizConfirm(q),
+                            },
+                          ]
+                        )
+                      }
+                    >
+                      <Text style={styles.thQuizTitle} numberOfLines={1}>
+                        {q.title}
+                      </Text>
+                      <Ionicons name="close-circle-outline" size={12} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Quiz Ort. */}
+                  {gradebookData.quizzes.length > 0 && (
+                    <Text style={[styles.thCell, styles.colAvg, styles.bgQuizAvg]}>Q.Ort</Text>
+                  )}
+
+                  {/* Genel Ortalama */}
+                  <Text style={[styles.thCell, styles.colOverall]}>Ders Ort.</Text>
+                </View>
+
+                {/* Table Body */}
+                <ScrollView style={styles.tableScrollY} showsVerticalScrollIndicator={true}>
+                  {gradebookData.students
+                    .filter((r) => {
+                      if (!gradeSearchQuery.trim()) return true;
+                      const term = gradeSearchQuery.toLowerCase();
+                      const fullName = `${r.first_name} ${r.last_name}`.toLowerCase();
+                      const no = (r.student_number || '').toLowerCase();
+                      return fullName.includes(term) || no.includes(term);
+                    })
+                    .map((row, index) => {
+                      const isEven = index % 2 === 0;
+                      return (
+                        <TouchableOpacity
+                          key={row.student_id}
+                          style={[styles.tableDataRow, isEven && styles.tableDataRowEven]}
+                          onPress={() => handleOpenEditGrade(row)}
+                          activeOpacity={0.7}
+                        >
+                          {/* Student No */}
+                          <Text style={[styles.tdCell, styles.colNo, styles.textBold]}>
+                            {row.student_number || '-'}
+                          </Text>
+
+                          {/* Student Name */}
+                          <View style={[styles.tdCell, styles.colName, styles.tdNameWrap]}>
+                            <Text style={styles.tdStudentName} numberOfLines={1}>
+                              {row.first_name} {row.last_name}
+                            </Text>
+                          </View>
+
+                          {/* 1.Y, 2.Y, 3.Y */}
+                          <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam1)]}>
+                            {formatScore(row.exam1)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam2)]}>
+                            {formatScore(row.exam2)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam3)]}>
+                            {formatScore(row.exam3)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colAvg, styles.bgExamAvg, styles.textBold]}>
+                            {formatScore(row.examAvg)}
+                          </Text>
+
+                          {/* 1.P, 2.P, 3.P */}
+                          <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf1)]}>
+                            {formatScore(row.perf1)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf2)]}>
+                            {formatScore(row.perf2)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf3)]}>
+                            {formatScore(row.perf3)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colAvg, styles.bgPerfAvg, styles.textBold]}>
+                            {formatScore(row.perfAvg)}
+                          </Text>
+
+                          {/* Dynamic Quizzes */}
+                          {gradebookData.quizzes.map((q) => {
+                            const qScore = row.quizScores[q.id];
+                            return (
+                              <Text
+                                key={q.id}
+                                style={[styles.tdCell, styles.colQuiz, getScoreStyle(qScore)]}
+                              >
+                                {formatScore(qScore)}
+                              </Text>
+                            );
+                          })}
+
+                          {/* Quiz Avg */}
+                          {gradebookData.quizzes.length > 0 && (
+                            <Text style={[styles.tdCell, styles.colAvg, styles.bgQuizAvg, styles.textBold]}>
+                              {formatScore(row.quizAvg)}
+                            </Text>
+                          )}
+
+                          {/* Overall Avg */}
+                          <View style={[styles.tdCell, styles.colOverall]}>
+                            <View
+                              style={[
+                                styles.overallBadge,
+                                row.overallAvg !== null && row.overallAvg !== undefined
+                                  ? row.overallAvg >= 50
+                                    ? styles.badgePass
+                                    : styles.badgeFail
+                                  : null,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.overallText,
+                                  row.overallAvg !== null && row.overallAvg !== undefined
+                                    ? row.overallAvg >= 50
+                                      ? styles.textPass
+                                      : styles.textFail
+                                    : null,
+                                ]}
+                              >
+                                {formatScore(row.overallAvg)}
+                              </Text>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                </ScrollView>
+              </View>
+            </ScrollView>
+          )}
+        </View>
       )}
 
       {/* Manual Student Add/Edit Modal */}
@@ -1317,6 +1868,82 @@ export const ClassDetailScreen: React.FC = () => {
                 </View>
               </View>
 
+              {/* Student Term Grade Summary */}
+              {(() => {
+                const currentGradeRow = gradebookData.students.find(
+                  (r) => r.student_id === detailStudent?.id
+                );
+                return (
+                  <View style={styles.detailGradeSection}>
+                    <View style={styles.sectionHeaderRowBetween}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="calculator-outline" size={16} color={Colors.primary} />
+                        <Text style={styles.detailSectionTitle}>
+                          Not Durumu ({activeTerm}. Dönem)
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.detailGradeEditBtn}
+                        onPress={() => {
+                          if (currentGradeRow) {
+                            handleOpenEditGrade(currentGradeRow);
+                          } else if (detailStudent) {
+                            handleOpenEditGrade({
+                              student_id: detailStudent.id,
+                              student_number: detailStudent.student_number,
+                              first_name: detailStudent.first_name,
+                              last_name: detailStudent.last_name,
+                              quizScores: {},
+                            });
+                          }
+                        }}
+                      >
+                        <Ionicons name="pencil" size={12} color={Colors.primary} />
+                        <Text style={styles.detailGradeEditBtnText}>Not Gir / Düzenle</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.detailGradeGrid}>
+                      <View style={styles.detailGradeBox}>
+                        <Text style={styles.detailGradeBoxLabel}>Yazılılar</Text>
+                        <Text style={styles.detailGradeBoxVal}>
+                          {currentGradeRow?.exam1 ?? '-'} / {currentGradeRow?.exam2 ?? '-'} /{' '}
+                          {currentGradeRow?.exam3 ?? '-'}
+                        </Text>
+                        <Text style={styles.detailGradeBoxSub}>
+                          Ort: {currentGradeRow?.examAvg ?? '-'}
+                        </Text>
+                      </View>
+                      <View style={styles.detailGradeBox}>
+                        <Text style={styles.detailGradeBoxLabel}>Performans</Text>
+                        <Text style={styles.detailGradeBoxVal}>
+                          {currentGradeRow?.perf1 ?? '-'} / {currentGradeRow?.perf2 ?? '-'} /{' '}
+                          {currentGradeRow?.perf3 ?? '-'}
+                        </Text>
+                        <Text style={styles.detailGradeBoxSub}>
+                          Ort: {currentGradeRow?.perfAvg ?? '-'}
+                        </Text>
+                      </View>
+                      <View style={styles.detailGradeBox}>
+                        <Text style={styles.detailGradeBoxLabel}>Quizler</Text>
+                        <Text style={styles.detailGradeBoxVal}>
+                          {gradebookData.quizzes.length} Adet
+                        </Text>
+                        <Text style={styles.detailGradeBoxSub}>
+                          Ort: {currentGradeRow?.quizAvg ?? '-'}
+                        </Text>
+                      </View>
+                      <View style={[styles.detailGradeBox, styles.detailGradeBoxOverall]}>
+                        <Text style={styles.detailGradeBoxLabelOverall}>Genel Ort.</Text>
+                        <Text style={styles.detailGradeBoxValOverall}>
+                          {currentGradeRow?.overallAvg ?? '-'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })()}
+
               {/* Quick Opinion Chips */}
               <View style={styles.detailSection}>
                 <View style={styles.sectionHeaderRow}>
@@ -1473,6 +2100,211 @@ export const ClassDetailScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Single Student Grade Edit Modal */}
+      <Modal visible={editGradeModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Not Girişi ({activeTerm}. Dönem)</Text>
+                <Text style={styles.modalSubtitle}>
+                  {editingGradeRow?.student_number ? `No: ${editingGradeRow.student_number} • ` : ''}
+                  {editingGradeRow?.first_name} {editingGradeRow?.last_name}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setEditGradeModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {/* Yazılı Sınavlar */}
+              <View style={styles.gradeModalSection}>
+                <View style={styles.gradeModalSectionTitleRow}>
+                  <Ionicons name="document-text-outline" size={16} color={Colors.primary} />
+                  <Text style={styles.gradeModalSectionTitle}>Yazılı Sınav Notları (0 - 100)</Text>
+                </View>
+                <View style={styles.gradeModalInputRow}>
+                  <View style={styles.gradeModalInputCol}>
+                    <Text style={styles.gradeInputLabel}>1. Yazılı</Text>
+                    <TextInput
+                      style={styles.gradeScoreInput}
+                      keyboardType="numeric"
+                      placeholder="-"
+                      placeholderTextColor={Colors.textMuted}
+                      value={gradeInputs.exam1}
+                      onChangeText={(t) => setGradeInputs((prev) => ({ ...prev, exam1: t }))}
+                      maxLength={5}
+                    />
+                  </View>
+                  <View style={styles.gradeModalInputCol}>
+                    <Text style={styles.gradeInputLabel}>2. Yazılı</Text>
+                    <TextInput
+                      style={styles.gradeScoreInput}
+                      keyboardType="numeric"
+                      placeholder="-"
+                      placeholderTextColor={Colors.textMuted}
+                      value={gradeInputs.exam2}
+                      onChangeText={(t) => setGradeInputs((prev) => ({ ...prev, exam2: t }))}
+                      maxLength={5}
+                    />
+                  </View>
+                  <View style={styles.gradeModalInputCol}>
+                    <Text style={styles.gradeInputLabel}>3. Yazılı</Text>
+                    <TextInput
+                      style={styles.gradeScoreInput}
+                      keyboardType="numeric"
+                      placeholder="-"
+                      placeholderTextColor={Colors.textMuted}
+                      value={gradeInputs.exam3}
+                      onChangeText={(t) => setGradeInputs((prev) => ({ ...prev, exam3: t }))}
+                      maxLength={5}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* Performans Notları */}
+              <View style={styles.gradeModalSection}>
+                <View style={styles.gradeModalSectionTitleRow}>
+                  <Ionicons name="ribbon-outline" size={16} color={Colors.successDark} />
+                  <Text style={styles.gradeModalSectionTitle}>Performans Notları (0 - 100)</Text>
+                </View>
+                <View style={styles.gradeModalInputRow}>
+                  <View style={styles.gradeModalInputCol}>
+                    <Text style={styles.gradeInputLabel}>1. Perf</Text>
+                    <TextInput
+                      style={styles.gradeScoreInput}
+                      keyboardType="numeric"
+                      placeholder="-"
+                      placeholderTextColor={Colors.textMuted}
+                      value={gradeInputs.perf1}
+                      onChangeText={(t) => setGradeInputs((prev) => ({ ...prev, perf1: t }))}
+                      maxLength={5}
+                    />
+                  </View>
+                  <View style={styles.gradeModalInputCol}>
+                    <Text style={styles.gradeInputLabel}>2. Perf</Text>
+                    <TextInput
+                      style={styles.gradeScoreInput}
+                      keyboardType="numeric"
+                      placeholder="-"
+                      placeholderTextColor={Colors.textMuted}
+                      value={gradeInputs.perf2}
+                      onChangeText={(t) => setGradeInputs((prev) => ({ ...prev, perf2: t }))}
+                      maxLength={5}
+                    />
+                  </View>
+                  <View style={styles.gradeModalInputCol}>
+                    <Text style={styles.gradeInputLabel}>3. Perf</Text>
+                    <TextInput
+                      style={styles.gradeScoreInput}
+                      keyboardType="numeric"
+                      placeholder="-"
+                      placeholderTextColor={Colors.textMuted}
+                      value={gradeInputs.perf3}
+                      onChangeText={(t) => setGradeInputs((prev) => ({ ...prev, perf3: t }))}
+                      maxLength={5}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* Quiz Notları */}
+              <View style={styles.gradeModalSection}>
+                <View style={styles.gradeModalSectionTitleRow}>
+                  <Ionicons name="flash-outline" size={16} color={Colors.warningDark} />
+                  <Text style={styles.gradeModalSectionTitle}>Ders İçi Quizler ({gradebookData.quizzes.length})</Text>
+                </View>
+                {gradebookData.quizzes.length === 0 ? (
+                  <Text style={styles.noQuizHint}>
+                    Bu dönem için henüz quiz eklenmemiş. Not çizelgesi üzerindeki "+ Quiz" butonuyla dilediğiniz kadar quiz tanımlayabilirsiniz.
+                  </Text>
+                ) : (
+                  <View style={styles.quizInputsGrid}>
+                    {gradebookData.quizzes.map((q) => (
+                      <View key={q.id} style={styles.quizInputItem}>
+                        <Text style={styles.gradeInputLabel} numberOfLines={1}>{q.title}</Text>
+                        <TextInput
+                          style={styles.gradeScoreInput}
+                          keyboardType="numeric"
+                          placeholder="-"
+                          placeholderTextColor={Colors.textMuted}
+                          value={gradeInputs.quizScores[q.id] || ''}
+                          onChangeText={(t) =>
+                            setGradeInputs((prev) => ({
+                              ...prev,
+                              quizScores: { ...prev.quizScores, [q.id]: t },
+                            }))
+                          }
+                          maxLength={5}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Button
+                title="İptal"
+                variant="outline"
+                onPress={() => setEditGradeModalVisible(false)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title="Notları Kaydet"
+                onPress={handleSaveSingleGrade}
+                loading={savingSingleGrade}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Quiz Modal */}
+      <Modal visible={quizModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Yeni Quiz Ekle ({activeTerm}. Dönem)</Text>
+              <TouchableOpacity onPress={() => setQuizModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.quizModalHint}>
+              Ders içinde yaptığınız kısa sınav, kelime testi, tarama vb. için bir başlık belirleyin. Sınıfın tüm öğrencilerine bu sütun eklenecektir.
+            </Text>
+
+            <Input
+              label="Quiz / Tarama Başlığı"
+              placeholder="Örn: Quiz 1, 1. Ünite Taraması..."
+              value={quizTitleInput}
+              onChangeText={setQuizTitleInput}
+              autoFocus
+            />
+
+            <View style={styles.modalActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                onPress={() => setQuizModalVisible(false)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title="Quiz Oluştur"
+                onPress={handleSaveNewQuiz}
+                loading={savingQuiz}
+                style={{ flex: 1 }}
+              />
+            </View>
           </View>
         </View>
       </Modal>
@@ -1788,6 +2620,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   modalActions: {
     flexDirection: 'row',
@@ -2349,5 +3186,499 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: Colors.primary,
+  },
+
+  // Segment Switch
+  segmentSwitchWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 8,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: Colors.cardSubtle,
+    gap: 6,
+  },
+  segmentBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  segmentBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  segmentBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  // Gradebook Container & Control Bar
+  gradebookContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  gradebookControlBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 8,
+  },
+  termSelector: {
+    flexDirection: 'row',
+    backgroundColor: Colors.cardSubtle,
+    borderRadius: 8,
+    padding: 3,
+  },
+  termBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  termBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  termBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  termBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  gradeActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  gradeActionBtnPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 4,
+  },
+  gradeActionBtnPrimaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  gradeActionBtnSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    gap: 4,
+  },
+  gradeActionBtnSecondaryText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  gradeActionBtnOutline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSubtle,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 4,
+  },
+  gradeActionBtnOutlineText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+
+  // Search & Summary
+  gradeSearchWrap: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  gradeSearchInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSubtle,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 8,
+  },
+  gradeSearchTextInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textPrimary,
+    padding: 0,
+  },
+  gradebookSummaryBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+  },
+  gradebookSummaryText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+  },
+  gradebookHintText: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+  },
+
+  // Loading & Empty
+  gradebookLoadingWrap: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  gradebookLoadingText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  gradebookEmptyWrap: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  gradebookEmptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginTop: 8,
+  },
+  gradebookEmptySub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+
+  // Grade Table
+  tableScrollX: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  tableScrollY: {
+    flex: 1,
+  },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderBottomWidth: 2,
+    borderBottomColor: Colors.border,
+    minHeight: 38,
+  },
+  tableDataRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+    minHeight: 42,
+    backgroundColor: '#FFFFFF',
+  },
+  tableDataRowEven: {
+    backgroundColor: '#FAFBFD',
+  },
+  thCell: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    borderRightWidth: 1,
+    borderRightColor: Colors.borderLight,
+  },
+  thCellClickable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRightWidth: 1,
+    borderRightColor: Colors.borderLight,
+    gap: 2,
+    backgroundColor: '#EFF6FF',
+  },
+  thQuizTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+    maxWidth: 55,
+  },
+  tdCell: {
+    fontSize: 12,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+    borderRightWidth: 1,
+    borderRightColor: Colors.borderLight,
+  },
+  tdNameWrap: {
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingLeft: 8,
+  },
+  tdStudentName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+
+  // Column Dimensions
+  colNo: {
+    width: 44,
+  },
+  colName: {
+    width: 145,
+  },
+  colExam: {
+    width: 46,
+  },
+  colPerf: {
+    width: 46,
+  },
+  colQuiz: {
+    width: 66,
+  },
+  colAvg: {
+    width: 50,
+  },
+  colOverall: {
+    width: 68,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Cell Backgrounds
+  bgExamAvg: {
+    backgroundColor: '#EFF6FF',
+    color: '#1D4ED8',
+  },
+  bgPerfAvg: {
+    backgroundColor: '#ECFDF5',
+    color: '#047857',
+  },
+  bgQuizAvg: {
+    backgroundColor: '#FFFBEB',
+    color: '#B45309',
+  },
+
+  // Score Typography & Badges
+  textEmptyScore: {
+    color: Colors.textMuted,
+  },
+  textNormalScore: {
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  textHighScore: {
+    color: '#047857',
+    fontWeight: '700',
+  },
+  textFailScore: {
+    color: '#DC2626',
+    fontWeight: '700',
+  },
+  textBold: {
+    fontWeight: '700',
+  },
+  overallBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: Colors.cardSubtle,
+    minWidth: 42,
+    alignItems: 'center',
+  },
+  badgePass: {
+    backgroundColor: '#D1FAE5',
+  },
+  badgeFail: {
+    backgroundColor: '#FEE2E2',
+  },
+  overallText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.textSecondary,
+  },
+  textPass: {
+    color: '#047857',
+  },
+  textFail: {
+    color: '#DC2626',
+  },
+
+  // Detail Modal Grade Section
+  detailGradeSection: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: Colors.cardSubtle,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  sectionHeaderRowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  detailGradeEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: Colors.primaryLight,
+  },
+  detailGradeEditBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  detailGradeGrid: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  detailGradeBox: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    alignItems: 'center',
+  },
+  detailGradeBoxOverall: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  detailGradeBoxLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: 2,
+  },
+  detailGradeBoxLabelOverall: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.primary,
+    marginBottom: 2,
+  },
+  detailGradeBoxVal: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  detailGradeBoxValOverall: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  detailGradeBoxSub: {
+    fontSize: 9,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+
+  // Edit Grade Modal
+  gradeModalSection: {
+    marginBottom: 16,
+    backgroundColor: Colors.cardSubtle,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  gradeModalSectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  gradeModalSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  gradeModalInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  gradeModalInputCol: {
+    flex: 1,
+  },
+  gradeInputLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  gradeScoreInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: Colors.textPrimary,
+  },
+  noQuizHint: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+    lineHeight: 18,
+  },
+  quizInputsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  quizInputItem: {
+    width: '48%',
+  },
+  quizModalHint: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 14,
+    lineHeight: 18,
   },
 });
