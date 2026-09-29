@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../theme/colors';
+import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -1818,50 +1818,65 @@ export const ClassDetailScreen: React.FC = () => {
             >
               {/* Photo & Basic Info Banner */}
               <View style={styles.detailStudentCard}>
+                {/* Large Centered Photo Wrap */}
                 <View style={styles.detailPhotoWrap}>
-                  {detailStudent?.photo_uri ? (
-                    <Image
-                      source={{ uri: detailStudent.photo_uri }}
-                      style={styles.detailPhotoLarge}
-                    />
-                  ) : (
-                    <View style={styles.detailPhotoPlaceholder}>
-                      <Ionicons name="person" size={56} color={Colors.textMuted} />
-                      <Text style={styles.detailPlaceholderNo}>
-                        No: {detailStudent?.student_number || '-'}
-                      </Text>
-                    </View>
-                  )}
                   <TouchableOpacity
-                    style={styles.detailPhotoActionBtn}
                     onPress={() => {
                       if (detailStudent) handleOpenPhotoOptions(detailStudent);
                     }}
-                    activeOpacity={0.8}
+                    activeOpacity={0.85}
+                    style={styles.detailPhotoTouchWrap}
                   >
-                    <Ionicons name="camera" size={13} color="#FFFFFF" />
-                    <Text style={styles.detailPhotoActionText}>Fotoğraf Değiştir</Text>
+                    {detailStudent?.photo_uri ? (
+                      <Image
+                        source={{ uri: detailStudent.photo_uri }}
+                        style={styles.detailPhotoLarge}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.detailPhotoPlaceholder}>
+                        <Ionicons name="person" size={80} color={Colors.textMuted} />
+                        <Text style={styles.detailPlaceholderNo}>
+                          #{detailStudent?.student_number || '-'}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={styles.detailPhotoActionOverlay}>
+                      <Ionicons name="camera" size={14} color="#FFFFFF" />
+                      <Text style={styles.detailPhotoActionOverlayText}>Fotoğraf Değiştir</Text>
+                    </View>
                   </TouchableOpacity>
                 </View>
 
-                <View style={styles.detailStudentMeta}>
-                  <View style={styles.detailMetaRow}>
-                    <Text style={styles.detailMetaLabel}>Okul No:</Text>
-                    <Text style={styles.detailMetaVal}>{detailStudent?.student_number || '-'}</Text>
+                {/* Info Under Photo */}
+                <View style={styles.detailStudentMetaUnder}>
+                  {/* Name and Surname */}
+                  <Text style={styles.detailStudentFullName}>
+                    {detailStudent?.first_name} {detailStudent?.last_name}
+                  </Text>
+
+                  {/* Badges for No and Class */}
+                  <View style={styles.detailBadgesRow}>
+                    <View style={styles.detailNumberBadge}>
+                      <Ionicons name="id-card-outline" size={13} color={Colors.primary} />
+                      <Text style={styles.detailNumberBadgeText}>
+                        No: {detailStudent?.student_number || '-'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.detailClassBadge}>
+                      <Ionicons name="school-outline" size={13} color={Colors.successDark} />
+                      <Text style={styles.detailClassBadgeText}>{className}</Text>
+                    </View>
                   </View>
-                  <View style={styles.detailMetaRow}>
-                    <Text style={styles.detailMetaLabel}>Ad Soyad:</Text>
-                    <Text style={styles.detailMetaVal}>
-                      {detailStudent?.first_name} {detailStudent?.last_name}
-                    </Text>
-                  </View>
-                  <View style={styles.detailMetaRow}>
-                    <Text style={styles.detailMetaLabel}>Şube:</Text>
-                    <Text style={styles.detailMetaVal}>{className}</Text>
-                  </View>
+
+                  {/* Optional Notes */}
                   {detailStudent?.notes ? (
-                    <View style={styles.detailNotesBox}>
-                      <Text style={styles.detailMetaLabel}>Açıklama / Not:</Text>
+                    <View style={styles.detailNotesCard}>
+                      <View style={styles.detailNotesHeader}>
+                        <Ionicons name="document-text-outline" size={14} color={Colors.textSecondary} />
+                        <Text style={styles.detailNotesLabel}>Öğrenci Notu / Açıklama</Text>
+                      </View>
                       <Text style={styles.detailNotesText}>{detailStudent.notes}</Text>
                     </View>
                   ) : null}
@@ -2943,86 +2958,136 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   detailStudentCard: {
-    flexDirection: 'row',
-    backgroundColor: Colors.background,
-    borderRadius: 14,
-    padding: 14,
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: Colors.border,
     marginBottom: 16,
-    gap: 14,
     alignItems: 'center',
+    ...Shadows.small,
   },
   detailPhotoWrap: {
     alignItems: 'center',
+    marginBottom: 12,
   },
-  detailPhotoLarge: {
-    width: 100,
-    height: 128,
-    borderRadius: 10,
+  detailPhotoTouchWrap: {
+    position: 'relative',
+    borderRadius: 16,
+    overflow: 'hidden',
     backgroundColor: Colors.cardSubtle,
     borderWidth: 2,
-    borderColor: Colors.primaryMuted,
-    resizeMode: 'cover',
+    borderColor: Colors.border,
+    ...Shadows.medium,
+  },
+  detailPhotoLarge: {
+    width: 200,
+    height: 255,
+    borderRadius: 14,
+    backgroundColor: Colors.cardSubtle,
   },
   detailPhotoPlaceholder: {
-    width: 100,
-    height: 128,
-    borderRadius: 10,
+    width: 200,
+    height: 255,
+    borderRadius: 14,
     backgroundColor: Colors.cardSubtle,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 8,
   },
   detailPlaceholderNo: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
     color: Colors.textSecondary,
   },
-  detailPhotoActionBtn: {
+  detailPhotoActionOverlay: {
+    position: 'absolute',
+    bottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6,
-    marginTop: 6,
-    gap: 4,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 5,
   },
-  detailPhotoActionText: {
-    fontSize: 10,
+  detailPhotoActionOverlayText: {
+    fontSize: 11,
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  detailStudentMeta: {
-    flex: 1,
-    gap: 6,
+  detailStudentMetaUnder: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 8,
   },
-  detailMetaRow: {
+  detailStudentFullName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  detailBadgesRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
+    gap: 8,
   },
-  detailMetaLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
+  detailNumberBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 4,
   },
-  detailMetaVal: {
+  detailNumberBadgeText: {
     fontSize: 13,
     fontWeight: '700',
-    color: Colors.textPrimary,
+    color: Colors.primary,
   },
-  detailNotesBox: {
-    marginTop: 2,
+  detailClassBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.successLight,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 4,
+  },
+  detailClassBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.successDark,
+  },
+  detailNotesCard: {
+    width: '100%',
+    backgroundColor: Colors.cardSubtle,
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+  },
+  detailNotesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 4,
+  },
+  detailNotesLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
   },
   detailNotesText: {
     fontSize: 12,
     color: Colors.textPrimary,
-    fontStyle: 'italic',
-    marginTop: 2,
+    lineHeight: 17,
   },
   detailSection: {
     marginBottom: 16,
