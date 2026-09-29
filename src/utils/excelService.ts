@@ -561,35 +561,76 @@ export interface ParsedYearlyPlanRow {
 }
 
 const parseExcelDateValue = (val: any): string => {
-  if (!val && val !== 0) return '';
-  if (typeof val === 'number') {
-    try {
-      const parsed = XLSX.SSF.parse_date_code(val);
-      if (parsed) {
-        const y = String(parsed.y).padStart(4, '0');
-        const m = String(parsed.m).padStart(2, '0');
-        const d = String(parsed.d).padStart(2, '0');
-        return `${y}-${m}-${d}`;
-      }
-    } catch {}
+  if (val === null || val === undefined) return '';
+
+  // 1. If it's a native Date object
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
+
+  // 2. If it's an Excel date code (number like 45549 or numeric string)
+  if (typeof val === 'number' || (typeof val === 'string' && /^\d{4,5}(\.\d+)?$/.test(val.trim()))) {
+    const num = typeof val === 'number' ? val : parseFloat(val.trim());
+    if (num > 30000 && num < 60000) {
+      try {
+        const parsed = XLSX.SSF.parse_date_code(num);
+        if (parsed) {
+          const y = String(parsed.y).padStart(4, '0');
+          const m = String(parsed.m).padStart(2, '0');
+          const d = String(parsed.d).padStart(2, '0');
+          return `${y}-${m}-${d}`;
+        }
+      } catch (e) {
+        console.warn('SSF.parse_date_code error:', e);
+      }
+    }
+  }
+
   const str = String(val).trim();
-  // Match DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
-  const trMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (!str) return '';
+
+  // 3. Turkish format: DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY (e.g. 14.09.2026, 4.9.2026)
+  const trMatch = str.match(/^(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})/);
   if (trMatch) {
     const d = trMatch[1].padStart(2, '0');
     const m = trMatch[2].padStart(2, '0');
     const y = trMatch[3];
     return `${y}-${m}-${d}`;
   }
-  // Match YYYY-MM-DD
-  const isoMatch = str.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+
+  // 4. Turkish format with 2-digit year: DD.MM.YY (e.g. 14.09.26)
+  const trShortMatch = str.match(/^(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})$/);
+  if (trShortMatch) {
+    const d = trShortMatch[1].padStart(2, '0');
+    const m = trShortMatch[2].padStart(2, '0');
+    const y = `20${trShortMatch[3]}`;
+    return `${y}-${m}-${d}`;
+  }
+
+  // 5. ISO format: YYYY-MM-DD or YYYY.MM.DD or YYYY/MM/DD (e.g. 2026-09-14)
+  const isoMatch = str.match(/^(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})/);
   if (isoMatch) {
     const y = isoMatch[1];
     const m = isoMatch[2].padStart(2, '0');
     const d = isoMatch[3].padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
+
+  // 6. ISO datetime string with 'T' (e.g. 2026-09-14T00:00:00.000Z)
+  if (str.includes('T')) {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  }
+
   return str;
 };
 
@@ -603,11 +644,10 @@ export const generateYearlyPlanTemplateExcel = async (
 ): Promise<boolean> => {
   const workbook = XLSX.utils.book_new();
 
-  // Tablo Başlıkları:
-  // 1: Hafta Başlangıç Tarihi, 2: Hafta Bitiş Tarihi, 3: Ders Saati, 4: Deftere Yazılacak Konu, 5: Kazanımlar / Açıklamalar
+  // Tablo Başlıkları (Türkiye standart formatı GG.AA.YYYY):
   const header = [
-    'Hafta Başlangıç Tarihi (YYYY-AA-GG veya GG.AA.YYYY)',
-    'Hafta Bitiş Tarihi (YYYY-AA-GG veya GG.AA.YYYY)',
+    'Hafta Başlangıç Tarihi (GG.AA.YYYY)',
+    'Hafta Bitiş Tarihi (GG.AA.YYYY)',
     'Ders Saati',
     'Deftere Yazılacak Konu *',
     'Kazanımlar / Açıklamalar (Opsiyonel)',
@@ -623,8 +663,8 @@ export const generateYearlyPlanTemplateExcel = async (
   const pad = (n: number) => String(n).padStart(2, '0');
   let friday = new Date(monday);
   friday.setDate(monday.getDate() + 4);
-  const w1Start = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
-  const w1End = `${friday.getFullYear()}-${pad(friday.getMonth() + 1)}-${pad(friday.getDate())}`;
+  const w1Start = `${pad(monday.getDate())}.${pad(monday.getMonth() + 1)}.${monday.getFullYear()}`;
+  const w1End = `${pad(friday.getDate())}.${pad(friday.getMonth() + 1)}.${friday.getFullYear()}`;
 
   if ((weeklyHours || 4) >= 4) {
     rows.push([w1Start, w1End, 2, 'Kuvvet ve Denge (İlk 2 Ders)', 'Vektörlerin bileşkesi ve kuvvet dengesi']);
@@ -638,8 +678,8 @@ export const generateYearlyPlanTemplateExcel = async (
     friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
 
-    const startStr = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
-    const endStr = `${friday.getFullYear()}-${pad(friday.getMonth() + 1)}-${pad(friday.getDate())}`;
+    const startStr = `${pad(monday.getDate())}.${pad(monday.getMonth() + 1)}.${monday.getFullYear()}`;
+    const endStr = `${pad(friday.getDate())}.${pad(friday.getMonth() + 1)}.${friday.getFullYear()}`;
 
     let sampleTopic = '';
     let sampleOutcome = '';

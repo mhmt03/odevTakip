@@ -611,7 +611,7 @@ export const YearlyPlanScreen: React.FC = () => {
                       </View>
                       <Text style={styles.previewItemTopic}>{r.subjectTopic}</Text>
                       <Text style={styles.previewItemDates}>
-                        {r.dateStart || '-'} — {r.dateEnd || '-'}
+                        {formatDateToTR(r.dateStart)} — {formatDateToTR(r.dateEnd)}
                       </Text>
                     </View>
                   ))}
