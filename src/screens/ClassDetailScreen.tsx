@@ -3647,57 +3647,57 @@ const styles = StyleSheet.create({
   tableHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#E2E8F0',
     borderBottomWidth: 2,
-    borderBottomColor: Colors.border,
-    minHeight: 38,
+    borderBottomColor: '#94A3B8',
+    minHeight: 40,
   },
   tableDataRow: {
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
-    minHeight: 42,
+    borderBottomColor: '#CBD5E1',
+    minHeight: 44,
     backgroundColor: '#FFFFFF',
   },
   tableDataRowEven: {
-    backgroundColor: '#FAFBFD',
+    backgroundColor: '#EDF2F7', // Belirgin zebra zıtlığı (açık kontrastlı gri/mavi ton)
   },
   thCell: {
     fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textPrimary,
+    fontWeight: '800',
+    color: '#1E293B',
     textAlign: 'center',
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 2,
     borderRightWidth: 1,
-    borderRightColor: Colors.borderLight,
+    borderRightColor: '#CBD5E1',
   },
   thCellClickable: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 4,
     borderRightWidth: 1,
-    borderRightColor: Colors.borderLight,
+    borderRightColor: '#CBD5E1',
     gap: 2,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#DBEAFE',
   },
   thQuizTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: Colors.primary,
+    color: '#1D4ED8',
     maxWidth: 55,
   },
   tdCell: {
     fontSize: 12,
-    color: Colors.textPrimary,
+    color: '#0F172A',
     textAlign: 'center',
     paddingVertical: 10,
     paddingHorizontal: 2,
     borderRightWidth: 1,
-    borderRightColor: Colors.borderLight,
+    borderRightColor: '#CBD5E1',
   },
   tdNameWrap: {
     justifyContent: 'center',
@@ -3706,8 +3706,8 @@ const styles = StyleSheet.create({
   },
   tdStudentName: {
     fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textPrimary,
+    fontWeight: '700',
+    color: '#0F172A',
   },
 
   // Column Dimensions
@@ -3737,16 +3737,19 @@ const styles = StyleSheet.create({
 
   // Cell Backgrounds
   bgExamAvg: {
-    backgroundColor: '#EFF6FF',
-    color: '#1D4ED8',
+    backgroundColor: '#DBEAFE',
+    color: '#1E40AF',
+    fontWeight: '700',
   },
   bgPerfAvg: {
-    backgroundColor: '#ECFDF5',
-    color: '#047857',
+    backgroundColor: '#D1FAE5',
+    color: '#065F46',
+    fontWeight: '700',
   },
   bgQuizAvg: {
-    backgroundColor: '#FFFBEB',
-    color: '#B45309',
+    backgroundColor: '#FEF3C7',
+    color: '#92400E',
+    fontWeight: '700',
   },
 
   // Score Typography & Badges
