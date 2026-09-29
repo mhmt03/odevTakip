@@ -36,11 +36,22 @@ export const pickAndSaveYearlyPlanPdf = async (
 
     const targetUri = `${dir}plan_course_${courseId}_grade_${gradeLevel}.pdf`;
 
-    // Copy to permanent application directory
-    await FileSystem.copyAsync({
-      from: sourceUri,
-      to: targetUri,
-    });
+    // Check if target already exists and remove it to prevent copyAsync failure
+    const targetInfo = await FileSystem.getInfoAsync(targetUri);
+    if (targetInfo.exists) {
+      await FileSystem.deleteAsync(targetUri, { idempotent: true });
+    }
+
+    // Try copying; if copyAsync fails on cache permissions, try downloadAsync fallback
+    try {
+      await FileSystem.copyAsync({
+        from: sourceUri,
+        to: targetUri,
+      });
+    } catch (copyErr) {
+      console.warn('copyAsync failed, trying downloadAsync fallback:', copyErr);
+      await FileSystem.downloadAsync(sourceUri, targetUri);
+    }
 
     // Save metadata in database
     await saveYearlyPlanDocument(courseId, gradeLevel, fileName, targetUri, fileSize);

@@ -85,6 +85,7 @@ export const HomeScreen: React.FC = () => {
     courseId: number;
   } | null>(null);
   const [planSearchQuery, setPlanSearchQuery] = useState('');
+  const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
 
   const loadDaySchedule = async (day: number) => {
     try {
@@ -961,18 +962,27 @@ export const HomeScreen: React.FC = () => {
             {/* Üst İşlem Butonları */}
             <View style={styles.yearlyPlanActionsRow}>
               {yearlyPlanPdf && (
-                <TouchableOpacity
-                  style={styles.pdfOpenBtn}
-                  onPress={() =>
-                    viewYearlyPlanPdf(
-                      yearlyPlanPdf.file_uri,
-                      `${yearlyPlanMeta?.gradeLevel}. Sınıf ${yearlyPlanMeta?.courseName} Yıllık Planı`
-                    )
-                  }
-                >
-                  <Ionicons name="document-text" size={16} color="#FFFFFF" />
-                  <Text style={styles.pdfOpenBtnText}>PDF Planı Aç</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    style={styles.pdfOpenBtn}
+                    onPress={() => setPdfViewerModalVisible(true)}
+                  >
+                    <Ionicons name="document-text" size={16} color="#FFFFFF" />
+                    <Text style={styles.pdfOpenBtnText}>PDF Gör</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.pdfOpenBtn, { backgroundColor: Colors.secondary }]}
+                    onPress={() =>
+                      viewYearlyPlanPdf(
+                        yearlyPlanPdf.file_uri,
+                        `${yearlyPlanMeta?.gradeLevel}. Sınıf ${yearlyPlanMeta?.courseName} Yıllık Planı`
+                      )
+                    }
+                  >
+                    <Ionicons name="share-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.pdfOpenBtnText}>PDF Paylaş/Aç</Text>
+                  </TouchableOpacity>
+                </>
               )}
               <TouchableOpacity
                 style={styles.planManageBtn}
@@ -1099,6 +1109,60 @@ export const HomeScreen: React.FC = () => {
                 })}
               </ScrollView>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* 3. PDF GÖRÜNTÜLEME MODALI */}
+      <Modal
+        visible={pdfViewerModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setPdfViewerModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContainer, { height: '85%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalClassTag}>PDF DOKÜMANI</Text>
+                <Text style={styles.modalTitle} numberOfLines={1}>
+                  {yearlyPlanPdf?.file_name || 'Yıllık Plan PDF'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPdfViewerModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+              <Ionicons name="document-text-outline" size={64} color={Colors.primary} style={{ marginBottom: 16 }} />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: Colors.textPrimary, textAlign: 'center', marginBottom: 8 }}>
+                {yearlyPlanPdf?.file_name}
+              </Text>
+              <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center', marginBottom: 24, lineHeight: 18 }}>
+                Dosya Yolu: {yearlyPlanPdf?.file_uri.split('/').pop()}{'\n'}
+                Dosya Boyutu: {yearlyPlanPdf?.file_size ? `${(yearlyPlanPdf.file_size / 1024).toFixed(1)} KB` : 'Bilinmiyor'}
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.pdfOpenBtn, { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }]}
+                onPress={() => {
+                  if (yearlyPlanPdf) {
+                    viewYearlyPlanPdf(
+                      yearlyPlanPdf.file_uri,
+                      `${yearlyPlanMeta?.gradeLevel}. Sınıf ${yearlyPlanMeta?.courseName} Yıllık Planı`
+                    );
+                  }
+                }}
+              >
+                <Ionicons name="open-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={[styles.pdfOpenBtnText, { fontSize: 15 }]}>Sistem Görüntüleyicide Aç / Paylaş</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
