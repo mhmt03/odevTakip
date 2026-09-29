@@ -290,6 +290,14 @@ export const saveScheduleSlot = async (
   );
 };
 
+export const clearEntireSchedule = async (resetDayOverrides: boolean = false): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync('DELETE FROM schedules');
+  if (resetDayOverrides) {
+    await db.runAsync('DELETE FROM day_slot_times');
+  }
+};
+
 export interface ActiveLessonInfo {
   currentLesson: ScheduleItem | null;
   nextLesson: ScheduleItem | null;

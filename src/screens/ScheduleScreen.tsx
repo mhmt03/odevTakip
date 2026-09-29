@@ -24,6 +24,7 @@ import {
   getCustomDaysWithOverrides,
   saveDaySlotTime,
   loadOfficialWeeklySchedule,
+  clearEntireSchedule,
 } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
 import { exportScheduleToExcel } from '../utils/excelService';
@@ -179,6 +180,29 @@ export const ScheduleScreen: React.FC = () => {
     );
   };
 
+  const handleClearEntireSchedule = () => {
+    Alert.alert(
+      'Haftalık Ders Programını Temizle',
+      'Haftalık programdaki tüm gün ve saatlere ait şube ve ders atamaları tamamen silinecektir.\n\nBu işlemi onaylıyor musunuz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Programı Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearEntireSchedule();
+              await loadData();
+              Alert.alert('Başarılı', 'Haftalık ders programı başarıyla sıfırlandı.');
+            } catch (err: any) {
+              Alert.alert('Hata', 'Program silinirken bir sorun oluştu: ' + (err?.message || err));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const currentTime = getCurrentTimeString();
   const currentDayIndex = getDayOfWeekIndex();
   const currentDayObj = DAYS_OF_WEEK.find((d) => d.id === selectedDay);
@@ -188,7 +212,7 @@ export const ScheduleScreen: React.FC = () => {
     <View style={styles.container}>
       {/* Top Header */}
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1, paddingRight: 8 }}>
           <Text style={styles.headerTitle}>Haftalık Ders Programı</Text>
           <Text style={styles.headerSub}>Şube ve ders saatleri yönetimi</Text>
         </View>
@@ -203,14 +227,23 @@ export const ScheduleScreen: React.FC = () => {
           <TouchableOpacity
             style={styles.actionBtnIcon}
             onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay })}
+            accessibilityLabel="Saat & Ders Ayarları"
           >
             <Ionicons name="settings-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionBtnIcon}
             onPress={handleExportSchedule}
+            accessibilityLabel="Excel'e Aktar"
           >
             <Ionicons name="share-outline" size={20} color={Colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionBtnIcon, { backgroundColor: '#FEE2E2' }]}
+            onPress={handleClearEntireSchedule}
+            accessibilityLabel="Programı Temizle"
+          >
+            <Ionicons name="trash-outline" size={20} color={Colors.danger} />
           </TouchableOpacity>
         </View>
       </View>

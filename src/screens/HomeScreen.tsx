@@ -303,7 +303,7 @@ export const HomeScreen: React.FC = () => {
           <View style={styles.dayTitleContainer}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={styles.dayMainTitle}>
-                {isViewingToday ? 'Bugünkü Derslerim' : `${selectedDayObj?.name} Dersleri`}
+                {isViewingToday ? 'Bugün' : `${selectedDayObj?.name} `}
               </Text>
               {isViewingToday ? (
                 <View style={styles.todayPill}>

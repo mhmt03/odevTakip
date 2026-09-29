@@ -36,6 +36,7 @@ import {
   resetDefaultQuickNotes,
   QuickNoteItem,
 } from '../database/operations/noteOperations';
+import { clearEntireSchedule } from '../database/operations/scheduleOperations';
 
 const APP_VERSION =
   Constants.expoConfig?.version ||
@@ -178,6 +179,33 @@ export const OperationsScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleClearSchedulePrompt = () => {
+    Alert.alert(
+      'Haftalık Ders Programını Sıfırla',
+      'Haftalık ders programındaki tüm gün ve saatlere ait şube ve ders eşleştirmeleri tamamen silinecektir.\n\nBu işlemi onaylıyor musunuz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Evet, Programı Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              setLoadingMessage('Haftalık ders programı temizleniyor...');
+              await clearEntireSchedule();
+              await loadData();
+              Alert.alert('Başarılı', 'Haftalık ders programı başarıyla sıfırlandı.');
+            } catch (e: any) {
+              Alert.alert('Hata', e?.message || 'Program silinirken bir hata oluştu.');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   // --- QUICK NOTES HANDLERS ---
@@ -359,6 +387,20 @@ export const OperationsScreen: React.FC = () => {
               <View style={styles.actionBtnTextWrap}>
                 <Text style={styles.actionBtnTitle}>Yedekten Geri Yükle</Text>
                 <Text style={styles.actionBtnSub}>Mevcut .db yedeğini içe aktar</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.clearScheduleBtn}
+              onPress={handleClearSchedulePrompt}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#B45309' }]}>
+                <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+              </View>
+              <View style={styles.actionBtnTextWrap}>
+                <Text style={styles.actionBtnTitle}>Haftalık Ders Programını Sıfırla</Text>
+                <Text style={styles.actionBtnSub}>Tüm günlerdeki şube & ders programını temizler</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -633,6 +675,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#DC2626',
+    borderRadius: 12,
+    padding: 14,
+    gap: 12,
+    ...Shadows.small,
+  },
+  clearScheduleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D97706',
     borderRadius: 12,
     padding: 14,
     gap: 12,
