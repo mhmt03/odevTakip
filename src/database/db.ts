@@ -149,6 +149,17 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       text TEXT NOT NULL,
       sort_order INTEGER DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS yearly_plan_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      course_id INTEGER NOT NULL,
+      grade_level INTEGER NOT NULL,
+      file_name TEXT NOT NULL,
+      file_uri TEXT NOT NULL,
+      file_size INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(course_id, grade_level)
+    );
   `);
 
   // Migrate: ensure photo_uri column exists in students table

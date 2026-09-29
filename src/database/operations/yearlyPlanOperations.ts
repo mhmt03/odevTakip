@@ -366,3 +366,62 @@ export const getCurrentTopicForClass = async (
 
   return items[0];
 };
+
+// --- YEARLY PLAN PDF DOCUMENT ATTACHMENT ---
+export interface YearlyPlanDocument {
+  id: number;
+  course_id: number;
+  grade_level: number;
+  file_name: string;
+  file_uri: string;
+  file_size?: number;
+  created_at: string;
+}
+
+export const getYearlyPlanDocument = async (
+  courseId: number,
+  gradeLevel: number
+): Promise<YearlyPlanDocument | null> => {
+  const db = await getDB();
+  return await db.getFirstAsync<YearlyPlanDocument>(
+    'SELECT * FROM yearly_plan_documents WHERE course_id = ? AND grade_level = ?',
+    courseId,
+    gradeLevel
+  );
+};
+
+export const saveYearlyPlanDocument = async (
+  courseId: number,
+  gradeLevel: number,
+  fileName: string,
+  fileUri: string,
+  fileSize: number = 0
+): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT INTO yearly_plan_documents (course_id, grade_level, file_name, file_uri, file_size)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(course_id, grade_level) DO UPDATE SET
+       file_name = excluded.file_name,
+       file_uri = excluded.file_uri,
+       file_size = excluded.file_size,
+       created_at = CURRENT_TIMESTAMP`,
+    courseId,
+    gradeLevel,
+    fileName,
+    fileUri,
+    fileSize
+  );
+};
+
+export const deleteYearlyPlanDocument = async (
+  courseId: number,
+  gradeLevel: number
+): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync(
+    'DELETE FROM yearly_plan_documents WHERE course_id = ? AND grade_level = ?',
+    courseId,
+    gradeLevel
+  );
+};

@@ -635,7 +635,133 @@ const parseExcelDateValue = (val: any): string => {
 };
 
 /**
- * Kullanıcı için 4-5 sütunlu örnek yıllık plan Excel şablonu oluşturur ve paylaşır.
+ * Bir hücredeki metinden sınıf seviyesi kodlarıyla başlayan cümleleri veya satırları ayıklar.
+ * Gereksiz satırbaşı (\r\n, \n, boşluklar) temizlenir.
+ * Örn: "12.4.2.3. Madde oluşum sürecini açıklar.\n\n\n12.4.2.4. Madde ve antimadde kavramlarını açıklar."
+ */
+export const extractSentencesFromCell = (cellText: string): string[] => {
+  if (!cellText || !cellText.trim()) return [];
+
+  const raw = String(cellText).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // Her cümlenin başında sınıf seviyesi ile başlayan bir kodlama var (örn: 12.4.2.3. veya 9.1.2. vb.)
+  // Cümle başlangıç pattern'i: satır başında veya birden fazla boşluktan sonra gelen kodlama:
+  const codeRegex = /(?:^|\n|\s{2,}|\b)(\d{1,2}(?:\.\d+){1,4}\.?)/g;
+
+  const indices: Array<{ index: number; code: string }> = [];
+  let m: RegExpExecArray | null;
+
+  while ((m = codeRegex.exec(raw)) !== null) {
+    const matchIdx = m.index + m[0].indexOf(m[1]);
+    indices.push({ index: matchIdx, code: m[1] });
+  }
+
+  if (indices.length > 0) {
+    const sentences: string[] = [];
+    for (let i = 0; i < indices.length; i++) {
+      const start = indices[i].index;
+      const end = i + 1 < indices.length ? indices[i + 1].index : raw.length;
+      const sentenceText = raw.substring(start, end).replace(/\s+/g, ' ').trim();
+      if (sentenceText.length > 0) {
+        sentences.push(sentenceText);
+      }
+    }
+    if (sentences.length > 0) {
+      return sentences;
+    }
+  }
+
+  // Fallback: Eğer kod bulunamazsa, boş olmayan satırları temizle
+  const fallbackLines = raw
+    .split(/\n{2,}|\n(?=[A-ZÇĞİÖŞÜ0-9\-\*•])/)
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter((l) => l.length > 0);
+
+  if (fallbackLines.length > 0) return fallbackLines;
+  return [raw.replace(/\s+/g, ' ').trim()];
+};
+
+/**
+ * Toplam cümle sayısını ders saatlerine (H) mümkün olduğunca HOMOJEN olarak paylaştırır.
+ *
+ * Kullanıcı kuralları:
+ * - 4 saat, 4 cümle: [1, 1, 1, 1] saat
+ * - 4 saat, 3 cümle: [1, 1, 2] saat (son cümle son iki saate)
+ * - 4 saat, 2 cümle: [2, 2] saat (ilk cümle 2 saate, ikinci cümle 2 saate)
+ * - 4 saat, 1 cümle: [4] saat
+ * - 4 saat, 5 cümle: 1. saat: C1, 2. saat: C2, 3. saat: C3, 4. saat: C4 + C5 (son saate 2 cümle) -> [1, 1, 1, 2]
+ * - 4 saat, 6 cümle: 1. saat: C1+C2, 2. saat: C3, 3. saat: C4+C5, 4. saat: C6 -> [2, 1, 2, 1]
+ */
+export const distributeSentencesToHours = (
+  sentences: string[],
+  totalHours: number
+): Array<{ topic: string; hours: number }> => {
+  const N = sentences.length;
+  const H = Math.max(1, totalHours || 4);
+
+  if (N === 0) {
+    return [{ topic: '', hours: H }];
+  }
+
+  // 1. DURUM: Cümle sayısı ders saatinden az veya eşit (N <= H)
+  // Her cümle en az 1 saat alır, artan saatler geriden başlayarak eklenir (kullanıcı kuralı: son cümle son 2 saate)
+  if (N <= H) {
+    const baseHours = Math.floor(H / N);
+    let remainder = H % N;
+
+    const hoursPerSentence: number[] = new Array(N).fill(baseHours);
+    // Artan saatleri son cümlelerden geriye doğru dağıt (örn: N=3, H=4 -> [1, 1, 2])
+    for (let i = N - 1; i >= 0 && remainder > 0; i--, remainder--) {
+      hoursPerSentence[i] += 1;
+    }
+
+    return sentences.map((sentence, idx) => ({
+      topic: sentence,
+      hours: hoursPerSentence[idx],
+    }));
+  }
+
+  // 2. DURUM: Cümle sayısı ders saatinden fazla (N > H)
+  // H adet ders saatimiz var, her bir saat 1 saatliktir (hours = 1).
+  // Cümleler bu H adet saate homojen şekilde paylaştırılır.
+  const sentenceCounts: number[] = new Array(H).fill(Math.floor(N / H));
+  const remainder = N % H;
+
+  if (remainder === 1) {
+    // 5 cümle, 4 saat: "her derse 1er cümle iken son derse son iki cümle yazılacak" -> [1, 1, 1, 2]
+    sentenceCounts[H - 1] += 1;
+  } else if (remainder === 2 && H === 4) {
+    // 6 cümle, 4 saat: "ilk derse 2 cümle ikinci derse 1 cümle, üçüncü derse 2 cümle ve dördüncü derse de 1 cümle" -> [2, 1, 2, 1]
+    sentenceCounts[0] += 1;
+    sentenceCounts[2] += 1;
+  } else if (remainder > 0) {
+    // Genel homojen dağıtım: saatler arasına eşit aralıklarla paylaştır
+    let remLeft = remainder;
+    for (let i = 0; i < H && remLeft > 0; i++) {
+      if (Math.floor(((i + 1) * remainder) / H) > Math.floor((i * remainder) / H)) {
+        sentenceCounts[i] += 1;
+        remLeft--;
+      }
+    }
+  }
+
+  const result: Array<{ topic: string; hours: number }> = [];
+  let sIndex = 0;
+  for (let h = 0; h < H; h++) {
+    const count = sentenceCounts[h];
+    const chunk = sentences.slice(sIndex, sIndex + count);
+    sIndex += count;
+    result.push({
+      topic: chunk.join('\n'),
+      hours: 1, // Her bir ders saati 1 saat
+    });
+  }
+
+  return result;
+};
+
+/**
+ * Kullanıcı için 4 sütunlu (Tarih, Tarih, Saat, Cümleler) örnek yıllık plan Excel şablonu oluşturur ve paylaşır.
  */
 export const generateYearlyPlanTemplateExcel = async (
   courseName: string,
@@ -649,54 +775,77 @@ export const generateYearlyPlanTemplateExcel = async (
     'Hafta Başlangıç Tarihi (GG.AA.YYYY)',
     'Hafta Bitiş Tarihi (GG.AA.YYYY)',
     'Ders Saati',
-    'Deftere Yazılacak Konu *',
+    'Deftere Yazılacak Konu / Kazanım Cümleleri (Kazanım Kodlu) *',
     'Kazanımlar / Açıklamalar (Opsiyonel)',
   ];
 
-  // 36 haftalık örnek satırlar üret (Eylül'den Haziran'a varsayılan haftalık takvim örneği)
   const rows: any[][] = [header];
-
-  // 2026-2027 veya güncel eğitim öğretim dönemi için örnek 36 hafta
+  const pad = (n: number) => String(n).padStart(2, '0');
   let monday = new Date(2026, 8, 14); // 14 Eylül 2026 Pazartesi
 
-  // 1. Hafta: İki farklı alt konu örneği (Örn: 2 saat Kuvvet + 2 saat Hareket)
-  const pad = (n: number) => String(n).padStart(2, '0');
-  let friday = new Date(monday);
-  friday.setDate(monday.getDate() + 4);
-  const w1Start = `${pad(monday.getDate())}.${pad(monday.getMonth() + 1)}.${monday.getFullYear()}`;
-  const w1End = `${pad(friday.getDate())}.${pad(friday.getMonth() + 1)}.${friday.getFullYear()}`;
+  // Örnek Haftalar (Kullanıcının yüklediği formatla birebir uyumlu: Hücre içinde kodlu cümleler)
+  const samplePlans = [
+    {
+      sentences: [
+        `${gradeLevel}.1.1.1. Madde oluşum sürecini açıklar.`,
+        `${gradeLevel}.1.1.2. Madde ve antimadde kavramlarını açıklar.`,
+      ],
+      desc: 'Madde ve antimadde özellikleri',
+    },
+    {
+      sentences: [
+        `${gradeLevel}.1.2.1. Kararlı ve kararsız durumdaki atomların özelliklerini karşılaştırır.`,
+        `${gradeLevel}.1.2.2. Radyoaktif bozunma sonucu atomun kütle numarası, atom numarası ve enerjisindeki değişimi açıklar.`,
+      ],
+      desc: 'Radyoaktif bozunma ve atom yapısı',
+    },
+    {
+      sentences: [
+        `${gradeLevel}.1.3.1. Nükleer fisyon ve füzyon olaylarını karşılaştırır.`,
+        `${gradeLevel}.1.3.2. Radyasyonun canlılar üzerindeki etkilerini açıklar.`,
+        `${gradeLevel}.1.3.3. Radyasyondan korunma yollarını tartışır.`,
+      ],
+      desc: 'Nükleer enerji ve radyasyon güvenliği',
+    },
+    {
+      sentences: [
+        `${gradeLevel}.2.1.1. Özel görelilik teorisinin temel kabullerini açıklar.`,
+        `${gradeLevel}.2.1.2. Zaman genişlemesi ve uzunluk büzülmesi kavramlarını tartışır.`,
+        `${gradeLevel}.2.1.3. Kütle-enerji eşdeğerliğini matematiksel modelle açıklar.`,
+        `${gradeLevel}.2.1.4. Görelilik teorisinin güncel teknolojilerdeki uygulamalarını inceler.`,
+      ],
+      desc: 'Modern fizik ve görelilik',
+    },
+    {
+      sentences: [
+        `${gradeLevel}.3.1.1. Kuantum teorisinin doğuşunu açıklar.`,
+      ],
+      desc: 'Foton kavramı ve siyah cisim ışıması',
+    },
+  ];
 
-  if ((weeklyHours || 4) >= 4) {
-    rows.push([w1Start, w1End, 2, 'Kuvvet ve Denge (İlk 2 Ders)', 'Vektörlerin bileşkesi ve kuvvet dengesi']);
-    rows.push([w1Start, w1End, 2, 'Bağıl Hareket (Son 2 Ders)', 'Bir ve iki boyutta bağıl hız']);
-  } else {
-    rows.push([w1Start, w1End, weeklyHours || 2, 'Dersin Tanıtımı ve Temel Kavramlar', 'Müfredat ve hedefler']);
-  }
-  monday.setDate(monday.getDate() + 7);
-
-  for (let w = 2; w <= 36; w++) {
-    friday = new Date(monday);
+  for (let w = 1; w <= 36; w++) {
+    const friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
 
     const startStr = `${pad(monday.getDate())}.${pad(monday.getMonth() + 1)}.${monday.getFullYear()}`;
     const endStr = `${pad(friday.getDate())}.${pad(friday.getMonth() + 1)}.${friday.getFullYear()}`;
 
-    let sampleTopic = '';
-    let sampleOutcome = '';
+    let topicCell = '';
+    let outcomeCell = '';
 
-    if (w === 2) {
-      sampleTopic = "Newton'un Hareket Yasaları";
-      sampleOutcome = 'Kuvvet, kütle ve ivme bağıntısı açıklanır.';
-    } else if (w === 3) {
-      sampleTopic = 'Sürtünme Kuvveti ve Uygulamaları';
-      sampleOutcome = 'Statik ve kinetik sürtünme katsayıları hesaplanır.';
+    if (w <= samplePlans.length) {
+      const p = samplePlans[w - 1];
+      // Cümleleri hücre içinde alt alta ekle (aralarında boşlukla)
+      topicCell = p.sentences.join('\n\n');
+      outcomeCell = p.desc;
     } else {
-      sampleTopic = `${w}. Hafta Konusu`;
+      topicCell = `${gradeLevel}.${w}.1.1. ${w}. Hafta Konusu ve temel kavramları açıklar.`;
+      outcomeCell = `${w}. Hafta kazanım açıklaması`;
     }
 
-    rows.push([startStr, endStr, weeklyHours || 4, sampleTopic, sampleOutcome]);
+    rows.push([startStr, endStr, weeklyHours || 4, topicCell, outcomeCell]);
 
-    // Sonraki haftanın Pazartesi gününe geç (+7 gün)
     monday.setDate(monday.getDate() + 7);
   }
 
@@ -705,44 +854,39 @@ export const generateYearlyPlanTemplateExcel = async (
 
   // Sütun genişlikleri
   worksheet['!cols'] = [
-    { wch: 24 }, // Başlangıç
-    { wch: 24 }, // Bitiş
+    { wch: 22 }, // Başlangıç
+    { wch: 22 }, // Bitiş
     { wch: 12 }, // Ders Saati
-    { wch: 45 }, // Konu
-    { wch: 45 }, // Kazanımlar
+    { wch: 60 }, // Konu
+    { wch: 40 }, // Kazanımlar
   ];
 
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
 
   // Bilgilendirme sayfası
   const infoRows = [
-    ['YILLIK MÜFREDAT PLANI EXCEL DOLDURMA KILAVUZU'],
+    ['YILLIK MÜFREDAT PLANI EXCEL DOLDURMA VE OTOMATİK DAĞITIM KILAVUZU'],
     [],
     ['Ders Adı:', courseName],
     ['Sınıf Düzeyi:', `${gradeLevel}. Sınıf`],
     ['Haftalık Ders Saati:', `${weeklyHours} Saat`],
     [],
-    ['ÖNEMLİ ÖZELLİK: Bir Haftada Birden Fazla Konu (Ders Saati Bazlı Dağıtım):'],
-    [
-      'Aynı haftaya birden fazla konu girebilirsiniz.',
-      'Örn: Haftalık 4 saat dersiniz varsa:',
-    ],
-    ['  - Satır 1:', '14.09.2026 | 18.09.2026 | 2 Saat | Kuvvet'],
-    ['  - Satır 2:', '14.09.2026 | 18.09.2026 | 2 Saat | Hareket'],
-    [
-      'Sonuç:',
-      'Haftanın ilk 2 saatinde dersteyken ekranda "Kuvvet", son 2 saatindeki derste ekranda "Hareket" görünecektir.',
-    ],
+    ['AKILLI CÜMLE AYIKLAMA VE HOMOJEN DERS SAATİ DAĞITIMI:'],
+    ['1.', 'Hücre içine birden fazla kazanım cümlesini alt alta yazabilirsiniz.'],
+    ['2.', 'Her cümlenin başındaki sınıf seviyesi kodlaması (örn: 12.4.2.3.) otomatik tanınır.'],
+    ['3.', 'Gereksiz satırbaşları (enter) ve boşluklar sistem tarafından otomatik temizlenir.'],
     [],
-    ['Sütun Açıklamaları:'],
-    ['1. Sütun (Hafta Başlangıç Tarihi):', 'O haftanın Pazartesi tarihi (Örn: 14.09.2026 veya 2026-09-14)'],
-    ['2. Sütun (Hafta Bitiş Tarihi):', 'O haftanın Cuma tarihi (Örn: 18.09.2026 veya 2026-09-18)'],
-    ['3. Sütun (Ders Saati):', 'Bu konunun işleneceği saat sayısı (ZORUNLU - Örn: 2 veya 4)'],
-    ['4. Sütun (Deftere Yazılacak Konu):', 'Derse girdiğinizde deftere yazacağınız konu başlığı (ZORUNLU)'],
-    ['5. Sütun (Kazanımlar / Açıklamalar):', 'Kazanım kodu ve detay açıklamalar (İsteğe bağlı)'],
+    ['HOMOJEN DAĞITIM ALGORİTMASI ÖRNEKLERİ (Örn: 4 Saatlik Ders İçin):'],
+    ['• 4 Cümle:', 'Her 1 derse 1 cümle atanır (1, 1, 1, 1).'],
+    ['• 3 Cümle:', '1. derse 1. cümle, 2. derse 2. cümle, son 2 saate ise 3. cümle atanır (1, 1, 2).'],
+    ['• 2 Cümle:', 'İlk 2 derse 1. cümle, son 2 derse 2. cümle atanır (2, 2).'],
+    ['• 5 Cümle:', 'İlk 3 derse 1er cümle, son derse son 2 cümle atanır (1, 1, 1, 2).'],
+    ['• 6 Cümle:', '1. derse 2 cümle, 2. derse 1 cümle, 3. derse 2 cümle, 4. derse 1 cümle atanır (2, 1, 2, 1).'],
+    [],
+    ['Bu sayede derse girdiğinizde canlı ders kartında tam o derse ait defter metni görünecektir.'],
   ];
   const infoSheet = XLSX.utils.aoa_to_sheet(infoRows);
-  infoSheet['!cols'] = [{ wch: 32 }, { wch: 50 }];
+  infoSheet['!cols'] = [{ wch: 35 }, { wch: 65 }];
   XLSX.utils.book_append_sheet(workbook, infoSheet, 'Kılavuz');
 
   const cleanCourse = courseName.replace(/[^a-zA-Z0-9]/g, '_');
@@ -751,13 +895,16 @@ export const generateYearlyPlanTemplateExcel = async (
 };
 
 /**
- * Kullanıcının seçtiği Excel dosyasından yıllık plan satırlarını okur ve doğrular.
+ * Kullanıcının seçtiği Excel dosyasından yıllık plan satırlarını okur,
+ * hücrelerdeki kodlu cümleleri ayıklar ve haftalık ders saatine göre homojen dağıtır.
  */
 export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow[]> => {
   const result = await DocumentPicker.getDocumentAsync({
     type: [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'application/vnd.ms-excel',
+      'application/octet-stream',
+      '*/*',
     ],
     copyToCacheDirectory: true,
   });
@@ -790,7 +937,8 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
       joined.includes('konu') ||
       joined.includes('tarih') ||
       joined.includes('başlangıç') ||
-      joined.includes('saat')
+      joined.includes('saat') ||
+      joined.includes('kazanım')
     ) {
       headerIndex = i;
       break;
@@ -809,37 +957,36 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
     // Kolon 0: Başlangıç Tarihi
     // Kolon 1: Bitiş Tarihi
     // Kolon 2: Ders Saati
-    // Kolon 3: Konu
-    // Kolon 4: Kazanım / Açıklama
+    // Kolon 3: Deftere Yazılacak Konu / Cümleler (Hücre içinde 1 veya birden fazla kodlu cümle)
+    // Kolon 4: Kazanım / Açıklama (Opsiyonel)
     const col0 = row[0];
     const col1 = row[1];
     const col2 = row[2];
     const col3 = row[3];
     const col4 = row[4];
 
-    // Eğer konu boşsa veya sadece boşluksa bu satırı atla
-    const subjectTopic = col3 !== undefined ? String(col3).trim() : '';
-    if (!subjectTopic) continue;
+    const rawTopicCell = col3 !== undefined ? String(col3).trim() : '';
+    if (!rawTopicCell) continue;
 
     const dateStart = parseExcelDateValue(col0);
     const dateEnd = parseExcelDateValue(col1);
 
     // Zorunlu Ders Saati (col2)
-    let lessonHours = 0;
+    let weeklyHours = 0;
     if (col2 !== undefined) {
       const parsedHours = parseInt(String(col2).replace(/[^0-9]/g, ''), 10);
-      if (!isNaN(parsedHours) && parsedHours > 0) lessonHours = parsedHours;
+      if (!isNaN(parsedHours) && parsedHours > 0) weeklyHours = parsedHours;
     }
-    if (lessonHours <= 0) {
-      lessonHours = 2; // Varsayılan en az 2 saat
+    if (weeklyHours <= 0) {
+      weeklyHours = 4; // Varsayılan 4 saat
     }
 
     const learningOutcomes = col4 !== undefined ? String(col4).trim() : '';
 
     // Akıllı Hafta Numaralandırması:
-    // Eğer aynı haftanın tarihleri tekrar ediyorsa aynı hafta numarasını koru (aynı haftanın 2. konusu)
+    // Eğer aynı haftanın tarihleri tekrar ediyorsa aynı hafta numarasını koru
     if (parsedItems.length > 0 && dateStart && dateStart === previousDateStart) {
-      // Aynı haftanın devam konusu, weekCounter artmaz
+      // Aynı haftanın devamı
     } else {
       if (parsedItems.length > 0) {
         weekCounter++;
@@ -847,14 +994,23 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
       previousDateStart = dateStart;
     }
 
-    parsedItems.push({
-      weekNumber: weekCounter,
-      dateStart,
-      dateEnd,
-      lessonHours,
-      subjectTopic,
-      learningOutcomes,
-    });
+    // 1. Hücredeki cümleleri (kodlamaları dikkate alarak ve gereksiz enter'ları temizleyerek) ayıkla:
+    const sentences = extractSentencesFromCell(rawTopicCell);
+
+    // 2. Cümleleri haftalık ders saatlerine homojen olarak paylaştır:
+    const distributed = distributeSentencesToHours(sentences, weeklyHours);
+
+    // 3. Dağıtılan her bir konuyu plana ekle:
+    for (const sub of distributed) {
+      parsedItems.push({
+        weekNumber: weekCounter,
+        dateStart,
+        dateEnd,
+        lessonHours: sub.hours,
+        subjectTopic: sub.topic,
+        learningOutcomes,
+      });
+    }
   }
 
   if (parsedItems.length === 0) {

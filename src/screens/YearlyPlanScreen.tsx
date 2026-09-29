@@ -26,6 +26,8 @@ import {
   getScheduleInfoForCourseAndGrade,
   bulkCreateYearlyPlanItems,
   CourseGradeScheduleInfo,
+  getYearlyPlanDocument,
+  YearlyPlanDocument,
 } from '../database/operations/yearlyPlanOperations';
 import { getCourses } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
@@ -34,6 +36,11 @@ import {
   pickAndParseYearlyPlanExcel,
   ParsedYearlyPlanRow,
 } from '../utils/excelService';
+import {
+  pickAndSaveYearlyPlanPdf,
+  viewYearlyPlanPdf,
+  removeYearlyPlanPdf,
+} from '../utils/pdfPlanService';
 import { getTodayDateString, formatDateToTR } from '../utils/dateUtils';
 import { YearlyPlanItem, CourseName, ClassItem } from '../types';
 
@@ -73,6 +80,10 @@ export const YearlyPlanScreen: React.FC = () => {
   const [parsedRows, setParsedRows] = useState<ParsedYearlyPlanRow[]>([]);
   const [loadingExcel, setLoadingExcel] = useState(false);
 
+  // PDF Document State
+  const [pdfDoc, setPdfDoc] = useState<YearlyPlanDocument | null>(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+
   const loadData = async () => {
     try {
       const [crs, cls] = await Promise.all([getCourses(), getClasses()]);
@@ -92,9 +103,13 @@ export const YearlyPlanScreen: React.FC = () => {
         const schedInfo = await getScheduleInfoForCourseAndGrade(targetCourseId, selectedGradeLevel);
         setScheduleInfo(schedInfo);
 
-        // Fetch plans for this grade level and course
-        const planList = await getYearlyPlans(targetCourseId, selectedGradeLevel);
+        // Fetch plans and pdf document for this grade level and course
+        const [planList, doc] = await Promise.all([
+          getYearlyPlans(targetCourseId, selectedGradeLevel),
+          getYearlyPlanDocument(targetCourseId, selectedGradeLevel),
+        ]);
         setPlans(planList);
+        setPdfDoc(doc);
       }
     } catch (e) {
       console.error('Error loading yearly plans:', e);
@@ -228,6 +243,60 @@ export const YearlyPlanScreen: React.FC = () => {
             } catch (e) {
               Alert.alert('Hata', 'Kayıt silinemedi.');
             }
+          },
+        },
+      ]
+    );
+  };
+
+  // PDF Document Handlers
+  const handleUploadPdf = async () => {
+    if (!selectedCourseId) {
+      Alert.alert('Uyarı', 'Lütfen önce bir ders seçiniz.');
+      return;
+    }
+    try {
+      setLoadingPdf(true);
+      const res = await pickAndSaveYearlyPlanPdf(selectedCourseId, selectedGradeLevel);
+      if (res.success && res.document) {
+        setPdfDoc(res.document);
+        Alert.alert('Başarılı', `${selectedGradeLevel}. Sınıf yıllık plan PDF'i sisteme başarıyla kaydedildi.`);
+      } else if (res.error && res.error !== 'Dosya seçimi iptal edildi.') {
+        Alert.alert('Hata', res.error);
+      }
+    } catch (e: any) {
+      Alert.alert('Hata', 'PDF yüklenirken bir sorun oluştu: ' + (e?.message || e));
+    } finally {
+      setLoadingPdf(false);
+    }
+  };
+
+  const handleViewPdf = async () => {
+    if (!pdfDoc) return;
+    const activeCourse = courses.find((c) => c.id === selectedCourseId);
+    const courseTitle = activeCourse ? activeCourse.name : 'Ders';
+    const res = await viewYearlyPlanPdf(
+      pdfDoc.file_uri,
+      `${selectedGradeLevel}. Sınıf ${courseTitle} Yıllık Planı`
+    );
+    if (!res.success && res.error) {
+      Alert.alert('Hata', res.error);
+    }
+  };
+
+  const handleDeletePdf = () => {
+    if (!pdfDoc || !selectedCourseId) return;
+    Alert.alert(
+      'PDF Planı Sil',
+      `"${pdfDoc.file_name}" dosyasını silmek istediğinize emin misiniz?`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            await removeYearlyPlanPdf(selectedCourseId, selectedGradeLevel, pdfDoc.file_uri);
+            setPdfDoc(null);
           },
         },
       ]
@@ -451,6 +520,44 @@ export const YearlyPlanScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
+      {/* PDF Dosyası Yönetim Çubuğu */}
+      <View style={styles.pdfSectionContainer}>
+        {pdfDoc ? (
+          <View style={styles.pdfBanner}>
+            <View style={styles.pdfIconCircle}>
+              <Ionicons name="document-text" size={18} color="#DC2626" />
+            </View>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.pdfBannerTitle} numberOfLines={1}>{pdfDoc.file_name}</Text>
+              <Text style={styles.pdfBannerSub}>Yıllık Planın Orijinal PDF Dosyası</Text>
+            </View>
+            <TouchableOpacity style={styles.pdfViewBtn} onPress={handleViewPdf} activeOpacity={0.8}>
+              <Ionicons name="eye-outline" size={14} color="#FFFFFF" />
+              <Text style={styles.pdfViewBtnText}>PDF Aç</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.pdfDeleteBtn}
+              onPress={handleDeletePdf}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="trash-outline" size={16} color="#DC2626" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={styles.pdfAttachBtn}
+            onPress={handleUploadPdf}
+            activeOpacity={0.8}
+            disabled={loadingPdf}
+          >
+            <Ionicons name="document-attach-outline" size={17} color={Colors.primary} />
+            <Text style={styles.pdfAttachBtnText}>
+              {loadingPdf ? 'PDF Yükleniyor...' : 'Yıllık Planın Orijinal PDF Halini Sakla / Yükle'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {/* 5. Yıllık Plan Listesi */}
       <FlatList
         data={plans}
@@ -594,20 +701,24 @@ export const YearlyPlanScreen: React.FC = () => {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <Ionicons name="checkmark-circle" size={18} color="#059669" />
                       <Text style={styles.previewTitle}>
-                        Toplam {parsedRows.length} Hafta Tespit Edildi
+                        Toplam {parsedRows.length} Ders Konusu / Saati Dağıtıldı
                       </Text>
                     </View>
                     <Text style={styles.previewSub}>
-                      {selectedGradeLevel}. Sınıf ({scheduleInfo?.distinctClasses.join(', ')}) şubelerinin tamamında geçerli olacaktır.
+                      {selectedGradeLevel}. Sınıf ({scheduleInfo?.distinctClasses.join(', ')}) şubelerinin tamamında ders saatlerine göre homojen dağıtılmıştır.
                     </Text>
                   </View>
 
-                  <Text style={styles.previewListTitle}>İlk 3 Hafta Önizlemesi:</Text>
-                  {parsedRows.slice(0, 3).map((r) => (
-                    <View key={r.weekNumber} style={styles.previewItemCard}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={styles.previewListTitle}>
+                    Plan Önizlemesi (İlk {Math.min(parsedRows.length, 6)} Ders Bölümü):
+                  </Text>
+                  {parsedRows.slice(0, 6).map((r, idx) => (
+                    <View key={`${r.weekNumber}-${idx}`} style={styles.previewItemCard}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                         <Text style={styles.previewItemWeek}>{r.weekNumber}. Hafta</Text>
-                        <Text style={styles.previewItemHours}>{r.lessonHours} Saat</Text>
+                        <View style={styles.previewHoursPill}>
+                          <Text style={styles.previewHoursPillText}>{r.lessonHours} Saat</Text>
+                        </View>
                       </View>
                       <Text style={styles.previewItemTopic}>{r.subjectTopic}</Text>
                       <Text style={styles.previewItemDates}>
@@ -615,9 +726,9 @@ export const YearlyPlanScreen: React.FC = () => {
                       </Text>
                     </View>
                   ))}
-                  {parsedRows.length > 3 && (
+                  {parsedRows.length > 6 && (
                     <Text style={styles.moreWeeksText}>
-                      ... ve diğer {parsedRows.length - 3} haftalık müfredat konusu
+                      ... ve diğer {parsedRows.length - 6} ders konusu
                     </Text>
                   )}
                 </View>
@@ -929,6 +1040,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: Colors.textSecondary,
+  },
+  pdfSectionContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  pdfBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  pdfIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pdfBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  pdfBannerSub: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 1,
+  },
+  pdfViewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DC2626',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    gap: 4,
+  },
+  pdfViewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  pdfDeleteBtn: {
+    padding: 6,
+  },
+  pdfAttachBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: Colors.primary,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  pdfAttachBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  previewHoursPill: {
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  previewHoursPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primaryDark,
   },
   listContent: {
     padding: 16,
