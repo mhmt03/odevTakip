@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,165 +7,319 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Modal,
+  TextInput,
+  Platform,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import * as XLSX from 'xlsx';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
 import { getClasses } from '../database/operations/classOperations';
-import { getStudentsByClass } from '../database/operations/studentOperations';
-import { getAssignments, getAssignmentStudents } from '../database/operations/assignmentOperations';
+import {
+  getAllStudentsWithClass,
+  StudentWithClass,
+  bulkCreateStudentsMultipleClasses,
+} from '../database/operations/studentOperations';
+import { getAssignments } from '../database/operations/assignmentOperations';
 import { getAllNotes } from '../database/operations/noteOperations';
+import { getFullClassGradebook } from '../database/operations/gradeOperations';
 import { getLessonSlots, getWeeklySchedule } from '../database/operations/scheduleOperations';
 import {
   generateStudentTemplateExcel,
-  exportStudentNotesToExcel,
   exportScheduleToExcel,
   pickAndParseStudentsExcel,
   validateBulkStudentImport,
+  exportCustomStudentsReport,
+  exportCustomNotesReport,
+  exportCustomGradebookReport,
+  exportCustomAssignmentsReport,
 } from '../utils/excelService';
-import { bulkCreateStudentsMultipleClasses } from '../database/operations/studentOperations';
-import { formatDateToTR, DAYS_OF_WEEK } from '../utils/dateUtils';
+import { ClassItem, StudentNote, Assignment } from '../types';
+import { formatDateToTR } from '../utils/dateUtils';
+
+type ReportType = 'students' | 'gradebook' | 'notes' | 'assignments';
 
 export const ReportsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
-  // 1. Export all classes and their students in a multi-sheet workbook
-  const handleExportAllClasses = async () => {
+  // Database Data
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [allStudents, setAllStudents] = useState<StudentWithClass[]>([]);
+
+  // Filter Modal State
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [activeReportType, setActiveReportType] = useState<ReportType>('students');
+  const [selectedGradeLevel, setSelectedGradeLevel] = useState<string>('all');
+  const [selectedClassId, setSelectedClassId] = useState<number | 'all'>('all');
+  const [selectedTerm, setSelectedTerm] = useState<1 | 2>(1);
+  const [studentSelectionMode, setStudentSelectionMode] = useState<'all' | 'custom'>('all');
+  const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
+  const [studentSearchText, setStudentSearchText] = useState('');
+
+  // Load Data
+  const loadData = async () => {
     try {
-      setLoading(true);
-      const classes = await getClasses();
-      if (classes.length === 0) {
-        Alert.alert('Bilgi', 'Kayıtlı şube bulunmuyor.');
-        return;
-      }
-
-      const workbook = XLSX.utils.book_new();
-
-      // Summary sheet
-      const summaryRows: (string | number)[][] = [
-        ['OKUL ŞUBELERİ VE ÖĞRENCİ ÖZETİ'],
-        [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
-        [],
-        ['Sıra', 'Şube Adı', 'Açıklama', 'Öğrenci Sayısı'],
-      ];
-      classes.forEach((c, idx) => {
-        summaryRows.push([idx + 1, c.name, c.description || '-', c.student_count || 0]);
-      });
-      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Şube Özeti');
-
-      // Individual class sheets
-      for (const c of classes) {
-        const studs = await getStudentsByClass(c.id);
-        const rows: (string | number)[][] = [
-          [`Şube: ${c.name}`],
-          [],
-          ['Sıra', 'Öğrenci No', 'Adı', 'Soyadı', 'Notlar'],
-        ];
-        studs.forEach((s, idx) => {
-          rows.push([idx + 1, s.student_number || '-', s.first_name, s.last_name || '', s.notes || '']);
-        });
-        const sheet = XLSX.utils.aoa_to_sheet(rows);
-        const safeSheetName = c.name.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 31);
-        XLSX.utils.book_append_sheet(workbook, sheet, safeSheetName);
-      }
-
-      const excelBuffer = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
-      const dir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-      const filePath = `${dir}Tum_Subeler_Ogrenci_Listeleri.xlsx`;
-      await FileSystem.writeAsStringAsync(filePath, excelBuffer, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      await Sharing.shareAsync(filePath, {
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        dialogTitle: 'Şubeler Raporunu Paylaş',
-      });
+      const [fetchedClasses, fetchedStudents] = await Promise.all([
+        getClasses(),
+        getAllStudentsWithClass(),
+      ]);
+      setClasses(fetchedClasses);
+      setAllStudents(fetchedStudents);
     } catch (e) {
-      Alert.alert('Hata', 'Rapor oluşturulamadı.');
-    } finally {
-      setLoading(false);
+      console.warn('Error loading reporting data:', e);
     }
   };
 
-  // 2. Export All Homeworks
-  const handleExportAllAssignments = async () => {
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
+
+  // Extract distinct grade levels (e.g. 9, 10, 11, 12)
+  const gradeLevels = useMemo(() => {
+    const levels = new Set<string>();
+    classes.forEach((c) => {
+      const match = c.name.match(/^(\d{1,2})/);
+      if (match) {
+        levels.add(match[1]);
+      }
+    });
+    return Array.from(levels).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+  }, [classes]);
+
+  // Filter classes by grade level
+  const displayedClasses = useMemo(() => {
+    if (selectedGradeLevel === 'all') return classes;
+    return classes.filter((c) => c.name.startsWith(selectedGradeLevel));
+  }, [classes, selectedGradeLevel]);
+
+  // Filter candidate students according to class and grade level selections
+  const candidateStudents = useMemo(() => {
+    let list = allStudents;
+    if (selectedClassId !== 'all') {
+      list = list.filter((s) => s.class_id === selectedClassId);
+    } else if (selectedGradeLevel !== 'all') {
+      list = list.filter(
+        (s) => s.class_name && s.class_name.startsWith(selectedGradeLevel)
+      );
+    }
+
+    if (studentSearchText.trim()) {
+      const q = studentSearchText.toLowerCase().trim();
+      list = list.filter(
+        (s) =>
+          (s.full_name && s.full_name.toLowerCase().includes(q)) ||
+          (s.first_name && s.first_name.toLowerCase().includes(q)) ||
+          (s.last_name && s.last_name.toLowerCase().includes(q)) ||
+          (s.student_number && s.student_number.includes(q))
+      );
+    }
+
+    return list;
+  }, [allStudents, selectedClassId, selectedGradeLevel, studentSearchText]);
+
+  // Open Modal with defaults
+  const openReportModal = (type: ReportType) => {
+    setActiveReportType(type);
+    setSelectedGradeLevel('all');
+    setSelectedClassId('all');
+    setSelectedTerm(1);
+    setStudentSelectionMode('all');
+    setSelectedStudentIds([]);
+    setStudentSearchText('');
+    setFilterModalVisible(true);
+  };
+
+  // Toggle student selection
+  const toggleStudent = (id: number) => {
+    setSelectedStudentIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  // Select all candidate students
+  const selectAllCandidates = () => {
+    const ids = candidateStudents.map((s) => s.id);
+    setSelectedStudentIds(ids);
+  };
+
+  // Clear candidate selection
+  const clearCandidateSelection = () => {
+    setSelectedStudentIds([]);
+  };
+
+  // Handle Generate Report
+  const handleGenerateReport = async () => {
+    if (classes.length === 0) {
+      Alert.alert('Bilgi', 'Sistemde henüz kayıtlı şube bulunmuyor.');
+      return;
+    }
+
     try {
-      setLoading(true);
-      const assignments = await getAssignments();
-      if (assignments.length === 0) {
-        Alert.alert('Bilgi', 'Kayıtlı ödev bulunmuyor.');
+      setGenerating(true);
+
+      // Determine target classes
+      let targetClasses = classes;
+      if (selectedClassId !== 'all') {
+        targetClasses = classes.filter((c) => c.id === selectedClassId);
+      } else if (selectedGradeLevel !== 'all') {
+        targetClasses = classes.filter((c) => c.name.startsWith(selectedGradeLevel));
+      }
+
+      if (targetClasses.length === 0) {
+        Alert.alert('Uyarı', 'Seçili kriterlere uygun şube bulunamadı.');
         return;
       }
 
-      const workbook = XLSX.utils.book_new();
+      // 1. ÖĞRENCİ LİSTESİ
+      if (activeReportType === 'students') {
+        const payload: Array<{ className: string; students: any[] }> = [];
 
-      // Summary sheet
-      const summaryRows: (string | number)[][] = [
-        ['GENEL ÖDEV TAKİP RAPORU'],
-        [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
-        [],
-        ['Sıra', 'Şube', 'Ödev Konusu', 'Verilme', 'Teslim', 'Toplam', 'Yapıldı', 'Yapılmadı', 'Bekliyor'],
-      ];
+        for (const c of targetClasses) {
+          let classStudents = allStudents.filter((s) => s.class_id === c.id);
+          if (studentSelectionMode === 'custom') {
+            classStudents = classStudents.filter((s) => selectedStudentIds.includes(s.id));
+          }
+          if (classStudents.length > 0) {
+            payload.push({
+              className: c.name,
+              students: classStudents,
+            });
+          }
+        }
 
-      assignments.forEach((a, idx) => {
-        summaryRows.push([
-          idx + 1,
-          a.class_name || '-',
-          a.title,
-          formatDateToTR(a.assigned_date),
-          formatDateToTR(a.due_date),
-          a.total_students || 0,
-          a.completed_count || 0,
-          a.missing_count || 0,
-          a.pending_count || 0,
-        ]);
-      });
+        if (payload.length === 0) {
+          Alert.alert('Uyarı', 'Rapor için seçilen kriterlere uyan öğrenci bulunamadı.');
+          return;
+        }
 
-      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Ödev Özeti');
+        const reportTitle =
+          selectedClassId !== 'all'
+            ? `${targetClasses[0].name} Şubesi Öğrenci Listesi`
+            : selectedGradeLevel !== 'all'
+            ? `${selectedGradeLevel}. Sınıflar Öğrenci Listesi`
+            : 'Tüm Şubeler Öğrenci Listesi';
 
-      const excelBuffer = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
-      const dir = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-      const filePath = `${dir}Genel_Odev_Takip_Raporu.xlsx`;
-      await FileSystem.writeAsStringAsync(filePath, excelBuffer, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      await Sharing.shareAsync(filePath, {
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        dialogTitle: 'Ödev Raporunu Paylaş',
-      });
-    } catch (e) {
-      Alert.alert('Hata', 'Ödev raporu oluşturulamadı.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 3. Export all student observations
-  const handleExportAllNotes = async () => {
-    try {
-      setLoading(true);
-      const notes = await getAllNotes();
-      if (notes.length === 0) {
-        Alert.alert('Bilgi', 'Kayıtlı öğrenci görüşü bulunmuyor.');
-        return;
+        await exportCustomStudentsReport(reportTitle, payload);
+        setFilterModalVisible(false);
       }
-      await exportStudentNotesToExcel(notes);
-    } catch (e) {
-      Alert.alert('Hata', 'Görüş raporu oluşturulamadı.');
+
+      // 2. NOT ÇİZELGESİ & SINAVLAR
+      else if (activeReportType === 'gradebook') {
+        const classGradebooks: Array<{
+          className: string;
+          term: number;
+          gradebook: any;
+        }> = [];
+
+        for (const c of targetClasses) {
+          const fullGradebook = await getFullClassGradebook(c.id, selectedTerm);
+          let studs = fullGradebook.students;
+          if (studentSelectionMode === 'custom') {
+            studs = studs.filter((s) => selectedStudentIds.includes(s.student_id));
+          }
+
+          if (studs.length > 0) {
+            classGradebooks.push({
+              className: c.name,
+              term: selectedTerm,
+              gradebook: {
+                students: studs,
+                quizzes: fullGradebook.quizzes,
+              },
+            });
+          }
+        }
+
+        if (classGradebooks.length === 0) {
+          Alert.alert('Uyarı', 'Rapor için seçilen kriterlere uyan öğrenci not kaydı bulunamadı.');
+          return;
+        }
+
+        await exportCustomGradebookReport(classGradebooks);
+        setFilterModalVisible(false);
+      }
+
+      // 3. ÖĞRENCİ GÖRÜŞ & DEĞERLENDİRME
+      else if (activeReportType === 'notes') {
+        const allNotesList = await getAllNotes();
+        let filteredNotes = allNotesList;
+
+        if (selectedClassId !== 'all') {
+          filteredNotes = filteredNotes.filter((n) => n.class_id === selectedClassId);
+        } else if (selectedGradeLevel !== 'all') {
+          filteredNotes = filteredNotes.filter(
+            (n) => n.class_name && n.class_name.startsWith(selectedGradeLevel)
+          );
+        }
+
+        if (studentSelectionMode === 'custom') {
+          filteredNotes = filteredNotes.filter((n) => selectedStudentIds.includes(n.student_id));
+        }
+
+        if (filteredNotes.length === 0) {
+          Alert.alert(
+            'Kayıt Bulunamadı',
+            'Seçtiğiniz sınıf, şube veya öğrenci kriterlerine uygun öğrenci görüşü bulunamadı.'
+          );
+          return;
+        }
+
+        let scopeTitle = 'Tüm Şubeler';
+        if (selectedClassId !== 'all') {
+          scopeTitle = targetClasses[0].name;
+        } else if (selectedGradeLevel !== 'all') {
+          scopeTitle = `${selectedGradeLevel}. Sınıflar`;
+        }
+
+        if (studentSelectionMode === 'custom') {
+          scopeTitle += ` (${selectedStudentIds.length} Seçili Öğrenci)`;
+        }
+
+        await exportCustomNotesReport(filteredNotes, scopeTitle);
+        setFilterModalVisible(false);
+      }
+
+      // 4. ÖDEV TAKİP RAPORU
+      else if (activeReportType === 'assignments') {
+        const allAssignments = await getAssignments();
+        let filteredAssignments = allAssignments;
+
+        if (selectedClassId !== 'all') {
+          filteredAssignments = filteredAssignments.filter((a) => a.class_id === selectedClassId);
+        } else if (selectedGradeLevel !== 'all') {
+          filteredAssignments = filteredAssignments.filter(
+            (a) => a.class_name && a.class_name.startsWith(selectedGradeLevel)
+          );
+        }
+
+        if (filteredAssignments.length === 0) {
+          Alert.alert('Kayıt Bulunamadı', 'Seçilen kriterlere uygun ödev kaydı bulunamadı.');
+          return;
+        }
+
+        let scopeTitle = 'Tüm Şubeler';
+        if (selectedClassId !== 'all') {
+          scopeTitle = targetClasses[0].name;
+        } else if (selectedGradeLevel !== 'all') {
+          scopeTitle = `${selectedGradeLevel}. Sınıflar`;
+        }
+
+        await exportCustomAssignmentsReport(filteredAssignments, scopeTitle);
+        setFilterModalVisible(false);
+      }
+    } catch (e: any) {
+      Alert.alert('Hata', 'Rapor oluşturulurken bir sorun oluştu: ' + (e?.message || e));
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
   };
 
-  // 4. Export Weekly Schedule
+  // Direct Weekly Schedule Export
   const handleExportSchedule = async () => {
     try {
       setLoading(true);
@@ -179,7 +333,7 @@ export const ReportsScreen: React.FC = () => {
     }
   };
 
-  // 5. Download Sample Template (Multi-sheet with registered classes)
+  // Template Download
   const handleDownloadTemplate = async () => {
     try {
       setLoading(true);
@@ -191,7 +345,7 @@ export const ReportsScreen: React.FC = () => {
     }
   };
 
-  // 6. Bulk Import Students to All Classes
+  // Bulk Student Import
   const handleBulkImportStudents = async () => {
     try {
       setLoading(true);
@@ -201,7 +355,6 @@ export const ReportsScreen: React.FC = () => {
         return;
       }
 
-      const classes = await getClasses();
       if (classes.length === 0) {
         setLoading(false);
         Alert.alert(
@@ -217,18 +370,21 @@ export const ReportsScreen: React.FC = () => {
         setLoading(false);
         let errorMsg = 'Excel dosyasındaki şube adları sistemdeki şubelerle eşleşmedi.';
         if (val.unmatchedClasses.length > 0) {
-          errorMsg += '\n\nBulunamayan Şubeler:\n' + val.unmatchedClasses.map((u) => `• ${u.rawClassName}`).join('\n');
+          errorMsg +=
+            '\n\nBulunamayan Şubeler:\n' + val.unmatchedClasses.map((u) => `• ${u.rawClassName}`).join('\n');
         }
         errorMsg += '\n\nLütfen şablondaki "Kayıtlı Şubeler" sayfasındaki isimleri birebir aynı şekilde kullanınız.';
         Alert.alert('Geçersiz Şube Girişi', errorMsg);
         return;
       }
 
-      let message = `Toplam ${val.totalStudents} öğrenci tespit edildi.\n\nEşleşen Şubeler:\n` +
+      let message =
+        `Toplam ${val.totalStudents} öğrenci tespit edildi.\n\nEşleşen Şubeler:\n` +
         val.validPayloads.map((p) => `• ${p.className}: ${p.students.length} öğrenci`).join('\n');
 
       if (val.unmatchedClasses.length > 0) {
-        message += '\n\n⚠️ Bulunamayan ve Atlanacak Şubeler:\n' +
+        message +=
+          '\n\n⚠️ Bulunamayan ve Atlanacak Şubeler:\n' +
           val.unmatchedClasses.map((u) => `• ${u.rawClassName}: ${u.count} öğrenci`).join('\n');
       }
 
@@ -242,6 +398,7 @@ export const ReportsScreen: React.FC = () => {
             onPress: async () => {
               try {
                 const res = await bulkCreateStudentsMultipleClasses(val.validPayloads);
+                loadData();
                 Alert.alert(
                   'Başarılı',
                   `Toplam ${res.totalAdded} öğrenci şubelerine başarıyla eklendi!`
@@ -261,164 +418,577 @@ export const ReportsScreen: React.FC = () => {
     }
   };
 
+  // Helper for Report Details in Modal
+  const getReportMeta = () => {
+    switch (activeReportType) {
+      case 'students':
+        return {
+          title: 'Öğrenci Listesi Raporu',
+          desc: 'Sınıf düzeyi, şube ve dilediğiniz öğrencileri seçerek liste oluşturun.',
+          icon: 'people' as const,
+          color: Colors.primary,
+          bgColor: Colors.primaryLight,
+        };
+      case 'gradebook':
+        return {
+          title: 'Not Çizelgesi & Sınavlar Raporu',
+          desc: '1. ve 2. Dönem yazılı sınavlar, quizler, performanslar ve ortalamalar.',
+          icon: 'school' as const,
+          color: '#7C3AED',
+          bgColor: '#EDE9FE',
+        };
+      case 'notes':
+        return {
+          title: 'Öğrenci Görüş & Değerlendirme Raporu',
+          desc: 'Tarih, ders ve öğrenci bazında tutulan tüm görüş ve gözlem notları.',
+          icon: 'chatbubbles' as const,
+          color: Colors.secondary,
+          bgColor: Colors.secondaryLight,
+        };
+      case 'assignments':
+        return {
+          title: 'Ödev Takip & Sonuç Raporu',
+          desc: 'Verilen ödevlerin teslim oranları, yapıldı/yapılmadı istatistikleri.',
+          icon: 'document-text' as const,
+          color: Colors.warningDark,
+          bgColor: Colors.warningLight,
+        };
+    }
+  };
+
+  const meta = getReportMeta();
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Raporlama ve Excel Merkezi</Text>
-        <Text style={styles.headerSub}>
-          Tüm verilerinizi tek tıkla Excel (.xlsx) formatında dışa aktarın ve paylaşın
-        </Text>
-      </View>
-
-      {loading && (
-        <View style={styles.loadingBanner}>
-          <ActivityIndicator size="small" color={Colors.primary} />
-          <Text style={styles.loadingText}>Excel dosyası hazırlanıyor...</Text>
+    <View style={styles.mainContainer}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Raporlama & Excel Merkezi</Text>
+          <Text style={styles.headerSub}>
+            Tüm sınıf, şube, öğrenci ve değerlendirme verilerinizi filtreleyip Excel (.xlsx) olarak dışa aktarın.
+          </Text>
         </View>
-      )}
 
-      {/* Report Cards Grid */}
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={handleExportAllClasses}
-        disabled={loading}
-      >
-        <Card style={styles.reportCard}>
-          <View style={styles.cardRow}>
-            <View style={[styles.iconWrap, { backgroundColor: Colors.primaryLight }]}>
-              <Ionicons name="people" size={26} color={Colors.primary} />
-            </View>
-            <View style={styles.cardTextWrap}>
-              <Text style={styles.reportTitle}>Tüm Şubeler & Öğrenci Listeleri</Text>
-              <Text style={styles.reportDesc}>
-                Her şubenin ayrı sayfada yer aldığı kapsamlı öğrenci listesi Excel kitabı.
-              </Text>
-            </View>
-            <Ionicons name="download-outline" size={22} color={Colors.primary} />
+        {loading && (
+          <View style={styles.loadingBanner}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.loadingText}>İşlem yapılıyor...</Text>
           </View>
-        </Card>
-      </TouchableOpacity>
+        )}
 
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={handleExportAllAssignments}
-        disabled={loading}
-      >
-        <Card style={styles.reportCard}>
-          <View style={styles.cardRow}>
-            <View style={[styles.iconWrap, { backgroundColor: Colors.warningLight }]}>
-              <Ionicons name="document-text" size={26} color={Colors.warningDark} />
-            </View>
-            <View style={styles.cardTextWrap}>
-              <Text style={styles.reportTitle}>Ödev Takip & Sonuç Raporu</Text>
-              <Text style={styles.reportDesc}>
-                Verilen tüm ödevlerin teslim oranları, yapıldı/yapılmadı istatistikleri.
-              </Text>
-            </View>
-            <Ionicons name="download-outline" size={22} color={Colors.warningDark} />
-          </View>
-        </Card>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={handleExportAllNotes}
-        disabled={loading}
-      >
-        <Card style={styles.reportCard}>
-          <View style={styles.cardRow}>
-            <View style={[styles.iconWrap, { backgroundColor: Colors.secondaryLight }]}>
-              <Ionicons name="chatbubbles" size={26} color={Colors.secondary} />
-            </View>
-            <View style={styles.cardTextWrap}>
-              <Text style={styles.reportTitle}>Öğrenci Görüş & Değerlendirme Raporu</Text>
-              <Text style={styles.reportDesc}>
-                Öğrenciler hakkında tarih ve saat bilgisiyle tutulan tüm gözlem notları.
-              </Text>
-            </View>
-            <Ionicons name="download-outline" size={22} color={Colors.secondary} />
-          </View>
-        </Card>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={handleExportSchedule}
-        disabled={loading}
-      >
-        <Card style={styles.reportCard}>
-          <View style={styles.cardRow}>
-            <View style={[styles.iconWrap, { backgroundColor: Colors.successLight }]}>
-              <Ionicons name="calendar" size={26} color={Colors.successDark} />
-            </View>
-            <View style={styles.cardTextWrap}>
-              <Text style={styles.reportTitle}>Haftalık Ders Programı Çizelgesi</Text>
-              <Text style={styles.reportDesc}>
-                Pazartesi-Cuma haftalık ders saatleri ve şube dağılım matrisi.
-              </Text>
-            </View>
-            <Ionicons name="download-outline" size={22} color={Colors.successDark} />
-          </View>
-        </Card>
-      </TouchableOpacity>
-
-      {/* Excel Import & Template Section */}
-      <View style={styles.templateSection}>
-        <Text style={styles.sectionHeader}>Excel İçe Aktarma Araçları</Text>
-
-        {/* Bulk Student Import Card */}
+        {/* 1. ÖĞRENCİ LİSTELERİ */}
         <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleBulkImportStudents}
+          activeOpacity={0.85}
+          onPress={() => openReportModal('students')}
           disabled={loading}
         >
-          <Card style={[styles.reportCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1 }]}>
+          <Card style={styles.reportCard}>
             <View style={styles.cardRow}>
-              <View style={[styles.iconWrap, { backgroundColor: '#DCFCE7' }]}>
-                <Ionicons name="cloud-upload" size={26} color="#16A34A" />
+              <View style={[styles.iconWrap, { backgroundColor: Colors.primaryLight }]}>
+                <Ionicons name="people" size={26} color={Colors.primary} />
               </View>
               <View style={styles.cardTextWrap}>
-                <Text style={[styles.reportTitle, { color: '#15803D' }]}>Tüm Şubelere Toplu Öğrenci Yükle</Text>
+                <View style={styles.titleRow}>
+                  <Text style={styles.reportTitle}>Öğrenci Listeleri</Text>
+                  <View style={[styles.badge, { backgroundColor: Colors.primaryLight }]}>
+                    <Text style={[styles.badgeText, { color: Colors.primary }]}>Filtrelenebilir</Text>
+                  </View>
+                </View>
                 <Text style={styles.reportDesc}>
-                  Excel dosyasındaki şube bilgisine göre tüm sınıfların öğrencilerini tek tıkla sisteme aktarın.
+                  Sınıf düzeyi, şube ve özel öğrenci seçimiyle anında çok sayfalı Excel listesi oluşturun.
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={22} color="#16A34A" />
+              <View style={[styles.actionChip, { backgroundColor: Colors.primaryLight }]}>
+                <Ionicons name="options-outline" size={16} color={Colors.primary} />
+                <Text style={[styles.actionChipText, { color: Colors.primary }]}>Filtrele</Text>
+              </View>
             </View>
           </Card>
         </TouchableOpacity>
 
-        {/* Template Download Card */}
+        {/* 2. NOT ÇİZELGESİ & SINAVLAR */}
         <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleDownloadTemplate}
+          activeOpacity={0.85}
+          onPress={() => openReportModal('gradebook')}
           disabled={loading}
-          style={{ marginTop: 10 }}
         >
-          <Card style={[styles.reportCard, styles.templateCard]}>
+          <Card style={styles.reportCard}>
             <View style={styles.cardRow}>
               <View style={[styles.iconWrap, { backgroundColor: '#EDE9FE' }]}>
-                <Ionicons name="document-attach" size={26} color="#7C3AED" />
+                <Ionicons name="school" size={26} color="#7C3AED" />
               </View>
               <View style={styles.cardTextWrap}>
-                <Text style={styles.reportTitle}>Örnek Öğrenci Excel Şablonu İndir</Text>
+                <View style={styles.titleRow}>
+                  <Text style={styles.reportTitle}>Not Çizelgesi & Sınavlar</Text>
+                  <View style={[styles.badge, { backgroundColor: '#EDE9FE' }]}>
+                    <Text style={[styles.badgeText, { color: '#7C3AED' }]}>1. & 2. Dönem</Text>
+                  </View>
+                </View>
                 <Text style={styles.reportDesc}>
-                  Tüm şubeler için 2 sayfalı şablon. 2. sayfada sistemde kayıtlı şubeleriniz yer alır.
+                  3 yazılı, 3 performans, sınırsız quiz ve dönem ortalamalarını içeren not çizelgesi.
                 </Text>
               </View>
-              <Ionicons name="share-social-outline" size={22} color="#7C3AED" />
+              <View style={[styles.actionChip, { backgroundColor: '#EDE9FE' }]}>
+                <Ionicons name="options-outline" size={16} color="#7C3AED" />
+                <Text style={[styles.actionChipText, { color: '#7C3AED' }]}>Filtrele</Text>
+              </View>
             </View>
           </Card>
         </TouchableOpacity>
-      </View>
-    </ScrollView>
+
+        {/* 3. ÖĞRENCİ GÖRÜŞ & GÖZLEM RAPORU */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => openReportModal('notes')}
+          disabled={loading}
+        >
+          <Card style={styles.reportCard}>
+            <View style={styles.cardRow}>
+              <View style={[styles.iconWrap, { backgroundColor: Colors.secondaryLight }]}>
+                <Ionicons name="chatbubbles" size={26} color={Colors.secondary} />
+              </View>
+              <View style={styles.cardTextWrap}>
+                <View style={styles.titleRow}>
+                  <Text style={styles.reportTitle}>Öğrenci Görüş Raporu</Text>
+                  <View style={[styles.badge, { backgroundColor: Colors.secondaryLight }]}>
+                    <Text style={[styles.badgeText, { color: Colors.secondary }]}>Gözlemler</Text>
+                  </View>
+                </View>
+                <Text style={styles.reportDesc}>
+                  Sınıf düzeyi, şube veya öğrenci bazında tarih ve ders bilgisiyle tutulan tüm değerlendirmeler.
+                </Text>
+              </View>
+              <View style={[styles.actionChip, { backgroundColor: Colors.secondaryLight }]}>
+                <Ionicons name="options-outline" size={16} color={Colors.secondary} />
+                <Text style={[styles.actionChipText, { color: Colors.secondary }]}>Filtrele</Text>
+              </View>
+            </View>
+          </Card>
+        </TouchableOpacity>
+
+        {/* 4. ÖDEV TAKİP RAPORU */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => openReportModal('assignments')}
+          disabled={loading}
+        >
+          <Card style={styles.reportCard}>
+            <View style={styles.cardRow}>
+              <View style={[styles.iconWrap, { backgroundColor: Colors.warningLight }]}>
+                <Ionicons name="document-text" size={26} color={Colors.warningDark} />
+              </View>
+              <View style={styles.cardTextWrap}>
+                <View style={styles.titleRow}>
+                  <Text style={styles.reportTitle}>Ödev Takip & Sonuç Raporu</Text>
+                  <View style={[styles.badge, { backgroundColor: Colors.warningLight }]}>
+                    <Text style={[styles.badgeText, { color: Colors.warningDark }]}>İstatistikler</Text>
+                  </View>
+                </View>
+                <Text style={styles.reportDesc}>
+                  Verilen ödevlerin teslim durumu, yapılma oranları ve şube bazlı başarı analizleri.
+                </Text>
+              </View>
+              <View style={[styles.actionChip, { backgroundColor: Colors.warningLight }]}>
+                <Ionicons name="options-outline" size={16} color={Colors.warningDark} />
+                <Text style={[styles.actionChipText, { color: Colors.warningDark }]}>Filtrele</Text>
+              </View>
+            </View>
+          </Card>
+        </TouchableOpacity>
+
+        {/* 5. HAFTALIK DERS PROGRAMI */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleExportSchedule}
+          disabled={loading}
+        >
+          <Card style={styles.reportCard}>
+            <View style={styles.cardRow}>
+              <View style={[styles.iconWrap, { backgroundColor: Colors.successLight }]}>
+                <Ionicons name="calendar" size={26} color={Colors.successDark} />
+              </View>
+              <View style={styles.cardTextWrap}>
+                <View style={styles.titleRow}>
+                  <Text style={styles.reportTitle}>Haftalık Ders Programı</Text>
+                  <View style={[styles.badge, { backgroundColor: Colors.successLight }]}>
+                    <Text style={[styles.badgeText, { color: Colors.successDark }]}>Tek Tıkla</Text>
+                  </View>
+                </View>
+                <Text style={styles.reportDesc}>
+                  Pazartesi - Cuma haftalık ders saatleri ve şube dağılım matrisini Excel olarak indirin.
+                </Text>
+              </View>
+              <Ionicons name="download-outline" size={22} color={Colors.successDark} />
+            </View>
+          </Card>
+        </TouchableOpacity>
+
+        {/* 6. İÇE AKTARMA & ŞABLON BÖLÜMÜ */}
+        <View style={styles.templateSection}>
+          <Text style={styles.sectionHeader}>Excel Araçları & Şablonlar</Text>
+
+          {/* Bulk Import */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleBulkImportStudents}
+            disabled={loading}
+          >
+            <Card style={[styles.reportCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1 }]}>
+              <View style={styles.cardRow}>
+                <View style={[styles.iconWrap, { backgroundColor: '#DCFCE7' }]}>
+                  <Ionicons name="cloud-upload" size={26} color="#16A34A" />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <Text style={[styles.reportTitle, { color: '#15803D' }]}>Toplu Öğrenci Yükle</Text>
+                  <Text style={styles.reportDesc}>
+                    Excel dosyasındaki şube bilgisine göre tüm öğrencileri tek seferde sisteme aktarın.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#16A34A" />
+              </View>
+            </Card>
+          </TouchableOpacity>
+
+          {/* Sample Template */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleDownloadTemplate}
+            disabled={loading}
+            style={{ marginTop: 10 }}
+          >
+            <Card style={[styles.reportCard, styles.templateCard]}>
+              <View style={styles.cardRow}>
+                <View style={[styles.iconWrap, { backgroundColor: '#EDE9FE' }]}>
+                  <Ionicons name="document-attach" size={26} color="#7C3AED" />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <Text style={styles.reportTitle}>Örnek Öğrenci Excel Şablonu İndir</Text>
+                  <Text style={styles.reportDesc}>
+                    Kayıtlı şubelerinizi de içeren 2 sayfalı resmi aktarım şablonunu indirin.
+                  </Text>
+                </View>
+                <Ionicons name="share-social-outline" size={22} color="#7C3AED" />
+              </View>
+            </Card>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      {/* FILTER & EXPORT MODAL */}
+      <Modal
+        visible={filterModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setFilterModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalIconWrap, { backgroundColor: meta.bgColor }]}>
+                <Ionicons name={meta.icon} size={24} color={meta.color} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>{meta.title}</Text>
+                <Text style={styles.modalDesc}>{meta.desc}</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setFilterModalVisible(false)}
+                style={styles.modalCloseBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+              {/* ADIM 1: SINIF DÜZEYİ */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterLabel}>1. Sınıf Düzeyi</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                  <TouchableOpacity
+                    style={[styles.chip, selectedGradeLevel === 'all' && styles.chipActive]}
+                    onPress={() => {
+                      setSelectedGradeLevel('all');
+                      setSelectedClassId('all');
+                      setSelectedStudentIds([]);
+                    }}
+                  >
+                    <Text style={[styles.chipText, selectedGradeLevel === 'all' && styles.chipTextActive]}>
+                      Tüm Düzeyler
+                    </Text>
+                  </TouchableOpacity>
+
+                  {gradeLevels.map((lvl) => (
+                    <TouchableOpacity
+                      key={lvl}
+                      style={[styles.chip, selectedGradeLevel === lvl && styles.chipActive]}
+                      onPress={() => {
+                        setSelectedGradeLevel(lvl);
+                        setSelectedClassId('all');
+                        setSelectedStudentIds([]);
+                      }}
+                    >
+                      <Text style={[styles.chipText, selectedGradeLevel === lvl && styles.chipTextActive]}>
+                        {lvl}. Sınıf
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* ADIM 2: ŞUBE SEÇİMİ */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterLabel}>2. Şube / Sınıf</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                  <TouchableOpacity
+                    style={[styles.chip, selectedClassId === 'all' && styles.chipActive]}
+                    onPress={() => {
+                      setSelectedClassId('all');
+                      setSelectedStudentIds([]);
+                    }}
+                  >
+                    <Text style={[styles.chipText, selectedClassId === 'all' && styles.chipTextActive]}>
+                      {selectedGradeLevel === 'all' ? 'Tüm Şubeler' : `Tüm ${selectedGradeLevel}. Sınıflar`}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {displayedClasses.map((c) => (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={[styles.chip, selectedClassId === c.id && styles.chipActive]}
+                      onPress={() => {
+                        setSelectedClassId(c.id);
+                        setSelectedStudentIds([]);
+                      }}
+                    >
+                      <Text style={[styles.chipText, selectedClassId === c.id && styles.chipTextActive]}>
+                        {c.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+
+              {/* DÖNEM SEÇİMİ (Yalnızca Not Çizelgesi için) */}
+              {activeReportType === 'gradebook' && (
+                <View style={styles.filterSection}>
+                  <Text style={styles.filterLabel}>3. Dönem Seçimi</Text>
+                  <View style={styles.termToggleRow}>
+                    <TouchableOpacity
+                      style={[styles.termBtn, selectedTerm === 1 && styles.termBtnActive]}
+                      onPress={() => setSelectedTerm(1)}
+                    >
+                      <Ionicons
+                        name="book-outline"
+                        size={18}
+                        color={selectedTerm === 1 ? '#FFF' : Colors.textSecondary}
+                      />
+                      <Text style={[styles.termBtnText, selectedTerm === 1 && styles.termBtnTextActive]}>
+                        1. Dönem Notları
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.termBtn, selectedTerm === 2 && styles.termBtnActive]}
+                      onPress={() => setSelectedTerm(2)}
+                    >
+                      <Ionicons
+                        name="book-outline"
+                        size={18}
+                        color={selectedTerm === 2 ? '#FFF' : Colors.textSecondary}
+                      />
+                      <Text style={[styles.termBtnText, selectedTerm === 2 && styles.termBtnTextActive]}>
+                        2. Dönem Notları
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* ADIM 3: ÖĞRENCİ SEÇİMİ (Ödev hariç tümünde geçerli) */}
+              {activeReportType !== 'assignments' && (
+                <View style={styles.filterSection}>
+                  <View style={styles.filterHeaderRow}>
+                    <Text style={styles.filterLabel}>
+                      {activeReportType === 'gradebook' ? '4.' : '3.'} Öğrenci Kapsamı
+                    </Text>
+                    <Text style={styles.studentCountInfo}>
+                      {candidateStudents.length} öğrenci mevcut
+                    </Text>
+                  </View>
+
+                  {/* Mode switcher: Tüm Öğrenciler vs Öğrenci Seç */}
+                  <View style={styles.segmentContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.segmentBtn,
+                        studentSelectionMode === 'all' && styles.segmentBtnActive,
+                      ]}
+                      onPress={() => setStudentSelectionMode('all')}
+                    >
+                      <Text
+                        style={[
+                          styles.segmentText,
+                          studentSelectionMode === 'all' && styles.segmentTextActive,
+                        ]}
+                      >
+                        Tüm Öğrenciler ({candidateStudents.length})
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.segmentBtn,
+                        studentSelectionMode === 'custom' && styles.segmentBtnActive,
+                      ]}
+                      onPress={() => setStudentSelectionMode('custom')}
+                    >
+                      <Text
+                        style={[
+                          styles.segmentText,
+                          studentSelectionMode === 'custom' && styles.segmentTextActive,
+                        ]}
+                      >
+                        Öğrencileri Seç ({selectedStudentIds.length})
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Custom Student Selection List */}
+                  {studentSelectionMode === 'custom' && (
+                    <View style={styles.customStudentBox}>
+                      {/* Search Bar */}
+                      <View style={styles.searchBar}>
+                        <Ionicons name="search" size={18} color={Colors.textSecondary} />
+                        <TextInput
+                          style={styles.searchInput}
+                          placeholder="Öğrenci adı, soyadı veya no ile ara..."
+                          placeholderTextColor={Colors.textMuted}
+                          value={studentSearchText}
+                          onChangeText={setStudentSearchText}
+                        />
+                        {studentSearchText ? (
+                          <TouchableOpacity onPress={() => setStudentSearchText('')}>
+                            <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {/* Quick Select Buttons */}
+                      <View style={styles.quickSelectRow}>
+                        <TouchableOpacity
+                          style={styles.quickBtn}
+                          onPress={selectAllCandidates}
+                        >
+                          <Ionicons name="checkmark-done-circle" size={16} color={Colors.primary} />
+                          <Text style={styles.quickBtnText}>Tümünü Seç</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.quickBtn}
+                          onPress={clearCandidateSelection}
+                        >
+                          <Ionicons name="close-circle-outline" size={16} color={Colors.danger} />
+                          <Text style={[styles.quickBtnText, { color: Colors.danger }]}>
+                            Seçimi Temizle
+                          </Text>
+                        </TouchableOpacity>
+
+                        <Text style={styles.selectedBadgeText}>
+                          {selectedStudentIds.length} / {candidateStudents.length} seçili
+                        </Text>
+                      </View>
+
+                      {/* Student Checkbox List */}
+                      <View style={styles.studentListScroll}>
+                        {candidateStudents.length === 0 ? (
+                          <Text style={styles.noStudentsText}>
+                            Seçili filtreye uygun öğrenci bulunamadı.
+                          </Text>
+                        ) : (
+                          candidateStudents.map((st) => {
+                            const isSelected = selectedStudentIds.includes(st.id);
+                            return (
+                              <TouchableOpacity
+                                key={st.id}
+                                style={[
+                                  styles.studentRow,
+                                  isSelected && styles.studentRowSelected,
+                                ]}
+                                onPress={() => toggleStudent(st.id)}
+                                activeOpacity={0.7}
+                              >
+                                <Ionicons
+                                  name={isSelected ? 'checkbox' : 'square-outline'}
+                                  size={22}
+                                  color={isSelected ? Colors.primary : Colors.textSecondary}
+                                />
+                                <View style={styles.studentNoBadge}>
+                                  <Text style={styles.studentNoBadgeText}>
+                                    {st.student_number || '-'}
+                                  </Text>
+                                </View>
+                                <Text style={styles.studentRowName} numberOfLines={1}>
+                                  {st.first_name} {st.last_name}
+                                </Text>
+                                {st.class_name && (
+                                  <View style={styles.studentClassTag}>
+                                    <Text style={styles.studentClassTagText}>
+                                      {st.class_name}
+                                    </Text>
+                                  </View>
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })
+                        )}
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Modal Footer / Action Button */}
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setFilterModalVisible(false)}
+                disabled={generating}
+              >
+                <Text style={styles.modalCancelBtnText}>Vazgeç</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, generating && { opacity: 0.7 }]}
+                onPress={handleGenerateReport}
+                disabled={generating}
+              >
+                {generating ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Ionicons name="document-text" size={20} color="#FFF" />
+                    <Text style={styles.modalSubmitBtnText}>Excel Oluştur & Paylaş</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  mainContainer: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  container: {
+    flex: 1,
   },
   content: {
     padding: 16,
@@ -428,9 +998,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     color: Colors.textPrimary,
+    letterSpacing: -0.3,
   },
   headerSub: {
     fontSize: 13,
@@ -453,7 +1024,7 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
   },
   reportCard: {
-    padding: 16,
+    padding: 15,
     marginBottom: 12,
   },
   templateCard: {
@@ -475,24 +1046,332 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   reportTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
   reportDesc: {
     fontSize: 12,
     color: Colors.textSecondary,
-    marginTop: 3,
+    marginTop: 4,
     lineHeight: 16,
   },
+  actionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  actionChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   templateSection: {
-    marginTop: 16,
+    marginTop: 18,
   },
   sectionHeader: {
     fontSize: 16,
     fontWeight: '700',
     color: Colors.textPrimary,
     marginBottom: 10,
+  },
+
+  // MODAL STYLES
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '90%',
+    display: 'flex',
+    flexDirection: 'column',
+    ...Shadows.large,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 12,
+  },
+  modalIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  modalDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  modalBody: {
+    padding: 16,
+  },
+  filterSection: {
+    marginBottom: 18,
+  },
+  filterHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  filterLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 8,
+  },
+  studentCountInfo: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  chipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  chipTextActive: {
+    color: '#FFF',
+  },
+  termToggleRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  termBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  termBtnActive: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED',
+  },
+  termBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  termBtnTextActive: {
+    color: '#FFF',
+  },
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 12,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  segmentBtnActive: {
+    backgroundColor: '#FFF',
+    ...Shadows.small,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  segmentTextActive: {
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  customStudentBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 38,
+    gap: 8,
+    marginBottom: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.textPrimary,
+    padding: 0,
+  },
+  quickSelectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  quickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  quickBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  selectedBadgeText: {
+    marginLeft: 'auto',
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  studentListScroll: {
+    maxHeight: 220,
+  },
+  noStudentsText: {
+    textAlign: 'center',
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginVertical: 16,
+  },
+  studentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 10,
+  },
+  studentRowSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: '#EFF6FF',
+  },
+  studentNoBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  studentNoBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  studentRowName: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  studentClassTag: {
+    backgroundColor: '#EDE9FE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  studentClassTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7C3AED',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: 12,
+    backgroundColor: '#FFF',
+  },
+  modalCancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  modalCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  modalSubmitBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#16A34A', // Excel Green
+    paddingVertical: 12,
+    borderRadius: 12,
+    ...Shadows.small,
+  },
+  modalSubmitBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFF',
   },
 });

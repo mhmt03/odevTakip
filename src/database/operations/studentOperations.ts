@@ -21,6 +21,31 @@ export const getStudentsByClass = async (classId: number): Promise<Student[]> =>
   return await db.getAllAsync<Student>(query, classId);
 };
 
+export interface StudentWithClass extends Student {
+  class_name?: string;
+}
+
+export const getAllStudentsWithClass = async (): Promise<StudentWithClass[]> => {
+  const db = await getDB();
+  const query = `
+    SELECT 
+      s.id, 
+      s.class_id, 
+      s.student_number, 
+      s.first_name, 
+      s.last_name, 
+      (s.first_name || ' ' || s.last_name) as full_name,
+      s.notes, 
+      s.photo_uri,
+      s.created_at,
+      c.name as class_name
+    FROM students s
+    LEFT JOIN classes c ON s.class_id = c.id
+    ORDER BY c.name ASC, CAST(s.student_number AS INTEGER) ASC, s.first_name ASC;
+  `;
+  return await db.getAllAsync<StudentWithClass>(query);
+};
+
 export const getStudentById = async (studentId: number): Promise<Student | null> => {
   const db = await getDB();
   const query = `

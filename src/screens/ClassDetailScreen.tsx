@@ -817,11 +817,6 @@ export const ClassDetailScreen: React.FC = () => {
         subtitle={`${students.length} Kayıtlı Öğrenci`}
         showBack
         onBack={() => navigation.goBack()}
-        rightAction={{
-          icon: 'share-outline',
-          label: 'Excel',
-          onPress: activeViewTab === 'gradebook' ? handleExportGradebookExcel : handleExcelExport,
-        }}
       />
 
       {/* View Segment Switch: Öğrenciler / Not Çizelgesi & Quizler */}
@@ -1180,10 +1175,10 @@ export const ClassDetailScreen: React.FC = () => {
 
               <TouchableOpacity
                 style={styles.gradeActionBtnOutline}
-                onPress={handleExportGradebookExcel}
+                onPress={() => navigation.navigate('ReportsTab')}
               >
-                <Ionicons name="share-outline" size={15} color={Colors.textSecondary} />
-                <Text style={styles.gradeActionBtnOutlineText}>Excel</Text>
+                <Ionicons name="stats-chart-outline" size={15} color={Colors.textSecondary} />
+                <Text style={styles.gradeActionBtnOutlineText}>Raporlar</Text>
               </TouchableOpacity>
             </View>
           </View>

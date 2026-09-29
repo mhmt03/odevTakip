@@ -1392,3 +1392,179 @@ export const pickAndParseGradebookExcel = async (
     };
   }
 };
+
+// 13. CUSTOM REPORT EXPORTS FOR REPORTING CENTER
+
+export const exportCustomStudentsReport = async (
+  title: string,
+  classesWithStudents: Array<{ className: string; students: Student[] }>
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+
+  if (classesWithStudents.length > 1) {
+    // Summary sheet
+    const summaryRows: (string | number)[][] = [
+      [title.toUpperCase()],
+      [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
+      [],
+      ['Sıra', 'Şube Adı', 'Listelenen Öğrenci Sayısı'],
+    ];
+    classesWithStudents.forEach((c, idx) => {
+      summaryRows.push([idx + 1, c.className, c.students.length]);
+    });
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Özet');
+  }
+
+  for (const c of classesWithStudents) {
+    const rows: (string | number)[][] = [
+      [`Şube: ${c.className}`],
+      [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
+      [],
+      ['Sıra', 'Öğrenci No', 'Adı', 'Soyadı', 'Notlar'],
+    ];
+    c.students.forEach((s, idx) => {
+      rows.push([idx + 1, s.student_number || '-', s.first_name, s.last_name || '', s.notes || '']);
+    });
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    const safeSheetName = c.className.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 31) || 'Sayfa';
+    XLSX.utils.book_append_sheet(workbook, sheet, safeSheetName);
+  }
+
+  return await saveAndShareWorkbook(workbook, 'Ogrenci_Listesi_Raporu.xlsx');
+};
+
+export const exportCustomNotesReport = async (
+  notes: StudentNote[],
+  filterScopeTitle: string
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+  const data: (string | number)[][] = [
+    ['ÖĞRENCİ GÖRÜŞ VE DEĞERLENDİRME RAPORU'],
+    [`Kapsam / Filtre: ${filterScopeTitle}`],
+    [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
+    [`Toplam Kayıt: ${notes.length}`],
+    [],
+    ['Sıra', 'Tarih', 'Ders Bilgisi', 'Şube', 'Öğrenci No', 'Öğrenci Adı Soyadı', 'Görüş / Değerlendirme'],
+  ];
+
+  notes.forEach((n, idx) => {
+    data.push([
+      idx + 1,
+      n.note_date,
+      n.lesson_info || '-',
+      n.class_name || '-',
+      n.student_number || '-',
+      n.student_name || '-',
+      n.note,
+    ]);
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Görüşler');
+  return await saveAndShareWorkbook(workbook, 'Ogrenci_Gorus_Raporu.xlsx');
+};
+
+export const exportCustomGradebookReport = async (
+  classGradebooks: Array<{
+    className: string;
+    term: number;
+    gradebook: { students: StudentGradeRow[]; quizzes: QuizItem[] };
+  }>
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+
+  for (const item of classGradebooks) {
+    const quizHeaders = item.gradebook.quizzes.map((q) => q.title);
+    const header = [
+      'Sıra',
+      'Öğrenci No',
+      'Adı Soyadı',
+      '1. Yazılı',
+      '2. Yazılı',
+      '3. Yazılı',
+      'Yazılı Ort.',
+      '1. Performans',
+      '2. Performans',
+      '3. Performans',
+      'Perf. Ort.',
+      ...quizHeaders,
+      'Quiz Ort.',
+      'Genel Ortalama',
+    ];
+
+    const data: (string | number)[][] = [
+      [`${item.className} - ${item.term}. Dönem Not Çizelgesi`],
+      [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
+      [],
+      header,
+    ];
+
+    item.gradebook.students.forEach((st, idx) => {
+      const quizValues = item.gradebook.quizzes.map((q) => {
+        const val = st.quizScores[q.id];
+        return val !== null && val !== undefined ? val : '-';
+      });
+
+      data.push([
+        idx + 1,
+        st.student_number || '-',
+        `${st.first_name} ${st.last_name}`,
+        st.exam1 ?? '-',
+        st.exam2 ?? '-',
+        st.exam3 ?? '-',
+        st.examAvg ?? '-',
+        st.perf1 ?? '-',
+        st.perf2 ?? '-',
+        st.perf3 ?? '-',
+        st.perfAvg ?? '-',
+        ...quizValues,
+        st.quizAvg ?? '-',
+        st.overallAvg ?? '-',
+      ]);
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(data);
+    const safeSheetName = `${item.className.replace(/[^a-zA-Z0-9_-]/g, '_')}_${item.term}D`.substring(0, 31);
+    XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
+  }
+
+  return await saveAndShareWorkbook(workbook, 'Not_Cizelgesi_Raporu.xlsx');
+};
+
+export const exportCustomAssignmentsReport = async (
+  assignments: Assignment[],
+  filterScopeTitle?: string
+): Promise<boolean> => {
+  const workbook = XLSX.utils.book_new();
+  const summaryRows: (string | number)[][] = [
+    ['GENEL ÖDEV TAKİP RAPORU'],
+    [`Kapsam: ${filterScopeTitle || 'Tüm Şubeler'}`],
+    [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
+    [],
+    ['Sıra', 'Şube', 'Ödev Konusu', 'Verilme', 'Teslim', 'Toplam', 'Yapıldı', 'Yapılmadı', 'Bekliyor', 'Tamamlanma Oranı'],
+  ];
+
+  assignments.forEach((a, idx) => {
+    const total = a.total_students || 0;
+    const completed = a.completed_count || 0;
+    const percent = total > 0 ? `%${Math.round((completed / total) * 100)}` : '%0';
+    summaryRows.push([
+      idx + 1,
+      a.class_name || '-',
+      a.title,
+      formatDateToTR(a.assigned_date),
+      formatDateToTR(a.due_date),
+      total,
+      completed,
+      a.missing_count || 0,
+      a.pending_count || 0,
+      percent,
+    ]);
+  });
+
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Ödev Özeti');
+  return await saveAndShareWorkbook(workbook, 'Odev_Takip_Raporu.xlsx');
+};
+
