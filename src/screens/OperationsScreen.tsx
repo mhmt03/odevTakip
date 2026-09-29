@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -483,7 +484,11 @@ export const OperationsScreen: React.FC = () => {
         <Card style={styles.versionCard}>
           <View style={styles.versionHeaderRow}>
             <View style={styles.appLogoWrap}>
-              <Ionicons name="school" size={28} color={Colors.primary} />
+              <Image
+                source={require('../../assets/app-logo.png')}
+                style={styles.appLogoImage}
+                resizeMode="cover"
+              />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.appTitle}>Sınıf Takip & Ajanda</Text>
@@ -805,12 +810,17 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   appLogoWrap: {
-    width: 52,
-    height: 52,
+    width: 54,
+    height: 54,
     borderRadius: 14,
-    backgroundColor: Colors.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#E0E7FF',
+    ...Shadows.small,
+  },
+  appLogoImage: {
+    width: '100%',
+    height: '100%',
   },
   appTitle: {
     fontSize: 17,

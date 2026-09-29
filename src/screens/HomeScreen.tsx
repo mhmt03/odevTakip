@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -298,11 +299,18 @@ export const HomeScreen: React.FC = () => {
       >
       {/* Top Welcome Bar */}
       <View style={styles.topBar}>
-        <View>
-          <Text style={styles.dateText}>
-            {todayName}, {formatDateToTR(new Date().toISOString().split('T')[0])}
-          </Text>
-          <Text style={styles.greetingTitle}>Sınıf Takip & Ajanda</Text>
+        <View style={styles.topBarLeft}>
+          <Image
+            source={require('../../assets/app-logo.png')}
+            style={styles.topBarLogo}
+            resizeMode="cover"
+          />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dateText}>
+              {todayName}, {formatDateToTR(new Date().toISOString().split('T')[0])}
+            </Text>
+            <Text style={styles.greetingTitle}>Sınıf Takip & Ajanda</Text>
+          </View>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={styles.clockBadge}>
@@ -1112,6 +1120,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  topBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+    marginRight: 8,
+  },
+  topBarLogo: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E0E7FF',
+    ...Shadows.small,
   },
   dateText: {
     fontSize: 13,
