@@ -1,9 +1,11 @@
 import * as SQLite from 'expo-sqlite';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let dbOpenPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export const resetDB = () => {
   dbInstance = null;
+  dbOpenPromise = null;
 };
 
 export const closeDatabase = async (): Promise<void> => {
@@ -14,23 +16,34 @@ export const closeDatabase = async (): Promise<void> => {
       console.warn('Error closing database:', e);
     }
     dbInstance = null;
+    dbOpenPromise = null;
   }
 };
 
 export const getDB = async (): Promise<SQLite.SQLiteDatabase> => {
   if (dbInstance) {
-    try {
-      await dbInstance.getFirstAsync('SELECT 1');
-      return dbInstance;
-    } catch (e) {
-      console.warn('Native SQLite handle was stale or closed, reopening...', e);
-      dbInstance = null;
-    }
+    return dbInstance;
   }
 
-  dbInstance = await SQLite.openDatabaseAsync('sinif_takip.db');
-  await dbInstance.execAsync('PRAGMA foreign_keys = ON;');
-  return dbInstance;
+  if (dbOpenPromise) {
+    return await dbOpenPromise;
+  }
+
+  dbOpenPromise = (async () => {
+    try {
+      const db = await SQLite.openDatabaseAsync('sinif_takip.db');
+      await db.execAsync('PRAGMA foreign_keys = ON;');
+      dbInstance = db;
+      return db;
+    } catch (err) {
+      dbInstance = null;
+      throw err;
+    } finally {
+      dbOpenPromise = null;
+    }
+  })();
+
+  return await dbOpenPromise;
 };
 
 const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {

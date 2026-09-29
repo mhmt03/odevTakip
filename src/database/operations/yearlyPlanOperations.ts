@@ -105,11 +105,13 @@ export const getYearlyPlans = async (
     conditions.push('yp.course_id = ?');
     params.push(courseId);
   }
-  if (gradeLevel) {
+  if (classId && gradeLevel) {
+    conditions.push('(yp.class_id = ? OR (yp.class_id IS NULL AND yp.grade_level = ?))');
+    params.push(classId, gradeLevel);
+  } else if (gradeLevel) {
     conditions.push('yp.grade_level = ?');
     params.push(gradeLevel);
-  }
-  if (classId) {
+  } else if (classId) {
     conditions.push('yp.class_id = ?');
     params.push(classId);
   }
@@ -438,13 +440,42 @@ export const getSurroundingTopicsForLesson = async (
     AND yp.course_id = ?
     ORDER BY yp.week_number ASC, yp.id ASC;
   `;
-  const allTopics = await db.getAllAsync<YearlyPlanItem>(
+  let allTopics = await db.getAllAsync<YearlyPlanItem>(
     query,
     classId,
     gradeLevel,
     gradeLevel,
     courseId
   );
+
+  // Fallback: Eğer seçili ders ile bulunamazsa, bu sınıf düzeyine ait planı getir
+  if ((!allTopics || allTopics.length === 0) && gradeLevel) {
+    const fallbackQuery = `
+      SELECT 
+        yp.id,
+        yp.course_id,
+        cr.name as course_name,
+        cr.code as course_code,
+        yp.class_id,
+        c.name as class_name,
+        yp.grade_level,
+        yp.lesson_hours,
+        yp.week_number,
+        yp.date_start,
+        yp.date_end,
+        yp.subject_topic,
+        yp.learning_outcomes
+      FROM yearly_plans yp
+      LEFT JOIN courses cr ON cr.id = yp.course_id
+      LEFT JOIN classes c ON c.id = yp.class_id
+      WHERE (
+        yp.class_id = ? 
+        OR (yp.class_id IS NULL AND yp.grade_level = ?)
+      )
+      ORDER BY yp.week_number ASC, yp.id ASC;
+    `;
+    allTopics = await db.getAllAsync<YearlyPlanItem>(fallbackQuery, classId, gradeLevel);
+  }
 
   if (!allTopics || allTopics.length === 0) {
     return {
@@ -558,15 +589,25 @@ export interface YearlyPlanDocument {
 }
 
 export const getYearlyPlanDocument = async (
-  courseId: number,
-  gradeLevel: number
+  courseId?: number,
+  gradeLevel?: number
 ): Promise<YearlyPlanDocument | null> => {
   const db = await getDB();
-  return await db.getFirstAsync<YearlyPlanDocument>(
-    'SELECT * FROM yearly_plan_documents WHERE course_id = ? AND grade_level = ?',
-    courseId,
-    gradeLevel
-  );
+  if (courseId && gradeLevel) {
+    const doc = await db.getFirstAsync<YearlyPlanDocument>(
+      'SELECT * FROM yearly_plan_documents WHERE course_id = ? AND grade_level = ?',
+      courseId,
+      gradeLevel
+    );
+    if (doc) return doc;
+  }
+  if (gradeLevel) {
+    return await db.getFirstAsync<YearlyPlanDocument>(
+      'SELECT * FROM yearly_plan_documents WHERE grade_level = ? ORDER BY id DESC',
+      gradeLevel
+    );
+  }
+  return null;
 };
 
 export const saveYearlyPlanDocument = async (

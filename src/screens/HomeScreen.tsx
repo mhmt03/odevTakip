@@ -205,17 +205,13 @@ export const HomeScreen: React.FC = () => {
   };
 
   const handleOpenYearlyPlanModal = async (item: ScheduleItem) => {
-    if (!item.course_id) {
-      Alert.alert('Bilgi', 'Bu ders için ders bilgisi bulunmuyor.');
-      return;
-    }
     const m = item.class_name?.match(/\d+/);
     const gradeLevel = m ? parseInt(m[0], 10) : 0;
     const meta = {
       gradeLevel,
       className: item.class_name || '',
-      courseName: item.course_name || '',
-      courseId: item.course_id,
+      courseName: item.course_name || 'Ders',
+      courseId: item.course_id || 0,
     };
     setYearlyPlanMeta(meta);
     setPlanSearchQuery('');
@@ -223,10 +219,22 @@ export const HomeScreen: React.FC = () => {
     setYearlyPlanModalVisible(true);
 
     try {
-      const [plans, doc] = await Promise.all([
-        getYearlyPlans(item.course_id, gradeLevel || undefined, item.class_id || undefined),
-        gradeLevel ? getYearlyPlanDocument(item.course_id, gradeLevel) : Promise.resolve(null),
-      ]);
+      // 1. Şubeye özel değil sınıf düzeyine ait planı ara (class_id göndermeden)
+      let plans = await getYearlyPlans(item.course_id || undefined, gradeLevel || undefined);
+
+      // 2. Yedek: Eğer ders eşleşmediyse, o sınıf düzeyine yüklenmiş tüm planları dene
+      if (plans.length === 0 && gradeLevel) {
+        plans = await getYearlyPlans(undefined, gradeLevel);
+      }
+
+      // 3. Yedek: Eğer sınıf düzeyi çıkmadıysa ders id ile ara
+      if (plans.length === 0 && item.course_id) {
+        plans = await getYearlyPlans(item.course_id, undefined);
+      }
+
+      // PDF belgesini kontrol et
+      const doc = await getYearlyPlanDocument(item.course_id || undefined, gradeLevel || undefined);
+
       setYearlyPlanList(plans);
       setYearlyPlanPdf(doc);
     } catch (e) {
