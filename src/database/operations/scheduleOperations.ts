@@ -1,6 +1,6 @@
 import { getDB } from '../db';
 import { CourseName, LessonSlot, ScheduleItem, DaySlotInfo, DaySlotTime } from '../../types';
-import { getDayOfWeekIndex, getCurrentTimeString, isTimeBetween } from '../../utils/dateUtils';
+import { getDayOfWeekIndex, getCurrentTimeString, isTimeBetween, DAYS_OF_WEEK } from '../../utils/dateUtils';
 
 // --- COURSES (Ders Adları) ---
 export const getCourses = async (): Promise<CourseName[]> => {
@@ -330,6 +330,56 @@ export const getActiveAndTodayLessons = async (): Promise<ActiveLessonInfo> => {
     nextLesson,
     todayLessons: assignedLessons,
   };
+};
+
+export interface CurrentLessonSummary {
+  hasActiveLesson: boolean;
+  dayName: string;
+  slotName: string;
+  slotNumber: number;
+  courseName?: string;
+  className?: string;
+  startTime?: string;
+  endTime?: string;
+  fullText: string;
+}
+
+export const getCurrentActiveLessonSummary = async (): Promise<CurrentLessonSummary | null> => {
+  const dayOfWeek = getDayOfWeekIndex();
+  const dayObj = DAYS_OF_WEEK.find((d) => d.id === dayOfWeek);
+  const dayName = dayObj ? dayObj.name : 'Bugün';
+
+  const todayLessonsAll = await getScheduleByDay(dayOfWeek);
+  const currentTime = getCurrentTimeString();
+
+  for (const item of todayLessonsAll) {
+    if (item.start_time && item.end_time && isTimeBetween(currentTime, item.start_time, item.end_time)) {
+      const slotName = item.slot_name || `${item.slot_number}. Ders`;
+      const courseName = item.course_name || undefined;
+      const className = item.class_name || undefined;
+
+      let fullText = `${dayName}, ${slotName}`;
+      if (courseName) {
+        fullText += ` • ${courseName}`;
+      } else if (className) {
+        fullText += ` • ${className}`;
+      }
+
+      return {
+        hasActiveLesson: true,
+        dayName,
+        slotName,
+        slotNumber: item.slot_number || 1,
+        courseName,
+        className,
+        startTime: item.start_time,
+        endTime: item.end_time,
+        fullText,
+      };
+    }
+  }
+
+  return null;
 };
 
 export interface LoadScheduleResult {

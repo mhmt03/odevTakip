@@ -39,6 +39,10 @@ import {
   QuickNoteItem,
 } from '../database/operations/noteOperations';
 import {
+  getCurrentActiveLessonSummary,
+  CurrentLessonSummary,
+} from '../database/operations/scheduleOperations';
+import {
   pickAndParseStudentsExcel,
   generateStudentTemplateExcel,
   exportClassStudentsToExcel,
@@ -99,6 +103,7 @@ export const ClassDetailScreen: React.FC = () => {
   const [newNoteText, setNewNoteText] = useState('');
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
+  const [activeLesson, setActiveLesson] = useState<CurrentLessonSummary | null>(null);
 
   // Multi-select / Bulk operations state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -389,12 +394,14 @@ export const ClassDetailScreen: React.FC = () => {
     setNewNoteText('');
     setLoadingNotes(true);
     try {
-      const [notes, quicks] = await Promise.all([
+      const [notes, quicks, currentSched] = await Promise.all([
         getNotesByStudent(student.id),
         getQuickNotes(),
+        getCurrentActiveLessonSummary(),
       ]);
       setStudentNotesList(notes);
       setQuickNotesList(quicks);
+      setActiveLesson(currentSched);
     } catch (e) {
       console.error('Error loading student detail:', e);
     } finally {
@@ -407,7 +414,7 @@ export const ClassDetailScreen: React.FC = () => {
     if (!text || !detailStudent) return;
     setSavingNote(true);
     try {
-      await createNote(detailStudent.id, classId, text);
+      await createNote(detailStudent.id, classId, text, undefined, activeLesson?.fullText);
       setNewNoteText('');
       const updatedNotes = await getNotesByStudent(detailStudent.id);
       setStudentNotesList(updatedNotes);
@@ -1348,11 +1355,32 @@ export const ClassDetailScreen: React.FC = () => {
               </View>
 
               {/* Custom Note Input */}
+              {/* Custom Note Input */}
               <View style={styles.detailSection}>
                 <View style={styles.sectionHeaderRow}>
                   <Ionicons name="create-outline" size={16} color={Colors.primary} />
                   <Text style={styles.detailSectionTitle}>Özel Görüş / Gözlem Yaz</Text>
                 </View>
+
+                {/* Lesson & Time Indicator */}
+                {activeLesson ? (
+                  <View style={styles.activeLessonBanner}>
+                    <View style={styles.activeDot} />
+                    <Ionicons name="school" size={13} color="#047857" />
+                    <Text style={styles.activeLessonBannerText}>
+                      Şu anki ders: <Text style={{ fontWeight: '800' }}>{activeLesson.fullText}</Text>{' '}
+                      ({activeLesson.startTime} - {activeLesson.endTime})
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.timeBanner}>
+                    <Ionicons name="time-outline" size={13} color={Colors.textSecondary} />
+                    <Text style={styles.timeBannerText}>
+                      Tarih: {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}, {new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} (Ders dışı)
+                    </Text>
+                  </View>
+                )}
+
                 <View style={styles.customNoteInputWrap}>
                   <Input
                     placeholder="Öğrenci hakkında gözlem veya görüşünüz..."
@@ -1393,15 +1421,26 @@ export const ClassDetailScreen: React.FC = () => {
                     <View key={n.id} style={styles.noteItemCard}>
                       <View style={styles.noteItemContent}>
                         <Text style={styles.noteItemText}>{n.note}</Text>
-                        <Text style={styles.noteItemDate}>
-                          {new Date(n.created_at || Date.now()).toLocaleDateString('tr-TR', {
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
+                        <View style={styles.noteMetaRow}>
+                          <View style={styles.noteDateWrap}>
+                            <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
+                            <Text style={styles.noteItemDate}>
+                              {new Date(n.created_at || Date.now()).toLocaleDateString('tr-TR', {
+                                day: 'numeric',
+                                month: 'long',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </Text>
+                          </View>
+                          {n.lesson_info ? (
+                            <View style={styles.noteLessonBadge}>
+                              <Ionicons name="school" size={10} color="#047857" />
+                              <Text style={styles.noteLessonBadgeText}>{n.lesson_info}</Text>
+                            </View>
+                          ) : null}
+                        </View>
                       </View>
                       <TouchableOpacity
                         style={styles.deleteNoteBtn}
@@ -2228,7 +2267,70 @@ const styles = StyleSheet.create({
   noteItemDate: {
     fontSize: 10,
     color: Colors.textSecondary,
+  },
+  noteMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 4,
+  },
+  noteDateWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  noteLessonBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
+  },
+  noteLessonBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  activeLessonBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 6,
+    marginBottom: 6,
+  },
+  activeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  activeLessonBannerText: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+  },
+  timeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 6,
+    marginBottom: 6,
+  },
+  timeBannerText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '500',
   },
   deleteNoteBtn: {
     padding: 4,

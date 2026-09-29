@@ -99,6 +99,7 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       class_id INTEGER NOT NULL,
       note TEXT NOT NULL,
       note_date TEXT NOT NULL,
+      lesson_info TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
@@ -190,6 +191,13 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
   }
   try {
     await db.runAsync('ALTER TABLE yearly_plans ADD COLUMN lesson_hours INTEGER DEFAULT 0;');
+  } catch {
+    // Column already exists
+  }
+
+  // Migrate: ensure lesson_info column exists in student_notes table
+  try {
+    await db.runAsync('ALTER TABLE student_notes ADD COLUMN lesson_info TEXT;');
   } catch {
     // Column already exists
   }

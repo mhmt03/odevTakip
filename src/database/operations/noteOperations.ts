@@ -1,6 +1,7 @@
 import { getDB } from '../db';
 import { StudentNote } from '../../types';
 import { getCurrentDateTimeString } from '../../utils/dateUtils';
+import { getCurrentActiveLessonSummary } from './scheduleOperations';
 
 export const getNotesByStudent = async (studentId: number): Promise<StudentNote[]> => {
   const db = await getDB();
@@ -14,6 +15,7 @@ export const getNotesByStudent = async (studentId: number): Promise<StudentNote[
       c.name as class_name,
       sn.note,
       sn.note_date,
+      sn.lesson_info,
       sn.created_at
     FROM student_notes sn
     JOIN students s ON s.id = sn.student_id
@@ -36,6 +38,7 @@ export const getNotesByClass = async (classId: number): Promise<StudentNote[]> =
       c.name as class_name,
       sn.note,
       sn.note_date,
+      sn.lesson_info,
       sn.created_at
     FROM student_notes sn
     JOIN students s ON s.id = sn.student_id
@@ -58,6 +61,7 @@ export const getAllNotes = async (): Promise<StudentNote[]> => {
       c.name as class_name,
       sn.note,
       sn.note_date,
+      sn.lesson_info,
       sn.created_at
     FROM student_notes sn
     JOIN students s ON s.id = sn.student_id
@@ -71,23 +75,49 @@ export const createNote = async (
   studentId: number,
   classId: number,
   note: string,
-  noteDate?: string
+  noteDate?: string,
+  lessonInfo?: string | null
 ): Promise<number> => {
   const db = await getDB();
   const dateToUse = noteDate || getCurrentDateTimeString();
+
+  let finalLessonInfo = lessonInfo;
+  if (finalLessonInfo === undefined) {
+    try {
+      const active = await getCurrentActiveLessonSummary();
+      finalLessonInfo = active ? active.fullText : null;
+    } catch {
+      finalLessonInfo = null;
+    }
+  }
+
   const res = await db.runAsync(
-    'INSERT INTO student_notes (student_id, class_id, note, note_date) VALUES (?, ?, ?, ?)',
+    'INSERT INTO student_notes (student_id, class_id, note, note_date, lesson_info) VALUES (?, ?, ?, ?, ?)',
     studentId,
     classId,
     note.trim(),
-    dateToUse
+    dateToUse,
+    finalLessonInfo || null
   );
   return res.lastInsertRowId;
 };
 
-export const updateNote = async (id: number, note: string, noteDate?: string): Promise<void> => {
+export const updateNote = async (
+  id: number,
+  note: string,
+  noteDate?: string,
+  lessonInfo?: string | null
+): Promise<void> => {
   const db = await getDB();
-  if (noteDate) {
+  if (noteDate !== undefined && lessonInfo !== undefined) {
+    await db.runAsync(
+      'UPDATE student_notes SET note = ?, note_date = ?, lesson_info = ? WHERE id = ?',
+      note.trim(),
+      noteDate,
+      lessonInfo,
+      id
+    );
+  } else if (noteDate !== undefined) {
     await db.runAsync(
       'UPDATE student_notes SET note = ?, note_date = ? WHERE id = ?',
       note.trim(),

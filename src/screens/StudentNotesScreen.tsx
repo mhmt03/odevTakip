@@ -35,6 +35,10 @@ import {
 } from '../database/operations/noteOperations';
 import { exportStudentNotesToExcel } from '../utils/excelService';
 import { formatDateToTR, getCurrentDateTimeString } from '../utils/dateUtils';
+import {
+  getCurrentActiveLessonSummary,
+  CurrentLessonSummary,
+} from '../database/operations/scheduleOperations';
 import { ClassItem, Student, StudentNote } from '../types';
 
 export const StudentNotesScreen: React.FC = () => {
@@ -59,6 +63,7 @@ export const StudentNotesScreen: React.FC = () => {
   const [noteInput, setNoteInput] = useState('');
   const [studentHistory, setStudentHistory] = useState<StudentNote[]>([]);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [activeLesson, setActiveLesson] = useState<CurrentLessonSummary | null>(null);
 
   const loadData = async () => {
     try {
@@ -109,8 +114,12 @@ export const StudentNotesScreen: React.FC = () => {
     setNoteInput('');
     setEditingNoteId(null);
     try {
-      const history = await getNotesByStudent(student.id);
+      const [history, currentSched] = await Promise.all([
+        getNotesByStudent(student.id),
+        getCurrentActiveLessonSummary(),
+      ]);
       setStudentHistory(history);
+      setActiveLesson(currentSched);
       setModalVisible(true);
     } catch (e) {
       console.error(e);
@@ -128,7 +137,13 @@ export const StudentNotesScreen: React.FC = () => {
       if (editingNoteId) {
         await updateNote(editingNoteId, noteInput.trim());
       } else {
-        await createNote(selectedStudent.id, selectedClassId, noteInput.trim());
+        await createNote(
+          selectedStudent.id,
+          selectedClassId,
+          noteInput.trim(),
+          undefined,
+          activeLesson?.fullText
+        );
       }
 
       setNoteInput('');
@@ -431,6 +446,25 @@ export const StudentNotesScreen: React.FC = () => {
                 ))}
               </View>
 
+              {/* Active Lesson & Time Indicator */}
+              {activeLesson ? (
+                <View style={styles.activeLessonBanner}>
+                  <View style={styles.activeDot} />
+                  <Ionicons name="school" size={13} color="#047857" />
+                  <Text style={styles.activeLessonBannerText}>
+                    Şu anki ders: <Text style={{ fontWeight: '800' }}>{activeLesson.fullText}</Text>{' '}
+                    ({activeLesson.startTime} - {activeLesson.endTime})
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.timeBanner}>
+                  <Ionicons name="time-outline" size={13} color={Colors.textSecondary} />
+                  <Text style={styles.timeBannerText}>
+                    Tarih: {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}, {new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} (Ders dışı)
+                  </Text>
+                </View>
+              )}
+
               {/* Note Input */}
               <Input
                 label={
@@ -482,11 +516,20 @@ export const StudentNotesScreen: React.FC = () => {
                   studentHistory.map((item) => (
                     <Card key={item.id} style={styles.historyCard}>
                       <View style={styles.historyTopRow}>
-                        <View style={styles.historyDateBadge}>
-                          <Ionicons name="time-outline" size={12} color={Colors.primary} />
-                          <Text style={styles.historyDateText}>
-                            {formatDateToTR(item.note_date)}
-                          </Text>
+                        <View style={styles.historyMetaWrap}>
+                          <View style={styles.historyDateBadge}>
+                            <Ionicons name="time-outline" size={12} color={Colors.primary} />
+                            <Text style={styles.historyDateText}>
+                              {formatDateToTR(item.note_date)}
+                            </Text>
+                          </View>
+
+                          {item.lesson_info ? (
+                            <View style={styles.historyLessonBadge}>
+                              <Ionicons name="school" size={11} color="#047857" />
+                              <Text style={styles.historyLessonText}>{item.lesson_info}</Text>
+                            </View>
+                          ) : null}
                         </View>
 
                         <View style={styles.historyActions}>
@@ -992,5 +1035,63 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textSecondary,
     fontWeight: '600',
+  },
+  historyMetaWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  historyLessonBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
+  },
+  historyLessonText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  activeLessonBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    gap: 6,
+    marginBottom: 8,
+  },
+  activeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  activeLessonBannerText: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '600',
+  },
+  timeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 6,
+    marginBottom: 8,
+  },
+  timeBannerText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '500',
   },
 });

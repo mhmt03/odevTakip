@@ -59,6 +59,7 @@ export interface StudentNote {
   photo_uri?: string | null;
   note: string;
   note_date: string; // YYYY-MM-DD HH:mm
+  lesson_info?: string | null;
   created_at?: string;
 }
 

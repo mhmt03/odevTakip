@@ -489,13 +489,14 @@ export const exportStudentNotesToExcel = async (notes: StudentNote[]): Promise<b
     ['Öğrenci Görüş ve Değerlendirme Kayıtları'],
     [`Rapor Tarihi: ${formatDateToTR(new Date().toISOString().split('T')[0])}`],
     [],
-    ['Sıra', 'Tarih', 'Şube', 'Öğrenci No', 'Öğrenci Adı Soyadı', 'Görüş / Değerlendirme'],
+    ['Sıra', 'Tarih', 'Ders Bilgisi', 'Şube', 'Öğrenci No', 'Öğrenci Adı Soyadı', 'Görüş / Değerlendirme'],
   ];
 
   notes.forEach((n, idx) => {
     data.push([
       idx + 1,
       n.note_date,
+      n.lesson_info || '-',
       n.class_name || '-',
       n.student_number || '-',
       n.student_name || '-',
