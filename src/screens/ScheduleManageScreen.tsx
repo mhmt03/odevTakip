@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../theme/colors';
+import { Colors, Shadows } from '../theme/colors';
 import { Header } from '../components/Header';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -72,6 +72,10 @@ export const ScheduleManageScreen: React.FC = () => {
   const [editingDaySlot, setEditingDaySlot] = useState<DaySlotInfo | null>(null);
   const [daySlotStartInput, setDaySlotStartInput] = useState('');
   const [daySlotEndInput, setDaySlotEndInput] = useState('');
+
+  // Hint toggle states (hidden by default to save space, tap lightbulb to expand)
+  const [showStandardSlotHint, setShowStandardSlotHint] = useState(false);
+  const [showDaySlotHint, setShowDaySlotHint] = useState(false);
 
   const loadData = async () => {
     try {
@@ -569,7 +573,22 @@ export const ScheduleManageScreen: React.FC = () => {
             <>
               <View style={styles.contentHeader}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>Standart Ders Saatleri</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={styles.sectionTitle}>Standart Ders Saatleri</Text>
+                    <TouchableOpacity
+                      style={styles.bulbPill}
+                      onPress={() => setShowStandardSlotHint((prev) => !prev)}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name={showStandardSlotHint ? "bulb" : "bulb-outline"}
+                        size={14}
+                        color="#B45309"
+                      />
+                      <Text style={styles.bulbPillText}>İpucu</Text>
+                    </TouchableOpacity>
+                  </View>
                   <Text style={styles.sectionSub}>Tüm günler için varsayılan zaman çizelgesi</Text>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
@@ -635,12 +654,26 @@ export const ScheduleManageScreen: React.FC = () => {
                       </View>
                     </Card>
 
-                    <View style={styles.infoBanner}>
-                      <Ionicons name="bulb-outline" size={18} color="#D97706" />
-                      <Text style={styles.infoBannerText}>
-                        Aşağıdaki saatler tüm günlerde geçerli standart saatlerdir. Saatleri listedeki ✏️ (Kalem) simgesine dokunarak güncelleyebilir veya &apos;Temizle&apos; ile sıfırdan kendi saatlerinizi girebilirsiniz.
-                      </Text>
-                    </View>
+                    {showStandardSlotHint && (
+                      <View style={styles.infoBanner}>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, flex: 1 }}
+                          onPress={() => setShowStandardSlotHint(false)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="bulb" size={18} color="#D97706" />
+                          <Text style={styles.infoBannerText}>
+                            Aşağıdaki saatler tüm günlerde geçerli standart saatlerdir. Saatleri listedeki ✏️ (Kalem) simgesine dokunarak güncelleyebilir veya &apos;Temizle&apos; ile sıfırdan kendi saatlerinizi girebilirsiniz.
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setShowStandardSlotHint(false)}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Ionicons name="close" size={16} color="#92400E" />
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </>
                 }
                 ListEmptyComponent={
@@ -702,7 +735,7 @@ export const ScheduleManageScreen: React.FC = () => {
             /* Sub-tab: Day-specific slot timing (slotDayTab > 0) */
             <>
               <View style={styles.dayConfigHeader}>
-                <View style={{ flex: 1 }}>
+                <View style={styles.dayConfigTopRow}>
                   <TouchableOpacity
                     style={styles.backToStandardBtn}
                     onPress={() => setSlotDayTab(0)}
@@ -711,50 +744,80 @@ export const ScheduleManageScreen: React.FC = () => {
                     <Text style={styles.backToStandardBtnText}>Genel Standart Saatlere Dön</Text>
                   </TouchableOpacity>
 
-                  <View style={styles.dayTitleRow}>
-                    <Text style={styles.sectionTitle}>{currentSelectedDayObj?.name} Ders Saatleri</Text>
-                    {isSelectedDayCustom ? (
-                      <View style={styles.customBadgeActive}>
-                        <Text style={styles.customBadgeActiveText}>Özel Saatler Aktif</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.standardBadge}>
-                        <Text style={styles.standardBadgeText}>Standart Saatler</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.sectionSub}>
-                    {isSelectedDayCustom
-                      ? `${currentSelectedDayObj?.name} gününe özel saat düzeni uygulanıyor.`
-                      : `Şu an genel standart saatler uygulanıyor.`}
-                  </Text>
+                  <TouchableOpacity
+                    style={styles.bulbPill}
+                    onPress={() => setShowDaySlotHint((prev) => !prev)}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons
+                      name={showDaySlotHint ? "bulb" : "bulb-outline"}
+                      size={14}
+                      color="#B45309"
+                    />
+                    <Text style={styles.bulbPillText}>İpucu</Text>
+                  </TouchableOpacity>
                 </View>
 
-                {isSelectedDayCustom ? (
-                  <TouchableOpacity
-                    style={styles.resetBtn}
-                    onPress={() => handleResetCustomDay(slotDayTab)}
-                  >
-                    <Ionicons name="refresh-outline" size={14} color={Colors.danger} />
-                    <Text style={styles.resetBtnText}>Standarta Dön</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.activateBtn}
-                    onPress={() => handleActivateCustomDay(slotDayTab)}
-                  >
-                    <Ionicons name="flash" size={14} color="#fff" />
-                    <Text style={styles.activateBtnText}>Özel Saat Tanımla</Text>
-                  </TouchableOpacity>
-                )}
+                <View style={styles.dayTitleRow}>
+                  <Text style={styles.sectionTitle}>{currentSelectedDayObj?.name} Ders Saatleri</Text>
+                  {isSelectedDayCustom ? (
+                    <View style={styles.customBadgeActive}>
+                      <Text style={styles.customBadgeActiveText}>Özel Saatler Aktif</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.standardBadge}>
+                      <Text style={styles.standardBadgeText}>Standart Saatler</Text>
+                    </View>
+                  )}
+                </View>
+
+                <Text style={styles.sectionSub}>
+                  {isSelectedDayCustom
+                    ? `${currentSelectedDayObj?.name} gününe özel saat düzeni uygulanıyor.`
+                    : `Şu an genel standart saatler uygulanıyor.`}
+                </Text>
+
+                {/* Buton alt satıra taşındı: metinlerin üstüne binmez ve tam genişlikle rahatça tıklanır */}
+                <View style={styles.dayActionButtonRow}>
+                  {isSelectedDayCustom ? (
+                    <TouchableOpacity
+                      style={styles.resetBtn}
+                      onPress={() => handleResetCustomDay(slotDayTab)}
+                    >
+                      <Ionicons name="refresh-outline" size={14} color={Colors.danger} />
+                      <Text style={styles.resetBtnText}>Standart Saatlere Dön</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.activateBtn}
+                      onPress={() => handleActivateCustomDay(slotDayTab)}
+                    >
+                      <Ionicons name="flash" size={14} color="#fff" />
+                      <Text style={styles.activateBtnText}>Özel Saat Tanımla</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
 
-              {!isSelectedDayCustom && (
-                <View style={[styles.infoBanner, { marginHorizontal: 16, marginBottom: 12 }]}>
-                  <Ionicons name="bulb-outline" size={18} color="#D97706" />
-                  <Text style={styles.infoBannerText}>
-                    {currentSelectedDayObj?.name} gününde Cuma namazı, farklı öğle arası veya özel teneffüs süreleri varsa &apos;Özel Saat Tanımla&apos; butonuna veya aşağıdaki herhangi bir dersin ✏️ kalem simgesine dokunarak saatleri bu güne özel değiştirebilirsiniz.
-                  </Text>
+              {showDaySlotHint && (
+                <View style={[styles.infoBanner, { marginHorizontal: 16, marginTop: 4, marginBottom: 12 }]}>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, flex: 1 }}
+                    onPress={() => setShowDaySlotHint(false)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="bulb" size={18} color="#D97706" />
+                    <Text style={styles.infoBannerText}>
+                      {currentSelectedDayObj?.name} gününde Cuma namazı, farklı öğle arası veya özel teneffüs süreleri varsa &apos;Özel Saat Tanımla&apos; butonuna veya aşağıdaki herhangi bir dersin ✏️ kalem simgesine dokunarak saatleri bu güne özel değiştirebilirsiniz.
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setShowDaySlotHint(false)}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="close" size={16} color="#92400E" />
+                  </TouchableOpacity>
                 </View>
               )}
 
@@ -1059,8 +1122,10 @@ const styles = StyleSheet.create({
   },
   infoBanner: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primaryLight,
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
     padding: 12,
     borderRadius: 10,
     marginBottom: 12,
@@ -1069,16 +1134,38 @@ const styles = StyleSheet.create({
   infoBannerText: {
     flex: 1,
     fontSize: 12,
-    color: Colors.primaryDark,
+    color: '#92400E',
     lineHeight: 18,
   },
+  bulbPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  bulbPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+  },
   dayConfigHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: Colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  dayConfigTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    marginBottom: 6,
   },
   dayTitleRow: {
     flexDirection: 'row',
@@ -1111,14 +1198,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.textSecondary,
   },
+  dayActionButtonRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   activateBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
     borderRadius: 8,
-    gap: 5,
+    gap: 6,
+    ...Shadows.small,
   },
   activateBtnText: {
     color: '#fff',
@@ -1129,10 +1222,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FEE2E2',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 8,
-    gap: 4,
+    gap: 6,
     borderWidth: 1,
     borderColor: '#FCA5A5',
   },
