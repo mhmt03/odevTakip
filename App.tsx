@@ -135,8 +135,6 @@ function MainTabs() {
   );
 }
 
-import { SchoolThemeProvider } from './src/context/SchoolThemeContext';
-
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
 
