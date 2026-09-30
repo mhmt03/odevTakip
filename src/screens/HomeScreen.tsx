@@ -63,6 +63,11 @@ export const HomeScreen: React.FC = () => {
   const [newSchoolColor, setNewSchoolColor] = useState(SCHOOL_COLORS[0].color);
   const [isAddingSchool, setIsAddingSchool] = useState(false);
 
+  // Edit / Delete School State
+  const [editingSchool, setEditingSchool] = useState<School | null>(null);
+  const [editSchoolName, setEditSchoolName] = useState('');
+  const [editSchoolColor, setEditSchoolColor] = useState(SCHOOL_COLORS[0].color);
+
   const todayIndex = getDayOfWeekIndex();
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
   const [displayedLessons, setDisplayedLessons] = useState<ScheduleItem[]>([]);
@@ -103,6 +108,56 @@ export const HomeScreen: React.FC = () => {
     } catch (e) {
       Alert.alert('Hata', 'Okul eklenirken bir hata oluştu.');
     }
+  };
+
+  const handleStartEditSchool = (sch: School) => {
+    setEditingSchool(sch);
+    setEditSchoolName(sch.name);
+    setEditSchoolColor(sch.color || SCHOOL_COLORS[0].color);
+  };
+
+  const handleSaveEditSchool = async () => {
+    if (!editingSchool || !editSchoolName.trim()) {
+      Alert.alert('Uyarı', 'Lütfen okul adını giriniz.');
+      return;
+    }
+    try {
+      const { updateSchool } = await import('../database/operations/schoolOperations');
+      await updateSchool(editingSchool.id, editSchoolName, editSchoolColor);
+      setEditingSchool(null);
+      await loadSchools();
+      await loadData();
+    } catch (e) {
+      Alert.alert('Hata', 'Okul güncellenirken hata oluştu.');
+    }
+  };
+
+  const handleDeleteSchoolHandler = async (sch: School) => {
+    if (schoolsList.length <= 1) {
+      Alert.alert('Uyarı', 'Sistemde en az bir okul bulunmalıdır, son okul silinemez.');
+      return;
+    }
+    Alert.alert(
+      'Okulu Sil',
+      `"${sch.name}" okulunu silmek istediğinize emin misiniz? Okula ait tüm şubeler ve kayıtlar da silinecektir.`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { deleteSchool } = await import('../database/operations/schoolOperations');
+              await deleteSchool(sch.id);
+              await loadSchools();
+              await loadData();
+            } catch (e: any) {
+              Alert.alert('Hata', e?.message || 'Okul silinemedi.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const [lessonInfo, setLessonInfo] = useState<ActiveLessonInfo>({
@@ -381,6 +436,8 @@ export const HomeScreen: React.FC = () => {
           style={styles.topBarLeft}
           onPress={() => {
             loadSchools();
+            setEditingSchool(null);
+            setIsAddingSchool(false);
             setSchoolModalVisible(true);
           }}
           activeOpacity={0.7}
@@ -394,36 +451,31 @@ export const HomeScreen: React.FC = () => {
               borderColor: 'rgba(255,255,255,0.4)',
             }
           ]}>
-            <Ionicons name="school" size={24} color="#FFFFFF" />
+            <Ionicons name="school" size={20} color="#FFFFFF" />
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={styles.dateText}>
                 {todayName}, {formatDateToTR(new Date().toISOString().split('T')[0])}
               </Text>
-              <Ionicons name="swap-horizontal" size={12} color={Colors.textMuted} />
+              <Ionicons name="swap-horizontal" size={11} color={Colors.textMuted} />
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={[styles.greetingTitle, { color: activeSchool?.color || Colors.textPrimary }]} numberOfLines={1}>
                 {activeSchool?.name || 'Sınıf Takip & Ajanda'}
               </Text>
-              <Ionicons name="chevron-down-circle" size={16} color={activeSchool?.color || Colors.primary} />
+              <Ionicons name="chevron-down-circle" size={15} color={activeSchool?.color || Colors.primary} />
             </View>
           </View>
         </TouchableOpacity>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={styles.clockBadge}>
-            <Ionicons name="time-outline" size={16} color={activeSchool?.color || Colors.primary} />
-            <Text style={styles.clockText}>{currentTime}</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.settingsHeaderBtn}
-            onPress={() => navigation.navigate('Operations')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="options-outline" size={20} color={activeSchool?.color || Colors.primary} />
-          </TouchableOpacity>
-        </View>
+
+        <TouchableOpacity
+          style={styles.settingsHeaderBtn}
+          onPress={() => navigation.navigate('Operations')}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="options-outline" size={20} color={activeSchool?.color || Colors.primary} />
+        </TouchableOpacity>
       </View>
 
       {/* ACTIVE LESSON HERO CARD */}
@@ -748,6 +800,53 @@ export const HomeScreen: React.FC = () => {
               <Text style={styles.quickSub}>Yedekleme & Ayarlar</Text>
             </View>
           </TouchableOpacity>
+        </View>
+
+        {/* CANLI SAAT VE ZAMAN KARTI */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justify: 'space-between',
+          backgroundColor: Colors.card,
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: Colors.border,
+          marginTop: 4,
+          ...Shadows.small,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: activeSchool?.color ? `${activeSchool.color}15` : Colors.primaryLight,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <Ionicons name="time" size={20} color={activeSchool?.color || Colors.primary} />
+            </View>
+            <View>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.textMuted, textTransform: 'uppercase' }}>
+                Canlı Zaman & Sistem Saati
+              </Text>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.textPrimary }}>
+                {todayName}, {formatDateToTR(new Date().toISOString().split('T')[0])}
+              </Text>
+            </View>
+          </View>
+
+          <View style={{
+            backgroundColor: activeSchool?.color || Colors.primary,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 20,
+          }}>
+            <Text style={{ fontSize: 14, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.5 }}>
+              {currentTime}
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -1342,53 +1441,147 @@ export const HomeScreen: React.FC = () => {
               {/* Okul Listesi */}
               {schoolsList.map((sch) => {
                 const isActive = sch.id === activeSchool?.id;
+                const isEditing = editingSchool?.id === sch.id;
+
+                if (isEditing) {
+                  return (
+                    <View key={sch.id} style={{ backgroundColor: '#F8FAFC', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, gap: 12 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textPrimary }}>
+                        Okul Düzenle
+                      </Text>
+                      
+                      <View>
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 4 }}>
+                          Okul Adı
+                        </Text>
+                        <TextInput
+                          style={{
+                            backgroundColor: '#FFFFFF',
+                            borderWidth: 1,
+                            borderColor: Colors.border,
+                            borderRadius: 10,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            fontSize: 14,
+                            color: Colors.textPrimary,
+                          }}
+                          value={editSchoolName}
+                          onChangeText={setEditSchoolName}
+                        />
+                      </View>
+
+                      <View>
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8 }}>
+                          Renk Teması
+                        </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                          {SCHOOL_COLORS.map((c) => (
+                            <TouchableOpacity
+                              key={c.color}
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: 16,
+                                backgroundColor: c.color,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderWidth: editSchoolColor === c.color ? 3 : 0,
+                                borderColor: '#0F172A',
+                              }}
+                              onPress={() => setEditSchoolColor(c.color)}
+                            >
+                              {editSchoolColor === c.color && (
+                                <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                        <TouchableOpacity
+                          style={{ flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: Colors.cardSubtle, alignItems: 'center' }}
+                          onPress={() => setEditingSchool(null)}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.textSecondary }}>Vazgeç</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: editSchoolColor, alignItems: 'center' }}
+                          onPress={handleSaveEditSchool}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>Kaydet</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                }
+
                 return (
-                  <TouchableOpacity
+                  <View
                     key={sch.id}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      padding: 14,
+                      padding: 12,
                       borderRadius: 14,
                       backgroundColor: isActive ? '#F0FDF4' : Colors.cardSubtle,
                       borderWidth: 2,
                       borderColor: isActive ? sch.color : 'transparent',
-                      gap: 12,
+                      gap: 10,
                     }}
-                    onPress={() => handleSelectSchool(sch.id)}
-                    activeOpacity={0.8}
                   >
-                    <View
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 20,
-                        backgroundColor: sch.color,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
+                    <TouchableOpacity
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                      onPress={() => handleSelectSchool(sch.id)}
+                      activeOpacity={0.8}
                     >
-                      <Ionicons name="school" size={20} color="#FFFFFF" />
-                    </View>
-
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 16, fontWeight: '700', color: Colors.textPrimary }}>
-                        {sch.name}
-                      </Text>
-                      {sch.code ? (
-                        <Text style={{ fontSize: 12, color: Colors.textSecondary, marginTop: 2 }}>
-                          Kod: {sch.code}
-                        </Text>
-                      ) : null}
-                    </View>
-
-                    {isActive && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: sch.color, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                        <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Aktif</Text>
+                      <View
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 18,
+                          backgroundColor: sch.color,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Ionicons name="school" size={18} color="#FFFFFF" />
                       </View>
-                    )}
-                  </TouchableOpacity>
+
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.textPrimary }} numberOfLines={1}>
+                            {sch.name}
+                          </Text>
+                          {isActive && (
+                            <View style={{ backgroundColor: sch.color, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: '#FFFFFF' }}>Aktif</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Action buttons (Edit & Delete) */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <TouchableOpacity
+                        style={{ padding: 6, borderRadius: 8, backgroundColor: '#E2E8F0' }}
+                        onPress={() => handleStartEditSchool(sch)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Ionicons name="pencil" size={15} color={Colors.textSecondary} />
+                      </TouchableOpacity>
+                      {schoolsList.length > 1 && (
+                        <TouchableOpacity
+                          style={{ padding: 6, borderRadius: 8, backgroundColor: '#FEE2E2' }}
+                          onPress={() => handleDeleteSchoolHandler(sch)}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Ionicons name="trash-outline" size={15} color="#DC2626" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
                 );
               })}
 
