@@ -50,11 +50,22 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
   await db.execAsync(`
     PRAGMA foreign_keys = ON;
 
+    CREATE TABLE IF NOT EXISTS schools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      code TEXT,
+      color TEXT DEFAULT '#4F46E5',
+      is_active INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS classes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
+      school_id INTEGER,
+      name TEXT NOT NULL,
       description TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS students (
@@ -221,11 +232,35 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     );
   `);
 
-  // Migrate: ensure photo_uri column exists in students table
+  // Migrate: ensure school_id column exists in classes table
   try {
-    await db.runAsync('ALTER TABLE students ADD COLUMN photo_uri TEXT;');
+    await db.runAsync('ALTER TABLE classes ADD COLUMN school_id INTEGER;');
   } catch {
     // Column already exists
+  }
+
+  // Seed default school if schools table is empty
+  const schoolCountRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM schools');
+  if (schoolCountRow && schoolCountRow.count === 0) {
+    const defaultSchoolResult = await db.runAsync(
+      'INSERT INTO schools (name, color, is_active) VALUES (?, ?, 1)',
+      'Merkez Okulu',
+      '#4F46E5'
+    );
+    const defaultSchoolId = defaultSchoolResult.lastInsertRowId;
+    await db.runAsync('UPDATE classes SET school_id = ? WHERE school_id IS NULL', defaultSchoolId);
+  } else {
+    // Check if there is an active school; if not, activate first school
+    const activeSchoolRow = await db.getFirstAsync<{ id: number }>('SELECT id FROM schools WHERE is_active = 1 LIMIT 1');
+    if (!activeSchoolRow) {
+      const firstSchool = await db.getFirstAsync<{ id: number }>('SELECT id FROM schools ORDER BY id ASC LIMIT 1');
+      if (firstSchool) {
+        await db.runAsync('UPDATE schools SET is_active = 1 WHERE id = ?', firstSchool.id);
+        await db.runAsync('UPDATE classes SET school_id = ? WHERE school_id IS NULL', firstSchool.id);
+      }
+    } else {
+      await db.runAsync('UPDATE classes SET school_id = ? WHERE school_id IS NULL', activeSchoolRow.id);
+    }
   }
 
   // Migrate: ensure grade_level and lesson_hours exist in yearly_plans table

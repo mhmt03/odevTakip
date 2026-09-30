@@ -3,19 +3,24 @@ import { ClassItem } from '../../types';
 
 export const getClasses = async (): Promise<ClassItem[]> => {
   const db = await getDB();
+  const activeSchool = await db.getFirstAsync<{ id: number }>('SELECT id FROM schools WHERE is_active = 1 LIMIT 1');
+  const schoolId = activeSchool?.id || 1;
+
   const query = `
     SELECT 
-      c.id, 
+      c.id,
+      c.school_id,
       c.name, 
       c.description, 
       c.created_at,
       COUNT(s.id) as student_count
     FROM classes c
     LEFT JOIN students s ON s.class_id = c.id
+    WHERE c.school_id = ? OR c.school_id IS NULL
     GROUP BY c.id
     ORDER BY c.name ASC;
   `;
-  return await db.getAllAsync<ClassItem>(query);
+  return await db.getAllAsync<ClassItem>(query, schoolId);
 };
 
 export const getClassById = async (id: number): Promise<ClassItem | null> => {
@@ -23,6 +28,7 @@ export const getClassById = async (id: number): Promise<ClassItem | null> => {
   const query = `
     SELECT 
       c.id, 
+      c.school_id,
       c.name, 
       c.description, 
       c.created_at,
@@ -37,8 +43,12 @@ export const getClassById = async (id: number): Promise<ClassItem | null> => {
 
 export const createClass = async (name: string, description?: string): Promise<number> => {
   const db = await getDB();
+  const activeSchool = await db.getFirstAsync<{ id: number }>('SELECT id FROM schools WHERE is_active = 1 LIMIT 1');
+  const schoolId = activeSchool?.id || 1;
+
   const result = await db.runAsync(
-    'INSERT INTO classes (name, description) VALUES (?, ?)',
+    'INSERT INTO classes (school_id, name, description) VALUES (?, ?, ?)',
+    schoolId,
     name.trim(),
     description?.trim() || ''
   );

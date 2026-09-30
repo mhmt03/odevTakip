@@ -48,14 +48,62 @@ import {
 } from '../utils/dateUtils';
 import { YearlyPlanItem, ScheduleItem } from '../types';
 
+import { School, getSchools, getActiveSchool, setActiveSchool, createSchool, SCHOOL_COLORS } from '../database/operations/schoolOperations';
+
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const [refreshing, setRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(getCurrentTimeString());
 
+  // --- SCHOOL MANAGEMENT STATE ---
+  const [activeSchool, setActiveSchoolState] = useState<School | null>(null);
+  const [schoolsList, setSchoolsList] = useState<School[]>([]);
+  const [schoolModalVisible, setSchoolModalVisible] = useState(false);
+  const [newSchoolName, setNewSchoolName] = useState('');
+  const [newSchoolColor, setNewSchoolColor] = useState(SCHOOL_COLORS[0].color);
+  const [isAddingSchool, setIsAddingSchool] = useState(false);
+
   const todayIndex = getDayOfWeekIndex();
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
   const [displayedLessons, setDisplayedLessons] = useState<ScheduleItem[]>([]);
+
+  const loadSchools = async () => {
+    try {
+      const active = await getActiveSchool();
+      setActiveSchoolState(active);
+      const list = await getSchools();
+      setSchoolsList(list);
+    } catch (e) {
+      console.warn('Error loading schools:', e);
+    }
+  };
+
+  const handleSelectSchool = async (schoolId: number) => {
+    try {
+      const updated = await setActiveSchool(schoolId);
+      setActiveSchoolState(updated);
+      setSchoolModalVisible(false);
+      await loadData();
+    } catch (e) {
+      Alert.alert('Hata', 'Okul değiştirilemedi.');
+    }
+  };
+
+  const handleCreateSchool = async () => {
+    if (!newSchoolName.trim()) {
+      Alert.alert('Uyarı', 'Lütfen okul adını giriniz.');
+      return;
+    }
+    try {
+      await createSchool(newSchoolName, newSchoolColor);
+      setNewSchoolName('');
+      setIsAddingSchool(false);
+      await loadSchools();
+      await loadData();
+    } catch (e) {
+      Alert.alert('Hata', 'Okul eklenirken bir hata oluştu.');
+    }
+  };
 
   const [lessonInfo, setLessonInfo] = useState<ActiveLessonInfo>({
     currentLesson: null,
@@ -329,22 +377,43 @@ export const HomeScreen: React.FC = () => {
       >
       {/* Top Welcome Bar */}
       <View style={styles.topBar}>
-        <View style={styles.topBarLeft}>
-          <Image
-            source={require('../../assets/app-logo.png')}
-            style={styles.topBarLogo}
-            resizeMode="cover"
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.dateText}>
-              {todayName}, {formatDateToTR(new Date().toISOString().split('T')[0])}
-            </Text>
-            <Text style={styles.greetingTitle}>Sınıf Takip & Ajanda</Text>
+        <TouchableOpacity
+          style={styles.topBarLeft}
+          onPress={() => {
+            loadSchools();
+            setSchoolModalVisible(true);
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={[
+            styles.topBarLogo, 
+            { 
+              backgroundColor: activeSchool?.color || Colors.primary,
+              alignItems: 'center',
+              justify: 'center',
+              borderColor: 'rgba(255,255,255,0.4)',
+            }
+          ]}>
+            <Ionicons name="school" size={24} color="#FFFFFF" />
           </View>
-        </View>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={styles.dateText}>
+                {todayName}, {formatDateToTR(new Date().toISOString().split('T')[0])}
+              </Text>
+              <Ionicons name="swap-horizontal" size={12} color={Colors.textMuted} />
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={[styles.greetingTitle, { color: activeSchool?.color || Colors.textPrimary }]} numberOfLines={1}>
+                {activeSchool?.name || 'Sınıf Takip & Ajanda'}
+              </Text>
+              <Ionicons name="chevron-down-circle" size={16} color={activeSchool?.color || Colors.primary} />
+            </View>
+          </View>
+        </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={styles.clockBadge}>
-            <Ionicons name="time-outline" size={16} color={Colors.primary} />
+            <Ionicons name="time-outline" size={16} color={activeSchool?.color || Colors.primary} />
             <Text style={styles.clockText}>{currentTime}</Text>
           </View>
           <TouchableOpacity
@@ -352,7 +421,7 @@ export const HomeScreen: React.FC = () => {
             onPress={() => navigation.navigate('Operations')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Ionicons name="options-outline" size={20} color={Colors.primary} />
+            <Ionicons name="options-outline" size={20} color={activeSchool?.color || Colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1238,6 +1307,203 @@ export const HomeScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* 4. OKUL DEĞİŞTİRME & EKLEME POP-UP MODALI */}
+      <Modal
+        visible={schoolModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSchoolModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContainer, { maxHeight: '80%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalClassTag}>OKUL SEÇİMİ VE YÖNETİMİ</Text>
+                <Text style={styles.modalTitle}>Aktif Okulu Değiştir</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setSchoolModalVisible(false);
+                  setIsAddingSchool(false);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.modalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ paddingVertical: 10, gap: 12 }}>
+              <Text style={{ fontSize: 13, color: Colors.textSecondary, lineHeight: 18 }}>
+                Çalıştığınız okulu seçin veya yeni okul ekleyin. Seçtiğiniz okulun renk teması uygulamaya otomatik uygulanacaktır.
+              </Text>
+
+              {/* Okul Listesi */}
+              {schoolsList.map((sch) => {
+                const isActive = sch.id === activeSchool?.id;
+                return (
+                  <TouchableOpacity
+                    key={sch.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      padding: 14,
+                      borderRadius: 14,
+                      backgroundColor: isActive ? '#F0FDF4' : Colors.cardSubtle,
+                      borderWidth: 2,
+                      borderColor: isActive ? sch.color : 'transparent',
+                      gap: 12,
+                    }}
+                    onPress={() => handleSelectSchool(sch.id)}
+                    activeOpacity={0.8}
+                  >
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: sch.color,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="school" size={20} color="#FFFFFF" />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: Colors.textPrimary }}>
+                        {sch.name}
+                      </Text>
+                      {sch.code ? (
+                        <Text style={{ fontSize: 12, color: Colors.textSecondary, marginTop: 2 }}>
+                          Kod: {sch.code}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {isActive && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: sch.color, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                        <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Aktif</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+
+              {/* Yeni Okul Ekle Formu */}
+              {isAddingSchool ? (
+                <View style={{ backgroundColor: '#F8FAFC', padding: 14, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, gap: 12, marginTop: 8 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textPrimary }}>
+                    Yeni Okul Tanımla
+                  </Text>
+                  
+                  <View>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 4 }}>
+                      Okul / Kurum Adı
+                    </Text>
+                    <TextInput
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        borderWidth: 1,
+                        borderColor: Colors.border,
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        fontSize: 14,
+                        color: Colors.textPrimary,
+                      }}
+                      placeholder="Örn: Atatürk Anadolu Lisesi"
+                      placeholderTextColor={Colors.textMuted}
+                      value={newSchoolName}
+                      onChangeText={setNewSchoolName}
+                    />
+                  </View>
+
+                  <View>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8 }}>
+                      Okulun Renk Temasını Seçin
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                      {SCHOOL_COLORS.map((c) => (
+                        <TouchableOpacity
+                          key={c.color}
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 18,
+                            backgroundColor: c.color,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderWidth: newSchoolColor === c.color ? 3 : 0,
+                            borderColor: '#0F172A',
+                          }}
+                          onPress={() => setNewSchoolColor(c.color)}
+                        >
+                          {newSchoolColor === c.color && (
+                            <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        backgroundColor: Colors.cardSubtle,
+                        alignItems: 'center',
+                      }}
+                      onPress={() => setIsAddingSchool(false)}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.textSecondary }}>
+                        Vazgeç
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        backgroundColor: newSchoolColor,
+                        alignItems: 'center',
+                      }}
+                      onPress={handleCreateSchool}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                        Okulu Kaydet & Geç
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: activeSchool?.color || Colors.primary,
+                    gap: 8,
+                    marginTop: 6,
+                  }}
+                  onPress={() => setIsAddingSchool(true)}
+                >
+                  <Ionicons name="add-circle-outline" size={20} color="#FFFFFF" />
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#FFFFFF' }}>
+                    Yeni Okul Ekle
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1534,18 +1800,20 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
   },
   quickGrid: {
-    marginBottom: 20,
+    marginBottom: 10,
     gap: 10,
+    
   },
   quickRow: {
     flexDirection: 'row',
     gap: 10,
+   
   },
   quickBtn: {
     flex: 1,
     backgroundColor: Colors.card,
     borderRadius: 14,
-    padding: 14,
+    padding: 4,
     borderWidth: 1,
     borderColor: Colors.border,
     ...Shadows.small,

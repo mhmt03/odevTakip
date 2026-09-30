@@ -1,5 +1,15 @@
+export interface School {
+  id: number;
+  name: string;
+  code?: string;
+  color: string;
+  is_active: number;
+  created_at?: string;
+}
+
 export interface ClassItem {
   id: number;
+  school_id?: number;
   name: string; // e.g. "12-A", "10-B", "9-C"
   description?: string;
   created_at?: string;
