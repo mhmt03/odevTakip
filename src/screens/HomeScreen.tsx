@@ -390,7 +390,7 @@ export const HomeScreen: React.FC = () => {
             { 
               backgroundColor: activeSchool?.color || Colors.primary,
               alignItems: 'center',
-              justify: 'center',
+              justifyContent: 'center',
               borderColor: 'rgba(255,255,255,0.4)',
             }
           ]}>
