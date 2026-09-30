@@ -444,17 +444,6 @@ export const HomeScreen: React.FC = () => {
           }}
           activeOpacity={0.7}
         >
-          <View style={[
-            styles.topBarLogo, 
-            { 
-              backgroundColor: activeSchool?.color || Colors.primary,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderColor: 'rgba(255,255,255,0.4)',
-            }
-          ]}>
-            <Ionicons name="school" size={20} color="#FFFFFF" />
-          </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <Text style={styles.dateText}>
@@ -471,13 +460,20 @@ export const HomeScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.settingsHeaderBtn}
-          onPress={() => navigation.navigate('Operations')}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="options-outline" size={20} color={activeSchool?.color || Colors.primary} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={styles.clockBadge}>
+            <Ionicons name="time-outline" size={15} color={activeSchool?.color || Colors.primary} />
+            <Text style={[styles.clockText, { color: activeSchool?.color || Colors.primary }]}>{currentTime}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.settingsHeaderBtn}
+            onPress={() => navigation.navigate('Operations')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="options-outline" size={20} color={activeSchool?.color || Colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ACTIVE LESSON HERO CARD */}
