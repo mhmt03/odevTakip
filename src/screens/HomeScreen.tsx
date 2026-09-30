@@ -806,7 +806,7 @@ export const HomeScreen: React.FC = () => {
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
-          justify: 'space-between',
+          justifyContent: 'space-between',
           backgroundColor: Colors.card,
           paddingHorizontal: 16,
           paddingVertical: 10,
