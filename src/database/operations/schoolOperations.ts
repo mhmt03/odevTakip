@@ -10,14 +10,14 @@ export interface School {
 }
 
 export const SCHOOL_COLORS = [
-  { name: 'İndigo / Lacivert', color: '#4F46E5' },
-  { name: 'Okyanus Mavi', color: '#0EA5E9' },
-  { name: 'Zümrüt Yeşil', color: '#10B981' },
-  { name: 'Kehribar Turuncu', color: '#F59E0B' },
-  { name: 'Gül Kurusu / Pembe', color: '#EC4899' },
-  { name: 'Asil Mor', color: '#8B5CF6' },
-  { name: 'Turkuaz', color: '#14B8A6' },
-  { name: 'Koyu Kırmızı', color: '#DC2626' },
+  { name: 'Soft İndigo', color: '#6366F1' },
+  { name: 'Gökyüzü Mavi', color: '#38BDF8' },
+  { name: 'Tatlı Zümrüt', color: '#34D399' },
+  { name: 'Sıcak Amber', color: '#FBBF24' },
+  { name: 'Gül Pembe', color: '#F472B6' },
+  { name: 'Yumuşak Mor', color: '#A78BFA' },
+  { name: 'Fas Turkuazı', color: '#2DD4BF' },
+  { name: 'Mercan Kırmızı', color: '#F87171' },
 ];
 
 export const getSchools = async (): Promise<School[]> => {

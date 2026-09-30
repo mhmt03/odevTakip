@@ -422,10 +422,12 @@ export const HomeScreen: React.FC = () => {
     Platform.OS === 'android' ? (StatusBar.currentHeight || 28) : 20
   );
 
+  const schoolBgTint = activeSchool?.color ? `${activeSchool.color}0E` : Colors.background;
+
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+    <View style={{ flex: 1, backgroundColor: schoolBgTint }}>
       <ScrollView
-        style={styles.container}
+        style={[styles.container, { backgroundColor: schoolBgTint }]}
         contentContainerStyle={[styles.contentContainer, { paddingTop: topInset + 8 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}

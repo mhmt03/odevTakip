@@ -36,6 +36,8 @@ import { DAYS_OF_WEEK, getDayOfWeekIndex, isTimeBetween, getCurrentTimeString } 
 import { DaySlotInfo, ScheduleItem, CourseName, ClassItem } from '../types';
 import { pickSchedulePhoto } from '../utils/photoService';
 
+import { getActiveSchool, School } from '../database/operations/schoolOperations';
+
 export const ScheduleScreen: React.FC = () => {
   const navigation = useNavigation<any>();
 
@@ -48,6 +50,7 @@ export const ScheduleScreen: React.FC = () => {
   const [daySchedule, setDaySchedule] = useState<ScheduleItem[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [courses, setCourses] = useState<CourseName[]>([]);
+  const [activeSchool, setActiveSchool] = useState<School | null>(null);
 
   // Schedule Photo State
   const [photoMenuVisible, setPhotoMenuVisible] = useState(false);
@@ -69,13 +72,14 @@ export const ScheduleScreen: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [daySlots, cls, crs, cDays, currentDayItems, savedPhoto] = await Promise.all([
+      const [daySlots, cls, crs, cDays, currentDayItems, savedPhoto, activeSch] = await Promise.all([
         getSlotsForDay(selectedDay),
         getClasses(),
         getCourses(),
         getCustomDaysWithOverrides(),
         getScheduleByDay(selectedDay),
         getSchedulePhotoUri(),
+        getActiveSchool(),
       ]);
       setSlots(daySlots);
       setClasses(cls);
@@ -83,6 +87,7 @@ export const ScheduleScreen: React.FC = () => {
       setCustomDays(cDays);
       setDaySchedule(currentDayItems);
       setSchedulePhotoUriState(savedPhoto);
+      setActiveSchool(activeSch);
     } catch (e) {
       console.error(e);
     }
@@ -284,13 +289,17 @@ export const ScheduleScreen: React.FC = () => {
   const currentDayObj = DAYS_OF_WEEK.find((d) => d.id === selectedDay);
   const isCurrentDayCustom = customDays.includes(selectedDay);
 
+  const schoolBgTint = activeSchool?.color ? `${activeSchool.color}0E` : Colors.background;
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: schoolBgTint }]}>
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.headerTitle}>Haftalık Ders Programı</Text>
-          <Text style={styles.headerSub}>Şube ve ders saatleri yönetimi (7 Gün)</Text>
+          <Text style={styles.headerSub}>
+            {activeSchool?.name ? `${activeSchool.name} • Ders Programı` : 'Şube ve ders saatleri yönetimi (7 Gün)'}
+          </Text>
         </View>
 
         <View style={styles.headerActionsBar}>
@@ -447,8 +456,12 @@ export const ScheduleScreen: React.FC = () => {
                 onPress={() => handleOpenSlotModal(slot)}
               >
                 <Card
-                  style={[styles.slotCard, isNow && styles.slotCardNow]}
-                  highlightBorder={isNow ? Colors.success : hasLesson ? Colors.primary : undefined}
+                  style={[
+                    styles.slotCard, 
+                    isNow && styles.slotCardNow,
+                    hasLesson && activeSchool?.color ? { backgroundColor: '#FFFFFF', borderColor: `${activeSchool.color}40`, borderWidth: 1 } : null
+                  ]}
+                  highlightBorder={isNow ? Colors.success : hasLesson ? (activeSchool?.color || Colors.primary) : undefined}
                 >
                   <View style={styles.slotRow}>
                     <View style={styles.slotTimeWrap}>

@@ -37,11 +37,13 @@ import {
   BulkImportValidation,
 } from '../utils/excelService';
 import { ClassItem } from '../types';
+import { getActiveSchool, School } from '../database/operations/schoolOperations';
 
 export const ClassesScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeSchool, setActiveSchool] = useState<School | null>(null);
 
   // Class create/edit modal
   const [modalVisible, setModalVisible] = useState(false);
@@ -64,6 +66,8 @@ export const ClassesScreen: React.FC = () => {
 
   const loadClasses = async () => {
     try {
+      const active = await getActiveSchool();
+      setActiveSchool(active);
       const data = await getClasses();
       setClasses(data);
     } catch (error) {
@@ -246,8 +250,10 @@ export const ClassesScreen: React.FC = () => {
 
   const totalStudents = classes.reduce((sum, c) => sum + (c.student_count || 0), 0);
 
+  const schoolBgTint = activeSchool?.color ? `${activeSchool.color}0E` : Colors.background;
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: schoolBgTint }]}>
       {/* Top Header */}
       <View style={styles.header}>
         <View>
