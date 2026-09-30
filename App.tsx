@@ -9,6 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { initDatabase } from './src/database/db';
 import { Colors } from './src/theme/colors';
 
+import { SchoolThemeProvider, useSchoolTheme } from './src/context/SchoolThemeContext';
+
 // Screens
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ClassesScreen } from './src/screens/ClassesScreen';
@@ -27,6 +29,7 @@ const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 function MainTabs() {
+  const { bgTint, themeColor } = useSchoolTheme();
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 8);
   const tabHeight = 56 + bottomInset;
@@ -35,17 +38,16 @@ function MainTabs() {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: Colors.primary,
+        tabBarActiveTintColor: themeColor,
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarStyle: {
-          backgroundColor: Colors.card,
+          backgroundColor: bgTint !== Colors.background ? `${themeColor}18` : Colors.card,
           borderTopWidth: 1,
           borderTopColor: Colors.border,
           height: tabHeight,
-           paddingBottom: bottomInset,
+          paddingBottom: bottomInset,
           paddingTop: 1,
-          marginBottom:18,
-          
+          marginBottom: 18,
         },
         tabBarLabelStyle: {
           fontSize: 11,
