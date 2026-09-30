@@ -37,11 +37,13 @@ import {
 } from '../utils/excelService';
 import { ClassItem, StudentNote, Assignment } from '../types';
 import { formatDateToTR } from '../utils/dateUtils';
+import { useSchoolTheme } from '../context/SchoolThemeContext';
 
 type ReportType = 'students' | 'gradebook' | 'notes' | 'assignments';
 
 export const ReportsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const { bgTint } = useSchoolTheme();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
 
@@ -459,7 +461,7 @@ export const ReportsScreen: React.FC = () => {
   const meta = getReportMeta();
 
   return (
-    <View style={styles.mainContainer}>
+    <View style={[styles.mainContainer, { backgroundColor: bgTint }]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         {/* Header */}
         <View style={styles.header}>

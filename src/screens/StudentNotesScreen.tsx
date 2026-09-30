@@ -40,10 +40,12 @@ import {
   CurrentLessonSummary,
 } from '../database/operations/scheduleOperations';
 import { ClassItem, Student, StudentNote } from '../types';
+import { useSchoolTheme } from '../context/SchoolThemeContext';
 
 export const StudentNotesScreen: React.FC = () => {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
+  const { bgTint } = useSchoolTheme();
 
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
@@ -292,7 +294,7 @@ export const StudentNotesScreen: React.FC = () => {
   const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name || '';
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: bgTint }]}>
       {/* Top Header */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>

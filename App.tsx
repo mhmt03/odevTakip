@@ -133,6 +133,8 @@ function MainTabs() {
   );
 }
 
+import { SchoolThemeProvider } from './src/context/SchoolThemeContext';
+
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
 
@@ -160,24 +162,26 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent={true} />
-      <NavigationContainer>
-        <Stack.Navigator
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: Colors.background },
-          }}
-        >
-          <Stack.Screen name="Main" component={MainTabs} />
-          <Stack.Screen name="StudentNotesTab" component={StudentNotesScreen} />
-          <Stack.Screen name="ClassDetail" component={ClassDetailScreen} />
-          <Stack.Screen name="AssignmentCreate" component={AssignmentCreateScreen} />
-          <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />
-          <Stack.Screen name="ScheduleManage" component={ScheduleManageScreen} />
-          <Stack.Screen name="YearlyPlan" component={YearlyPlanScreen} />
-          <Stack.Screen name="Operations" component={OperationsScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
+      <SchoolThemeProvider>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent={true} />
+        <NavigationContainer>
+          <Stack.Navigator
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: Colors.background },
+            }}
+          >
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen name="StudentNotesTab" component={StudentNotesScreen} />
+            <Stack.Screen name="ClassDetail" component={ClassDetailScreen} />
+            <Stack.Screen name="AssignmentCreate" component={AssignmentCreateScreen} />
+            <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />
+            <Stack.Screen name="ScheduleManage" component={ScheduleManageScreen} />
+            <Stack.Screen name="YearlyPlan" component={YearlyPlanScreen} />
+            <Stack.Screen name="Operations" component={OperationsScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SchoolThemeProvider>
     </SafeAreaProvider>
   );
 }

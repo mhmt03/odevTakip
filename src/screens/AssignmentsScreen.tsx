@@ -20,9 +20,11 @@ import { getAssignments, deleteAssignment } from '../database/operations/assignm
 import { getClasses } from '../database/operations/classOperations';
 import { formatDateToTR } from '../utils/dateUtils';
 import { Assignment, ClassItem } from '../types';
+import { useSchoolTheme } from '../context/SchoolThemeContext';
 
 export const AssignmentsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const { bgTint } = useSchoolTheme();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
@@ -74,7 +76,7 @@ export const AssignmentsScreen: React.FC = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: bgTint }]}>
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Ödev Takip Modülü</Text>

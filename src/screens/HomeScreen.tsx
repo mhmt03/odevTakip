@@ -49,9 +49,11 @@ import {
 import { YearlyPlanItem, ScheduleItem } from '../types';
 
 import { School, getSchools, getActiveSchool, setActiveSchool, createSchool, SCHOOL_COLORS } from '../database/operations/schoolOperations';
+import { useSchoolTheme } from '../context/SchoolThemeContext';
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const { reloadSchoolTheme, bgTint } = useSchoolTheme();
   const [refreshing, setRefreshing] = useState(false);
   const [currentTime, setCurrentTime] = useState(getCurrentTimeString());
 
@@ -78,6 +80,7 @@ export const HomeScreen: React.FC = () => {
       setActiveSchoolState(active);
       const list = await getSchools();
       setSchoolsList(list);
+      await reloadSchoolTheme();
     } catch (e) {
       console.warn('Error loading schools:', e);
     }
@@ -452,7 +455,12 @@ export const HomeScreen: React.FC = () => {
               <Ionicons name="swap-horizontal" size={11} color={Colors.textMuted} />
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={[styles.greetingTitle, { color: activeSchool?.color || Colors.textPrimary }]} numberOfLines={1}>
+              <Text
+                style={[styles.greetingTitle, { color: activeSchool?.color || Colors.textPrimary }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit={true}
+                minimumFontScale={0.7}
+              >
                 {activeSchool?.name || 'Sınıf Takip & Ajanda'}
               </Text>
               <Ionicons name="chevron-down-circle" size={15} color={activeSchool?.color || Colors.primary} />
@@ -460,19 +468,19 @@ export const HomeScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={styles.clockBadge}>
-            <Ionicons name="time-outline" size={15} color={activeSchool?.color || Colors.primary} />
-            <Text style={[styles.clockText, { color: activeSchool?.color || Colors.primary }]}>{currentTime}</Text>
-          </View>
-
+        <View style={{ alignItems: 'flex-end', gap: 6 }}>
           <TouchableOpacity
             style={styles.settingsHeaderBtn}
             onPress={() => navigation.navigate('Operations')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Ionicons name="options-outline" size={20} color={activeSchool?.color || Colors.primary} />
+            <Ionicons name="options-outline" size={18} color={activeSchool?.color || Colors.primary} />
           </TouchableOpacity>
+
+          <View style={styles.clockBadge}>
+            <Ionicons name="time-outline" size={12} color={activeSchool?.color || Colors.primary} />
+            <Text style={[styles.clockText, { color: activeSchool?.color || Colors.primary }]}>{currentTime}</Text>
+          </View>
         </View>
       </View>
 
@@ -1746,23 +1754,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.card,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 6,
+    gap: 4,
     ...Shadows.small,
   },
   clockText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.primary,
   },
   settingsHeaderBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: Colors.card,
     borderWidth: 1,
     borderColor: Colors.border,
