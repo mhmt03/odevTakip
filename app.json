@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Sınıf Takip",
-    "slug": "odevtakip-kt0vuudr1yppdzpjhpmba",
+    "slug": "sinif-takip",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -32,7 +32,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "230321f9-9ab2-4c3d-94dd-f8a6d4fc8220"
+        "projectId": "0d695b3e-d7ed-4681-9539-020586bb4157"
       }
     }
   }
