@@ -29,25 +29,30 @@ const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 function MainTabs() {
-  const { bgTint, themeColor } = useSchoolTheme();
+  const { themeColor, bgTint } = useSchoolTheme();
   const insets = useSafeAreaInsets();
-  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 14 : 8);
-  const tabHeight = 56 + bottomInset;
+  const bottomInset = Math.max(insets.bottom + 12, Platform.OS === 'android' ? 28 : 20);
+  const tabHeight = 60 + bottomInset;
 
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
+        sceneStyle: { backgroundColor: bgTint },
         tabBarActiveTintColor: themeColor,
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarStyle: {
-          backgroundColor: bgTint !== Colors.background ? `${themeColor}18` : Colors.card,
+          backgroundColor: bgTint,
           borderTopWidth: 1,
-          borderTopColor: Colors.border,
+          borderTopColor: `${themeColor}25`,
           height: tabHeight,
           paddingBottom: bottomInset,
-          paddingTop: 1,
-          marginBottom: 18,
+          paddingTop: 6,
+          elevation: 0,
+          shadowOpacity: 0,
+        },
+        tabBarItemStyle: {
+          backgroundColor: 'transparent',
         },
         tabBarLabelStyle: {
           fontSize: 11,

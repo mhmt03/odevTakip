@@ -174,121 +174,116 @@ export const AssignmentDetailScreen: React.FC = () => {
         }}
       />
 
-      {/* Assignment Summary Card */}
-      {assignment && (
-        <Card style={styles.summaryCard}>
-          <View style={styles.datesRow}>
-            <View style={styles.dateCol}>
-              <Text style={styles.dateLabel}>Verilme Tarihi</Text>
-              <Text style={styles.dateValue}>{formatDateToTR(assignment.assigned_date)}</Text>
-            </View>
-            <View style={styles.dateCol}>
-              <Text style={styles.dateLabel}>Teslim Tarihi</Text>
-              <Text style={[styles.dateValue, { color: Colors.danger }]}>
-                {formatDateToTR(assignment.due_date)}
-              </Text>
-            </View>
-          </View>
-
-          {assignment.description ? (
-            <Text style={styles.summaryDesc}>{assignment.description}</Text>
-          ) : null}
-
-          <View style={styles.statsBar}>
-            <View style={styles.statMini}>
-              <Text style={styles.statVal}>{assignment.total_students || 0}</Text>
-              <Text style={styles.statLbl}>Toplam</Text>
-            </View>
-            <View style={styles.statMini}>
-              <Text style={[styles.statVal, { color: Colors.success }]}>
-                {assignment.completed_count || 0}
-              </Text>
-              <Text style={styles.statLbl}>Yapıldı</Text>
-            </View>
-            <View style={styles.statMini}>
-              <Text style={[styles.statVal, { color: Colors.danger }]}>
-                {assignment.missing_count || 0}
-              </Text>
-              <Text style={styles.statLbl}>Yapılmadı</Text>
-            </View>
-            <View style={styles.statMini}>
-              <Text style={[styles.statVal, { color: Colors.info }]}>
-                {assignment.pending_count || 0}
-              </Text>
-              <Text style={styles.statLbl}>Bekliyor</Text>
-            </View>
-          </View>
-        </Card>
-      )}
-
-      {/* Search Input */}
-      <View style={styles.searchWrap}>
-        <Input
-          placeholder="Öğrenci ara..."
-          icon="search"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onClear={() => setSearchQuery('')}
-          style={{ height: 38 }}
-        />
-      </View>
-
-      {/* Toplu Durum Atama Butonları */}
-      <View style={styles.bulkContainer}>
-        <View style={styles.bulkHeader}>
-          <View style={styles.bulkHeaderLeft}>
-            <Ionicons name="flash-outline" size={14} color={Colors.primary} />
-            <Text style={styles.bulkTitle}>Toplu Durum Ata</Text>
-          </View>
-          <Text style={styles.bulkSubtitle}>
-            {searchQuery.trim() ? 'Filtrelenen öğrencilere' : 'Tüm sınıfa (muaf hariç)'}
-          </Text>
-        </View>
-
-        <View style={styles.bulkGrid}>
-          <TouchableOpacity
-            style={[styles.bulkBtn, styles.bulkBtnYapildi]}
-            onPress={() => handleBulkUpdateStatus('yapildi')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="checkmark-circle" size={15} color={Colors.successDark} />
-            <Text style={[styles.bulkBtnText, { color: Colors.successDark }]}>Tümü Yapıldı</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.bulkBtn, styles.bulkBtnYapilmadi]}
-            onPress={() => handleBulkUpdateStatus('yapilmadi')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="close-circle" size={15} color={Colors.dangerDark} />
-            <Text style={[styles.bulkBtnText, { color: Colors.dangerDark }]}>Tümü Yapılmadı</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.bulkBtn, styles.bulkBtnEksik]}
-            onPress={() => handleBulkUpdateStatus('eksik')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="alert-circle" size={15} color={Colors.warningDark} />
-            <Text style={[styles.bulkBtnText, { color: Colors.warningDark }]}>Tümü Eksik</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.bulkBtn, styles.bulkBtnBekliyor]}
-            onPress={() => handleBulkUpdateStatus('bekliyor')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="time" size={15} color={Colors.textSecondary} />
-            <Text style={[styles.bulkBtnText, { color: Colors.textSecondary }]}>Tümü Bekliyor</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
       {/* Students list */}
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <>
+            {/* Assignment Summary Card */}
+            {assignment && (
+              <Card style={styles.summaryCard}>
+                <View style={styles.summaryTopRow}>
+                  <View style={styles.dateColCompact}>
+                    <Text style={styles.dateLabelCompact}>Verilme: <Text style={styles.dateValueCompact}>{formatDateToTR(assignment.assigned_date)}</Text></Text>
+                    <Text style={styles.dateLabelCompact}>Teslim: <Text style={[styles.dateValueCompact, { color: Colors.danger }]}>{formatDateToTR(assignment.due_date)}</Text></Text>
+                  </View>
+
+                  <View style={styles.statsBarCompact}>
+                    <View style={styles.statMiniCompact}>
+                      <Text style={styles.statValCompact}>{assignment.total_students || 0}</Text>
+                      <Text style={styles.statLblCompact}>Toplam</Text>
+                    </View>
+                    <View style={styles.statMiniCompact}>
+                      <Text style={[styles.statValCompact, { color: Colors.success }]}>
+                        {assignment.completed_count || 0}
+                      </Text>
+                      <Text style={styles.statLblCompact}>Yapıldı</Text>
+                    </View>
+                    <View style={styles.statMiniCompact}>
+                      <Text style={[styles.statValCompact, { color: Colors.danger }]}>
+                        {assignment.missing_count || 0}
+                      </Text>
+                      <Text style={styles.statLblCompact}>Yapılmadı</Text>
+                    </View>
+                    <View style={styles.statMiniCompact}>
+                      <Text style={[styles.statValCompact, { color: Colors.info }]}>
+                        {assignment.pending_count || 0}
+                      </Text>
+                      <Text style={styles.statLblCompact}>Bekliyor</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {assignment.description ? (
+                  <Text style={styles.summaryDesc} numberOfLines={1}>{assignment.description}</Text>
+                ) : null}
+              </Card>
+            )}
+
+            {/* Search Input */}
+            <View style={styles.searchWrap}>
+              <Input
+                placeholder="Öğrenci ara..."
+                icon="search"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                onClear={() => setSearchQuery('')}
+                style={{ height: 36 }}
+              />
+            </View>
+
+            {/* Toplu Durum Atama Butonları */}
+            <View style={styles.bulkContainer}>
+              <View style={styles.bulkHeader}>
+                <Ionicons name="flash-outline" size={13} color={Colors.primary} />
+                <Text style={styles.bulkTitle}>Toplu Durum Ata:</Text>
+                <Text style={styles.bulkSubtitle}>
+                  {searchQuery.trim() ? '(Sadece filtrelenenler)' : '(Muaf olanlar hariç)'}
+                </Text>
+              </View>
+
+              <View style={styles.bulkGrid}>
+                <TouchableOpacity
+                  style={[styles.bulkBtn, styles.bulkBtnYapildi]}
+                  onPress={() => handleBulkUpdateStatus('yapildi')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="checkmark-circle" size={13} color={Colors.successDark} />
+                  <Text style={[styles.bulkBtnText, { color: Colors.successDark }]}>Yapıldı</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.bulkBtn, styles.bulkBtnYapilmadi]}
+                  onPress={() => handleBulkUpdateStatus('yapilmadi')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close-circle" size={13} color={Colors.dangerDark} />
+                  <Text style={[styles.bulkBtnText, { color: Colors.dangerDark }]}>Yapılmadı</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.bulkBtn, styles.bulkBtnEksik]}
+                  onPress={() => handleBulkUpdateStatus('eksik')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="alert-circle" size={13} color={Colors.warningDark} />
+                  <Text style={[styles.bulkBtnText, { color: Colors.warningDark }]}>Eksik</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.bulkBtn, styles.bulkBtnBekliyor]}
+                  onPress={() => handleBulkUpdateStatus('bekliyor')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="time" size={13} color={Colors.textSecondary} />
+                  <Text style={[styles.bulkBtnText, { color: Colors.textSecondary }]}>Bekliyor</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
+        }
         renderItem={({ item }) => {
           const isExempt = item.is_exempt === 1;
 
@@ -479,61 +474,57 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   summaryCard: {
-    margin: 16,
-    marginBottom: 8,
-    padding: 14,
+    marginBottom: 6,
+    padding: 10,
   },
-  datesRow: {
+  summaryTopRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
   },
-  dateCol: {},
-  dateLabel: {
+  dateColCompact: {
+    gap: 2,
+  },
+  dateLabelCompact: {
     fontSize: 11,
     color: Colors.textSecondary,
     fontWeight: '600',
   },
-  dateValue: {
-    fontSize: 14,
+  dateValueCompact: {
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.textPrimary,
-    marginTop: 2,
   },
   summaryDesc: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textSecondary,
-    marginBottom: 10,
-    lineHeight: 18,
-  },
-  statsBar: {
-    flexDirection: 'row',
+    marginTop: 6,
+    paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
-    paddingTop: 10,
-    gap: 8,
   },
-  statMini: {
-    flex: 1,
+  statsBarCompact: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statMiniCompact: {
     alignItems: 'center',
   },
-  statVal: {
-    fontSize: 16,
+  statValCompact: {
+    fontSize: 14,
     fontWeight: '800',
     color: Colors.textPrimary,
   },
-  statLbl: {
-    fontSize: 10,
+  statLblCompact: {
+    fontSize: 9,
     color: Colors.textSecondary,
-    marginTop: 1,
   },
   searchWrap: {
-    paddingHorizontal: 16,
     paddingVertical: 4,
   },
   listContent: {
     padding: 16,
-    paddingTop: 4,
+    paddingTop: 12,
   },
   studentCard: {
     padding: 12,
@@ -666,49 +657,45 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   bulkContainer: {
-    marginHorizontal: 16,
     marginBottom: 8,
     backgroundColor: Colors.card,
-    borderRadius: 12,
-    padding: 10,
+    borderRadius: 10,
+    padding: 8,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   bulkHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  bulkHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
+    marginBottom: 6,
+    gap: 4,
   },
   bulkTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
   bulkSubtitle: {
-    fontSize: 11,
+    fontSize: 10,
     color: Colors.textMuted,
     fontWeight: '500',
   },
   bulkGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 5,
   },
   bulkBtn: {
-    width: '48.8%',
+    flex: 1,
+    minWidth: '23%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 4,
+    borderRadius: 6,
     borderWidth: 1,
-    gap: 5,
+    gap: 3,
   },
   bulkBtnYapildi: {
     backgroundColor: Colors.successLight,
@@ -727,7 +714,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   bulkBtnText: {
-    fontSize: 12,
+    fontSize: 10.5,
     fontWeight: '700',
   },
 });

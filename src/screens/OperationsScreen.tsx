@@ -58,6 +58,7 @@ export const OperationsScreen: React.FC = () => {
 
   // Database stats
   const [stats, setStats] = useState<DatabaseStats>({
+    schoolCount: 0,
     classCount: 0,
     studentCount: 0,
     assignmentCount: 0,
@@ -209,6 +210,10 @@ export const OperationsScreen: React.FC = () => {
     );
   };
 
+  const handleNavigateToSchedule = () => {
+    navigation.navigate('ScheduleTab');
+  };
+
   // --- QUICK NOTES HANDLERS ---
   const handleAddQuickNote = async () => {
     if (!newNoteText.trim()) {
@@ -330,23 +335,27 @@ export const OperationsScreen: React.FC = () => {
         </View>
 
         <Card style={styles.dbCard}>
-          <Text style={styles.cardInfoTitle}>Veritabanı Durumu & İstatistikler</Text>
+          <Text style={styles.cardInfoTitle}>Veritabanı Durumu & Genel İstatistikler</Text>
           <Text style={styles.cardInfoDesc}>
-            Uygulamanızdaki tüm şubeler, öğrenciler, ödevler, görüşler ve ders programı yerel SQLite veritabanında güvenle saklanır.
+            Tüm okullarınıza ait şubeler, öğrenciler, ödevler, görüşler ve ders programı yerel veritabanında güvenle saklanır.
           </Text>
 
           <View style={styles.statsGrid}>
             <View style={styles.statMiniBox}>
+              <Text style={styles.statMiniVal}>{stats.schoolCount || 0}</Text>
+              <Text style={styles.statMiniLabel}>Okul</Text>
+            </View>
+            <View style={styles.statMiniBox}>
               <Text style={styles.statMiniVal}>{stats.classCount}</Text>
-              <Text style={styles.statMiniLabel}>Şube</Text>
+              <Text style={styles.statMiniLabel}>Toplam Şube</Text>
             </View>
             <View style={styles.statMiniBox}>
               <Text style={styles.statMiniVal}>{stats.studentCount}</Text>
-              <Text style={styles.statMiniLabel}>Öğrenci</Text>
+              <Text style={styles.statMiniLabel}>Toplam Öğrenci</Text>
             </View>
             <View style={styles.statMiniBox}>
               <Text style={styles.statMiniVal}>{stats.assignmentCount}</Text>
-              <Text style={styles.statMiniLabel}>Ödev</Text>
+              <Text style={styles.statMiniLabel}>Toplam Ödev</Text>
             </View>
             <View style={styles.statMiniBox}>
               <Text style={styles.statMiniVal}>{stats.noteCount}</Text>
@@ -355,10 +364,6 @@ export const OperationsScreen: React.FC = () => {
             <View style={styles.statMiniBox}>
               <Text style={styles.statMiniVal}>{stats.scheduleCount}</Text>
               <Text style={styles.statMiniLabel}>Ders Saati</Text>
-            </View>
-            <View style={styles.statMiniBox}>
-              <Text style={styles.statMiniVal}>{stats.yearlyPlanCount}</Text>
-              <Text style={styles.statMiniLabel}>Yıllık Plan</Text>
             </View>
           </View>
 
@@ -388,6 +393,20 @@ export const OperationsScreen: React.FC = () => {
               <View style={styles.actionBtnTextWrap}>
                 <Text style={styles.actionBtnTitle}>Yedekten Geri Yükle</Text>
                 <Text style={styles.actionBtnSub}>Mevcut .db yedeğini içe aktar</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.backupBtn, { backgroundColor: Colors.primary }]}
+              onPress={handleNavigateToSchedule}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#312E81' }]}>
+                <Ionicons name="calendar-outline" size={20} color="#FFFFFF" />
+              </View>
+              <View style={styles.actionBtnTextWrap}>
+                <Text style={styles.actionBtnTitle}>Haftalık Ders Programı Yükle & Düzenle</Text>
+                <Text style={styles.actionBtnSub}>Ders saatleri, şube ve haftalık plan yönetimi</Text>
               </View>
             </TouchableOpacity>
 
@@ -485,7 +504,7 @@ export const OperationsScreen: React.FC = () => {
           <View style={styles.versionHeaderRow}>
             <View style={styles.appLogoWrap}>
               <Image
-                source={require('../../assets/app-logo.png')}
+                source={require('../../assets/app_logo.png')}
                 style={styles.appLogoImage}
                 resizeMode="cover"
               />

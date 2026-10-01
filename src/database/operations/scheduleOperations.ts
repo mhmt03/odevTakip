@@ -189,6 +189,10 @@ export const resetDaySlotTimes = async (dayOfWeek: number): Promise<void> => {
 // --- WEEKLY SCHEDULE (Haftalık Ders Programı) ---
 export const getWeeklySchedule = async (): Promise<ScheduleItem[]> => {
   const db = await getDB();
+  const { getActiveSchool } = await import('./schoolOperations');
+  const activeSchool = await getActiveSchool();
+  const activeSchoolId = activeSchool?.id || 1;
+
   const query = `
     SELECT 
       ls.id as slot_id,
@@ -213,19 +217,30 @@ export const getWeeklySchedule = async (): Promise<ScheduleItem[]> => {
     ) days
     LEFT JOIN day_slot_times dst ON dst.slot_id = ls.id AND dst.day_of_week = days.day_of_week
     LEFT JOIN schedules s ON s.slot_id = ls.id AND s.day_of_week = days.day_of_week
-    LEFT JOIN classes c ON c.id = s.class_id
+    LEFT JOIN classes c ON c.id = s.class_id AND (c.school_id = ? OR c.school_id IS NULL)
     LEFT JOIN courses cr ON cr.id = s.course_id
     ORDER BY days.day_of_week ASC, ls.slot_number ASC;
   `;
-  const rows = await db.getAllAsync<any>(query);
+  const rows = await db.getAllAsync<any>(query, activeSchoolId);
   return rows.map((r) => ({
     ...r,
+    class_id: r.class_name ? r.class_id : null,
+    class_name: r.class_name ? r.class_name : null,
+    course_id: r.class_name ? r.course_id : null,
+    course_name: r.class_name ? r.course_name : null,
+    course_code: r.class_name ? r.course_code : null,
+    course_color: r.class_name ? r.course_color : null,
+    classroom: r.class_name ? r.classroom : null,
     is_custom_time: Boolean(r.is_custom_time),
   }));
 };
 
 export const getScheduleByDay = async (dayOfWeek: number): Promise<ScheduleItem[]> => {
   const db = await getDB();
+  const { getActiveSchool } = await import('./schoolOperations');
+  const activeSchool = await getActiveSchool();
+  const activeSchoolId = activeSchool?.id || 1;
+
   const query = `
     SELECT 
       ls.id as slot_id,
@@ -246,13 +261,21 @@ export const getScheduleByDay = async (dayOfWeek: number): Promise<ScheduleItem[
     FROM lesson_slots ls
     LEFT JOIN day_slot_times dst ON dst.slot_id = ls.id AND dst.day_of_week = ?
     LEFT JOIN schedules s ON s.slot_id = ls.id AND s.day_of_week = ?
-    LEFT JOIN classes c ON c.id = s.class_id
+    LEFT JOIN classes c ON c.id = s.class_id AND (c.school_id = ? OR c.school_id IS NULL)
     LEFT JOIN courses cr ON cr.id = s.course_id
     ORDER BY ls.slot_number ASC;
   `;
-  const rows = await db.getAllAsync<any>(query, dayOfWeek, dayOfWeek, dayOfWeek);
+  const rows = await db.getAllAsync<any>(query, dayOfWeek, dayOfWeek, dayOfWeek, activeSchoolId);
   return rows.map((r) => ({
     ...r,
+    // If the matched class doesn't belong to active school, clear class/course info for this slot
+    class_id: r.class_name ? r.class_id : null,
+    class_name: r.class_name ? r.class_name : null,
+    course_id: r.class_name ? r.course_id : null,
+    course_name: r.class_name ? r.course_name : null,
+    course_code: r.class_name ? r.course_code : null,
+    course_color: r.class_name ? r.course_color : null,
+    classroom: r.class_name ? r.classroom : null,
     is_custom_time: Boolean(r.is_custom_time),
   }));
 };

@@ -459,15 +459,25 @@ export const ReportsScreen: React.FC = () => {
   };
 
   const meta = getReportMeta();
+  const { activeSchool } = useSchoolTheme();
 
   return (
     <View style={[styles.mainContainer, { backgroundColor: bgTint }]}>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Raporlama & Excel Merkezi</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <Text style={styles.headerTitle}>Raporlama & Excel Merkezi</Text>
+            {activeSchool && (
+              <View style={{ backgroundColor: `${activeSchool.color || Colors.primary}20`, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: activeSchool.color || Colors.primary }}>
+                  {activeSchool.name}
+                </Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.headerSub}>
-            Tüm sınıf, şube, öğrenci ve değerlendirme verilerinizi filtreleyip Excel (.xlsx) olarak dışa aktarın.
+            {activeSchool ? `"${activeSchool.name}" okuluna ait ` : ''}sınıf, şube, öğrenci ve değerlendirme verilerinizi filtreleyip Excel (.xlsx) olarak dışa aktarın.
           </Text>
         </View>
 

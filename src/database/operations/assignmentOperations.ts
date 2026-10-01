@@ -3,8 +3,17 @@ import { Assignment, AssignmentStudent, AssignmentStatus } from '../../types';
 
 export const getAssignments = async (classId?: number): Promise<Assignment[]> => {
   const db = await getDB();
-  const whereClause = classId ? 'WHERE a.class_id = ?' : '';
-  const params = classId ? [classId] : [];
+  const { getActiveSchool } = await import('./schoolOperations');
+  const activeSchool = await getActiveSchool();
+  const activeSchoolId = activeSchool?.id || 1;
+
+  let whereClause = 'WHERE (c.school_id = ? OR c.school_id IS NULL)';
+  let params: any[] = [activeSchoolId];
+
+  if (classId) {
+    whereClause = 'WHERE a.class_id = ?';
+    params = [classId];
+  }
 
   const query = `
     SELECT 
@@ -21,7 +30,7 @@ export const getAssignments = async (classId?: number): Promise<Assignment[]> =>
       SUM(CASE WHEN ast.status = 'yapilmadi' THEN 1 ELSE 0 END) as missing_count,
       SUM(CASE WHEN ast.status = 'bekliyor' AND ast.is_exempt = 0 THEN 1 ELSE 0 END) as pending_count
     FROM assignments a
-    LEFT JOIN classes c ON c.id = a.class_id
+    INNER JOIN classes c ON c.id = a.class_id
     LEFT JOIN assignment_students ast ON ast.assignment_id = a.id
     ${whereClause}
     GROUP BY a.id

@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { getDB, closeDatabase, initDatabase } from '../database/db';
 
 export interface DatabaseStats {
+  schoolCount: number;
   classCount: number;
   studentCount: number;
   assignmentCount: number;
@@ -51,6 +52,7 @@ const getTimestampString = (): string => {
 export const getDatabaseStats = async (): Promise<DatabaseStats> => {
   try {
     const db = await getDB();
+    const schoolRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM schools');
     const classRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM classes');
     const studentRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM students');
     const assignmentRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM assignments');
@@ -62,6 +64,7 @@ export const getDatabaseStats = async (): Promise<DatabaseStats> => {
     const quickNoteRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM quick_notes');
 
     return {
+      schoolCount: schoolRow?.count || 0,
       classCount: classRow?.count || 0,
       studentCount: studentRow?.count || 0,
       assignmentCount: assignmentRow?.count || 0,
@@ -73,6 +76,7 @@ export const getDatabaseStats = async (): Promise<DatabaseStats> => {
   } catch (error) {
     console.error('getDatabaseStats error:', error);
     return {
+      schoolCount: 0,
       classCount: 0,
       studentCount: 0,
       assignmentCount: 0,

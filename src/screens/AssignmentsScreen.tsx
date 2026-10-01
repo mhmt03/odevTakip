@@ -7,16 +7,20 @@ import {
   TouchableOpacity,
   RefreshControl,
   ScrollView,
-  Alert,
+  Modal,
+  TextInput,
+  Platform,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Colors } from '../theme/colors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
+import { Input } from '../components/Input';
 import { EmptyState } from '../components/EmptyState';
-import { getAssignments, deleteAssignment } from '../database/operations/assignmentOperations';
+import { getAssignments, deleteAssignment, updateAssignment } from '../database/operations/assignmentOperations';
 import { getClasses } from '../database/operations/classOperations';
 import { formatDateToTR } from '../utils/dateUtils';
 import { Assignment, ClassItem } from '../types';
@@ -51,6 +55,49 @@ export const AssignmentsScreen: React.FC = () => {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
+  };
+
+  // Edit Modal State
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editAssignedDate, setEditAssignedDate] = useState<Date>(new Date());
+  const [editDueDate, setEditDueDate] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState<'assigned' | 'due' | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const handleEdit = (item: Assignment) => {
+    setEditingAssignment(item);
+    setEditTitle(item.title);
+    setEditDescription(item.description || '');
+    setEditAssignedDate(item.assigned_date ? new Date(item.assigned_date) : new Date());
+    setEditDueDate(item.due_date ? new Date(item.due_date) : new Date());
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingAssignment) return;
+    if (!editTitle.trim()) {
+      Alert.alert('Uyarı', 'Lütfen ödev konusunu boş bırakmayınız.');
+      return;
+    }
+    try {
+      setSavingEdit(true);
+      const assignedDateStr = editAssignedDate.toISOString().split('T')[0];
+      const dueDateStr = editDueDate.toISOString().split('T')[0];
+      await updateAssignment(
+        editingAssignment.id,
+        editTitle.trim(),
+        editDescription.trim(),
+        assignedDateStr,
+        dueDateStr
+      );
+      setEditingAssignment(null);
+      loadData();
+    } catch (e) {
+      Alert.alert('Hata', 'Ödev güncellenirken bir hata oluştu.');
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const handleDelete = (item: Assignment) => {
@@ -157,12 +204,20 @@ export const AssignmentsScreen: React.FC = () => {
                 <View style={styles.classBadge}>
                   <Text style={styles.classBadgeText}>{item.class_name || 'Şube'}</Text>
                 </View>
-                <TouchableOpacity
-                  onPress={() => handleDelete(item)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="trash-outline" size={18} color={Colors.danger} />
-                </TouchableOpacity>
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity
+                    onPress={() => handleEdit(item)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="pencil-outline" size={18} color={Colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleDelete(item)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <Text style={styles.title}>{item.title}</Text>
@@ -208,6 +263,103 @@ export const AssignmentsScreen: React.FC = () => {
           </TouchableOpacity>
         )}
       />
+
+      {/* Edit Modal */}
+      <Modal
+        visible={!!editingAssignment}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditingAssignment(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Ödevi Düzenle</Text>
+              <TouchableOpacity onPress={() => setEditingAssignment(null)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={styles.modalBody}>
+              <Input
+                label="Ödev Konusu *"
+                value={editTitle}
+                onChangeText={setEditTitle}
+                placeholder="Ödev başlığı / konusu"
+              />
+
+              <Input
+                label="Açıklama / Sayfalar"
+                value={editDescription}
+                onChangeText={setEditDescription}
+                placeholder="Örn: Ders kitabı sayfa 45-48"
+                multiline
+                numberOfLines={3}
+                style={{ minHeight: 70 }}
+              />
+
+              <View style={styles.datesRowModal}>
+                <View style={styles.dateColModal}>
+                  <Text style={styles.inputLabelModal}>Verilme Tarihi</Text>
+                  <TouchableOpacity
+                    style={styles.datePickerBtnModal}
+                    onPress={() => setShowDatePicker('assigned')}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color={Colors.primary} />
+                    <Text style={styles.datePickerTextModal}>
+                      {formatDateToTR(editAssignedDate.toISOString().split('T')[0])}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.dateColModal}>
+                  <Text style={styles.inputLabelModal}>Teslim Tarihi</Text>
+                  <TouchableOpacity
+                    style={styles.datePickerBtnModal}
+                    onPress={() => setShowDatePicker('due')}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color={Colors.danger} />
+                    <Text style={styles.datePickerTextModal}>
+                      {formatDateToTR(editDueDate.toISOString().split('T')[0])}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {showDatePicker && (
+                <DateTimePicker
+                  value={showDatePicker === 'assigned' ? editAssignedDate : editDueDate}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={(event, selectedDate) => {
+                    const currentPicker = showDatePicker;
+                    setShowDatePicker(null);
+                    if (selectedDate) {
+                      if (currentPicker === 'assigned') setEditAssignedDate(selectedDate);
+                      else setEditDueDate(selectedDate);
+                    }
+                  }}
+                />
+              )}
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <Button
+                title="İptal"
+                variant="outline"
+                onPress={() => setEditingAssignment(null)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title="Kaydet"
+                loading={savingEdit}
+                onPress={handleSaveEdit}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -344,5 +496,76 @@ const styles = StyleSheet.create({
   },
   chevronWrap: {
     marginLeft: 'auto',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: Colors.card,
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  modalBody: {
+    marginBottom: 16,
+  },
+  datesRowModal: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  dateColModal: {
+    flex: 1,
+  },
+  inputLabelModal: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  datePickerBtnModal: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 42,
+    gap: 6,
+  },
+  datePickerTextModal: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 10,
   },
 });

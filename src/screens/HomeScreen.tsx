@@ -90,6 +90,7 @@ export const HomeScreen: React.FC = () => {
     try {
       const updated = await setActiveSchool(schoolId);
       setActiveSchoolState(updated);
+      await reloadSchoolTheme();
       setSchoolModalVisible(false);
       await loadData();
     } catch (e) {
