@@ -205,6 +205,9 @@ export const getWeeklySchedule = async (): Promise<ScheduleItem[]> => {
       days.day_of_week,
       s.class_id,
       c.name as class_name,
+      c.school_id,
+      sch.name as school_name,
+      sch.color as school_color,
       s.course_id,
       cr.name as course_name,
       cr.code as course_code,
@@ -218,6 +221,7 @@ export const getWeeklySchedule = async (): Promise<ScheduleItem[]> => {
     LEFT JOIN day_slot_times dst ON dst.slot_id = ls.id AND dst.day_of_week = days.day_of_week
     LEFT JOIN schedules s ON s.slot_id = ls.id AND s.day_of_week = days.day_of_week
     LEFT JOIN classes c ON c.id = s.class_id AND (c.school_id = ? OR c.school_id IS NULL)
+    LEFT JOIN schools sch ON sch.id = c.school_id
     LEFT JOIN courses cr ON cr.id = s.course_id
     ORDER BY days.day_of_week ASC, ls.slot_number ASC;
   `;
@@ -226,6 +230,9 @@ export const getWeeklySchedule = async (): Promise<ScheduleItem[]> => {
     ...r,
     class_id: r.class_name ? r.class_id : null,
     class_name: r.class_name ? r.class_name : null,
+    school_id: r.class_name ? (r.school_id ?? activeSchool?.id ?? null) : null,
+    school_name: r.class_name ? (r.school_name ?? activeSchool?.name ?? null) : null,
+    school_color: r.class_name ? (r.school_color ?? activeSchool?.color ?? null) : null,
     course_id: r.class_name ? r.course_id : null,
     course_name: r.class_name ? r.course_name : null,
     course_code: r.class_name ? r.course_code : null,
@@ -235,11 +242,62 @@ export const getWeeklySchedule = async (): Promise<ScheduleItem[]> => {
   }));
 };
 
-export const getScheduleByDay = async (dayOfWeek: number): Promise<ScheduleItem[]> => {
+export const getScheduleByDay = async (
+  dayOfWeek: number,
+  schoolFilter?: number | 'all'
+): Promise<ScheduleItem[]> => {
   const db = await getDB();
   const { getActiveSchool } = await import('./schoolOperations');
   const activeSchool = await getActiveSchool();
   const activeSchoolId = activeSchool?.id || 1;
+
+  if (schoolFilter === 'all') {
+    const query = `
+      SELECT 
+        ls.id as slot_id,
+        ls.slot_number,
+        ls.slot_name,
+        COALESCE(dst.start_time, ls.start_time) as start_time,
+        COALESCE(dst.end_time, ls.end_time) as end_time,
+        CASE WHEN dst.id IS NOT NULL THEN 1 ELSE 0 END as is_custom_time,
+        s.id,
+        ? as day_of_week,
+        s.class_id,
+        c.name as class_name,
+        c.school_id,
+        sch.name as school_name,
+        sch.color as school_color,
+        s.course_id,
+        cr.name as course_name,
+        cr.code as course_code,
+        cr.color as course_color,
+        s.classroom
+      FROM lesson_slots ls
+      LEFT JOIN day_slot_times dst ON dst.slot_id = ls.id AND dst.day_of_week = ?
+      LEFT JOIN schedules s ON s.slot_id = ls.id AND s.day_of_week = ?
+      LEFT JOIN classes c ON c.id = s.class_id
+      LEFT JOIN schools sch ON sch.id = c.school_id
+      LEFT JOIN courses cr ON cr.id = s.course_id
+      ORDER BY ls.slot_number ASC;
+    `;
+    const rows = await db.getAllAsync<any>(query, dayOfWeek, dayOfWeek, dayOfWeek);
+    return rows.map((r) => ({
+      ...r,
+      class_id: r.class_name ? r.class_id : null,
+      class_name: r.class_name ? r.class_name : null,
+      school_id: r.class_name ? (r.school_id ?? activeSchool?.id ?? null) : null,
+      school_name: r.class_name ? (r.school_name ?? activeSchool?.name ?? null) : null,
+      school_color: r.class_name ? (r.school_color ?? activeSchool?.color ?? null) : null,
+      course_id: r.class_name ? r.course_id : null,
+      course_name: r.class_name ? r.course_name : null,
+      course_code: r.class_name ? r.course_code : null,
+      course_color: r.class_name ? r.course_color : null,
+      classroom: r.class_name ? r.classroom : null,
+      is_custom_time: Boolean(r.is_custom_time),
+    }));
+  }
+
+  const targetSchoolId = typeof schoolFilter === 'number' ? schoolFilter : activeSchoolId;
 
   const query = `
     SELECT 
@@ -253,6 +311,9 @@ export const getScheduleByDay = async (dayOfWeek: number): Promise<ScheduleItem[
       ? as day_of_week,
       s.class_id,
       c.name as class_name,
+      c.school_id,
+      sch.name as school_name,
+      sch.color as school_color,
       s.course_id,
       cr.name as course_name,
       cr.code as course_code,
@@ -262,15 +323,19 @@ export const getScheduleByDay = async (dayOfWeek: number): Promise<ScheduleItem[
     LEFT JOIN day_slot_times dst ON dst.slot_id = ls.id AND dst.day_of_week = ?
     LEFT JOIN schedules s ON s.slot_id = ls.id AND s.day_of_week = ?
     LEFT JOIN classes c ON c.id = s.class_id AND (c.school_id = ? OR c.school_id IS NULL)
+    LEFT JOIN schools sch ON sch.id = c.school_id
     LEFT JOIN courses cr ON cr.id = s.course_id
     ORDER BY ls.slot_number ASC;
   `;
-  const rows = await db.getAllAsync<any>(query, dayOfWeek, dayOfWeek, dayOfWeek, activeSchoolId);
+  const rows = await db.getAllAsync<any>(query, dayOfWeek, dayOfWeek, dayOfWeek, targetSchoolId);
   return rows.map((r) => ({
     ...r,
     // If the matched class doesn't belong to active school, clear class/course info for this slot
     class_id: r.class_name ? r.class_id : null,
     class_name: r.class_name ? r.class_name : null,
+    school_id: r.class_name ? (r.school_id ?? targetSchoolId) : null,
+    school_name: r.class_name ? (r.school_name ?? activeSchool?.name ?? null) : null,
+    school_color: r.class_name ? (r.school_color ?? activeSchool?.color ?? null) : null,
     course_id: r.class_name ? r.course_id : null,
     course_name: r.class_name ? r.course_name : null,
     course_code: r.class_name ? r.course_code : null,
@@ -643,5 +708,136 @@ export const setSchedulePhotoUri = async (uri: string | null): Promise<void> => 
   } else {
     await db.runAsync("DELETE FROM app_settings WHERE key = 'schedule_photo_uri'");
   }
+};
+
+export const getShowAllSchoolsSetting = async (): Promise<boolean> => {
+  try {
+    const db = await getDB();
+    const row = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'show_all_schools_schedule'"
+    );
+    return row?.value === '1';
+  } catch {
+    return false;
+  }
+};
+
+export const setShowAllSchoolsSetting = async (val: boolean): Promise<void> => {
+  try {
+    const db = await getDB();
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('show_all_schools_schedule', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      val ? '1' : '0'
+    );
+  } catch (e) {
+    console.warn('Error saving show_all_schools_schedule setting:', e);
+  }
+};
+
+/**
+ * Farklı okullara ait ders programlarını birleştirir ve aynı saate denk gelen
+ * dersleri tespit eder. Çakışma durumunda:
+ * - Sadece tek bir okulun kartı gösterilir (aktif okul öncelikli).
+ * - O kartta 'has_conflict: true' ve çakışan diğer okul/şube bilgisi yer alır.
+ */
+export const mergeAndDetectConflicts = (
+  lessons: ScheduleItem[],
+  activeSchoolId?: number | null
+): ScheduleItem[] => {
+  if (lessons.length <= 1) return lessons;
+
+  const doTimesOverlap = (itemA: ScheduleItem, itemB: ScheduleItem): boolean => {
+    // 1. Aynı slot_id ise
+    if (itemA.slot_id === itemB.slot_id) return true;
+
+    // 2. Aynı slot_number ise
+    if (
+      itemA.slot_number !== undefined &&
+      itemB.slot_number !== undefined &&
+      itemA.slot_number === itemB.slot_number
+    ) {
+      return true;
+    }
+
+    // 3. Saat aralıkları örtüşüyor mu?
+    if (itemA.start_time && itemA.end_time && itemB.start_time && itemB.end_time) {
+      const aStart = itemA.start_time.trim();
+      const aEnd = itemA.end_time.trim();
+      const bStart = itemB.start_time.trim();
+      const bEnd = itemB.end_time.trim();
+
+      if (aStart === bStart) return true;
+      return aStart < bEnd && aEnd > bStart;
+    }
+
+    return false;
+  };
+
+  const result: ScheduleItem[] = [];
+  const processedIndices = new Set<number>();
+
+  for (let i = 0; i < lessons.length; i++) {
+    if (processedIndices.has(i)) continue;
+
+    const currentGroup: ScheduleItem[] = [lessons[i]];
+    processedIndices.add(i);
+
+    for (let j = i + 1; j < lessons.length; j++) {
+      if (processedIndices.has(j)) continue;
+
+      const other = lessons[j];
+      const schoolA = currentGroup[0].school_id ?? -1;
+      const schoolB = other.school_id ?? -1;
+
+      // Farklı okul olup çakışanlar
+      const isDiffSchool = schoolA !== schoolB;
+
+      if (isDiffSchool && doTimesOverlap(currentGroup[0], other)) {
+        currentGroup.push(other);
+        processedIndices.add(j);
+      }
+    }
+
+    if (currentGroup.length === 1) {
+      result.push({ ...currentGroup[0] });
+    } else {
+      // Çakışma var: aktif okulu öncelikli seç
+      let primaryIndex = currentGroup.findIndex(
+        (item) => activeSchoolId && item.school_id === activeSchoolId
+      );
+      if (primaryIndex === -1) {
+        primaryIndex = 0;
+      }
+
+      const primary: ScheduleItem = { ...currentGroup[primaryIndex] };
+      const conflicts = currentGroup.filter((_, idx) => idx !== primaryIndex);
+
+      primary.has_conflict = true;
+      primary.conflict_school_name = conflicts
+        .map((c) => c.school_name || 'Diğer Okul')
+        .join(', ');
+      primary.conflict_class_name = conflicts
+        .map((c) => c.class_name || '-')
+        .join(', ');
+      primary.conflict_course_name = conflicts
+        .map((c) => c.course_name || '-')
+        .join(', ');
+      primary.conflict_time = conflicts
+        .map((c) => (c.start_time && c.end_time ? `${c.start_time} - ${c.end_time}` : ''))
+        .filter(Boolean)
+        .join(', ');
+
+      result.push(primary);
+    }
+  }
+
+  // Başlangıç saatine veya slot sırasına göre sırala
+  return result.sort((a, b) => {
+    if (a.start_time && b.start_time) {
+      const cmp = a.start_time.localeCompare(b.start_time);
+      if (cmp !== 0) return cmp;
+    }
+    return (a.slot_number || 0) - (b.slot_number || 0);
+  });
 };
 

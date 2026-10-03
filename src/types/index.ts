@@ -111,6 +111,14 @@ export interface ScheduleItem {
   is_custom_time?: boolean;
   class_id?: number | null;
   class_name?: string | null;
+  school_id?: number | null;
+  school_name?: string | null;
+  school_color?: string | null;
+  has_conflict?: boolean;
+  conflict_school_name?: string | null;
+  conflict_class_name?: string | null;
+  conflict_course_name?: string | null;
+  conflict_time?: string | null;
   course_id?: number | null;
   course_name?: string | null;
   course_code?: string | null;

@@ -13,6 +13,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -28,6 +29,9 @@ import {
   getActiveAndTodayLessons,
   ActiveLessonInfo,
   getScheduleByDay,
+  mergeAndDetectConflicts,
+  getShowAllSchoolsSetting,
+  setShowAllSchoolsSetting,
 } from '../database/operations/scheduleOperations';
 import { getClasses } from '../database/operations/classOperations';
 import { getAssignments } from '../database/operations/assignmentOperations';
@@ -74,6 +78,7 @@ export const HomeScreen: React.FC = () => {
   const todayIndex = getDayOfWeekIndex();
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
   const [displayedLessons, setDisplayedLessons] = useState<ScheduleItem[]>([]);
+  const [showAllSchoolsSchedule, setShowAllSchoolsSchedule] = useState(false);
 
   const loadSchools = async () => {
     try {
@@ -82,9 +87,17 @@ export const HomeScreen: React.FC = () => {
       const list = await getSchools();
       setSchoolsList(list);
       await reloadSchoolTheme();
+      const savedSetting = await getShowAllSchoolsSetting();
+      setShowAllSchoolsSchedule(savedSetting);
     } catch (e) {
       console.warn('Error loading schools:', e);
     }
+  };
+
+  const handleToggleShowAllSchools = async (val: boolean) => {
+    setShowAllSchoolsSchedule(val);
+    await setShowAllSchoolsSetting(val);
+    await loadDaySchedule(selectedDay, val);
   };
 
   const handleSelectSchool = async (schoolId: number) => {
@@ -227,10 +240,16 @@ export const HomeScreen: React.FC = () => {
     }
   }, [pdfViewerModalVisible, yearlyPlanPdf]);
 
-  const loadDaySchedule = async (day: number) => {
+  const loadDaySchedule = async (day: number, overrideShowAll?: boolean) => {
     try {
-      const items = await getScheduleByDay(day);
-      setDisplayedLessons(items.filter((item) => item.class_id || item.course_id));
+      const showAll = overrideShowAll !== undefined ? overrideShowAll : showAllSchoolsSchedule;
+      const items = await getScheduleByDay(day, showAll ? 'all' : undefined);
+      const valid = items.filter((item) => item.class_id || item.course_id);
+      if (showAll) {
+        setDisplayedLessons(mergeAndDetectConflicts(valid, activeSchool?.id));
+      } else {
+        setDisplayedLessons(valid);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -241,7 +260,9 @@ export const HomeScreen: React.FC = () => {
       setCurrentTime(getCurrentTimeString());
       const info = await getActiveAndTodayLessons();
       setLessonInfo(info);
-      await loadDaySchedule(selectedDay);
+      const savedSetting = await getShowAllSchoolsSetting();
+      setShowAllSchoolsSchedule(savedSetting);
+      await loadDaySchedule(selectedDay, savedSetting);
 
       if (info.currentLesson && info.currentLesson.class_id) {
         const topic = await getCurrentTopicForClass(
@@ -654,6 +675,46 @@ export const HomeScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
+      {/* TÜM PROGRAMLARI GÖSTER SWITCH ROW */}
+      <View style={styles.allProgramsSwitchRow}>
+        <View style={styles.allProgramsSwitchLeft}>
+          <Ionicons
+            name={showAllSchoolsSchedule ? 'layers' : 'layers-outline'}
+            size={16}
+            color={showAllSchoolsSchedule ? (activeSchool?.color || Colors.primary) : Colors.textSecondary}
+          />
+          <Text style={styles.allProgramsSwitchLabel}>Tüm programları göster</Text>
+          {showAllSchoolsSchedule && schoolsList.length > 1 && (
+            <View
+              style={[
+                styles.schoolsCountBadge,
+                { backgroundColor: (activeSchool?.color || Colors.primary) + '18' },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.schoolsCountBadgeText,
+                  { color: activeSchool?.color || Colors.primary },
+                ]}
+              >
+                {schoolsList.length} Okul
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <Switch
+          value={showAllSchoolsSchedule}
+          onValueChange={handleToggleShowAllSchools}
+          trackColor={{
+            false: '#E2E8F0',
+            true: (activeSchool?.color || Colors.primary) + '50',
+          }}
+          thumbColor={showAllSchoolsSchedule ? (activeSchool?.color || Colors.primary) : '#FFFFFF'}
+          style={Platform.OS === 'ios' ? { transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] } : undefined}
+        />
+      </View>
+
       {displayedLessons.length === 0 ? (
         <Card style={styles.emptyTodayCard}>
           <Ionicons name="calendar-outline" size={32} color={Colors.textMuted} />
@@ -674,11 +735,34 @@ export const HomeScreen: React.FC = () => {
             lessonInfo.currentLesson &&
             lessonInfo.currentLesson.slot_id === item.slot_id;
 
+          const schoolColor = item.school_color || activeSchool?.color || Colors.primary;
+
+          // Arkaplan rengi: Tüm programlar gösteriliyorsa ilgili okulun rengiyle hafif tonlu
+          const cardBg = showAllSchoolsSchedule && item.school_color
+            ? `${item.school_color}14`
+            : isCurrent
+            ? '#F8FAFC'
+            : Colors.card;
+
+          const cardBorder = isCurrent
+            ? Colors.primary
+            : showAllSchoolsSchedule && item.school_color
+            ? `${item.school_color}40`
+            : undefined;
+
           return (
             <Card
-              key={`${item.slot_id}-${index}`}
-              style={[styles.timelineCard, isCurrent ? styles.timelineActive : null]}
-              highlightBorder={isCurrent ? Colors.primary : undefined}
+              key={`${item.slot_id}-${item.id || index}`}
+              style={[
+                styles.timelineCard,
+                { backgroundColor: cardBg },
+                showAllSchoolsSchedule && item.school_color
+                  ? { borderLeftWidth: 4, borderLeftColor: item.school_color }
+                  : isCurrent
+                  ? styles.timelineActive
+                  : null,
+              ]}
+              highlightBorder={cardBorder}
             >
               <View style={styles.timelineRow}>
                 {/* 1. DERS NUMARASI / SAATİ (Dokununca deftere yazılacak metin popup'ı) */}
@@ -691,16 +775,82 @@ export const HomeScreen: React.FC = () => {
                   <Text style={styles.timeRange}>
                     {item.start_time} - {item.end_time}
                   </Text>
-                  <View style={styles.defterPill}>
-                    <Ionicons name="create-outline" size={11} color={Colors.primary} />
-                    <Text style={styles.defterPillText}>Defter</Text>
+                  <View
+                    style={[
+                      styles.defterPill,
+                      showAllSchoolsSchedule && item.school_color
+                        ? { backgroundColor: `${item.school_color}18` }
+                        : null,
+                    ]}
+                  >
+                    <Ionicons
+                      name="create-outline"
+                      size={11}
+                      color={showAllSchoolsSchedule && item.school_color ? item.school_color : Colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.defterPillText,
+                        showAllSchoolsSchedule && item.school_color ? { color: item.school_color } : null,
+                      ]}
+                    >
+                      Defter
+                    </Text>
                   </View>
                 </TouchableOpacity>
 
                 <View style={styles.lessonDivider} />
 
-                {/* 2. ORTA BÖLÜM: ŞUBE ADI (Dokununca şube öğrencilerine gider) & DERS */}
+                {/* 2. ORTA BÖLÜM: OKUL ROZETİ, ÇAKIŞMA UYARISI, ŞUBE ADI & DERS */}
                 <View style={styles.lessonContent}>
+                  {showAllSchoolsSchedule && (
+                    <View style={styles.cardMetaRow}>
+                      {item.school_name && (
+                        <View
+                          style={[
+                            styles.schoolPill,
+                            {
+                              backgroundColor: `${schoolColor}18`,
+                              borderColor: `${schoolColor}35`,
+                            },
+                          ]}
+                        >
+                          <View style={[styles.schoolPillDot, { backgroundColor: schoolColor }]} />
+                          <Text
+                            style={[styles.schoolPillText, { color: schoolColor }]}
+                            numberOfLines={1}
+                          >
+                            {item.school_name}
+                          </Text>
+                        </View>
+                      )}
+
+                      {item.has_conflict && (
+                        <TouchableOpacity
+                          style={styles.conflictWarningBadge}
+                          onPress={() => {
+                            Alert.alert(
+                              'Ders Saati Çakışması',
+                              `Bu saatte başka bir okulda da dersiniz bulunmaktadır:\n\n` +
+                              `• Görüntülenen: ${item.school_name || 'Seçili Okul'} - ${item.class_name || ''} (${item.course_name || ''})\n` +
+                              `• Çakışan Okul: ${item.conflict_school_name || 'Diğer Okul'}\n` +
+                              `• Çakışan Şube: ${item.conflict_class_name || '-'}\n` +
+                              `• Çakışan Ders: ${item.conflict_course_name || '-'}\n` +
+                              `• Saat: ${item.conflict_time || item.start_time || ''}`,
+                              [{ text: 'Tamam' }]
+                            );
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="warning" size={12} color="#D97706" />
+                          <Text style={styles.conflictWarningText} numberOfLines={1}>
+                            Çakışma: {item.conflict_school_name}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+
                   <View style={styles.lessonHeaderRow}>
                     <TouchableOpacity
                       onPress={() => {
@@ -715,7 +865,11 @@ export const HomeScreen: React.FC = () => {
                       style={styles.classNameTouch}
                     >
                       <Text style={styles.lessonClass}>{item.class_name || '-'}</Text>
-                      <Ionicons name="people-circle-outline" size={16} color={Colors.primary} />
+                      <Ionicons
+                        name="people-circle-outline"
+                        size={16}
+                        color={showAllSchoolsSchedule && item.school_color ? item.school_color : Colors.primary}
+                      />
                     </TouchableOpacity>
 
                     {isCurrent && (
@@ -737,10 +891,28 @@ export const HomeScreen: React.FC = () => {
                   onPress={() => handleOpenYearlyPlanModal(item)}
                   activeOpacity={0.7}
                 >
-                  <View style={styles.planBtnIconWrap}>
-                    <Ionicons name="book-outline" size={15} color={Colors.primary} />
+                  <View
+                    style={[
+                      styles.planBtnIconWrap,
+                      showAllSchoolsSchedule && item.school_color
+                        ? { backgroundColor: `${item.school_color}18` }
+                        : null,
+                    ]}
+                  >
+                    <Ionicons
+                      name="book-outline"
+                      size={15}
+                      color={showAllSchoolsSchedule && item.school_color ? item.school_color : Colors.primary}
+                    />
                   </View>
-                  <Text style={styles.planCardBtnText}>Plan</Text>
+                  <Text
+                    style={[
+                      styles.planCardBtnText,
+                      showAllSchoolsSchedule && item.school_color ? { color: item.school_color } : null,
+                    ]}
+                  >
+                    Plan
+                  </Text>
                 </TouchableOpacity>
               </View>
             </Card>
@@ -2147,6 +2319,81 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: Colors.primary,
+  },
+  allProgramsSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.card,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.small,
+  },
+  allProgramsSwitchLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  allProgramsSwitchLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  schoolsCountBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 2,
+  },
+  schoolsCountBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  cardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
+  },
+  schoolPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  schoolPillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  schoolPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  conflictWarningBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    borderColor: '#F59E0B',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  conflictWarningText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B45309',
   },
   timelineCard: {
     paddingVertical: 12,
