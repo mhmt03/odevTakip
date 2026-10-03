@@ -18,6 +18,7 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { EmptyState } from '../components/EmptyState';
+import { PdfViewerModal } from '../components/PdfViewerModal';
 import {
   getYearlyPlans,
   createYearlyPlan,
@@ -83,6 +84,7 @@ export const YearlyPlanScreen: React.FC = () => {
   // PDF Document State
   const [pdfDoc, setPdfDoc] = useState<YearlyPlanDocument | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
+  const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
 
   const loadData = async () => {
     try {
@@ -271,17 +273,9 @@ export const YearlyPlanScreen: React.FC = () => {
     }
   };
 
-  const handleViewPdf = async () => {
+  const handleViewPdf = () => {
     if (!pdfDoc) return;
-    const activeCourse = courses.find((c) => c.id === selectedCourseId);
-    const courseTitle = activeCourse ? activeCourse.name : 'Ders';
-    const res = await viewYearlyPlanPdf(
-      pdfDoc.file_uri,
-      `${selectedGradeLevel}. Sınıf ${courseTitle} Yıllık Planı`
-    );
-    if (!res.success && res.error) {
-      Alert.alert('Hata', res.error);
-    }
+    setPdfViewerModalVisible(true);
   };
 
   const handleDeletePdf = () => {
@@ -848,6 +842,25 @@ export const YearlyPlanScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* PDF IN-APP VIEWER MODAL */}
+      <PdfViewerModal
+        visible={pdfViewerModalVisible}
+        onClose={() => setPdfViewerModalVisible(false)}
+        fileUri={pdfDoc?.file_uri || null}
+        fileName={pdfDoc?.file_name}
+        title={`${selectedGradeLevel}. Sınıf ${courses.find((c) => c.id === selectedCourseId)?.name || 'Ders'} Yıllık Planı`}
+        onShareOrExternal={() => {
+          if (pdfDoc) {
+            const activeCourse = courses.find((c) => c.id === selectedCourseId);
+            const courseTitle = activeCourse ? activeCourse.name : 'Ders';
+            viewYearlyPlanPdf(
+              pdfDoc.file_uri,
+              `${selectedGradeLevel}. Sınıf ${courseTitle} Yıllık Planı`
+            );
+          }
+        }}
+      />
     </View>
   );
 };

@@ -21,10 +21,10 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
-import { WebView } from 'react-native-webview';
 import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
 import { Badge } from '../components/Badge';
+import { PdfViewerModal } from '../components/PdfViewerModal';
 import {
   getActiveAndTodayLessons,
   ActiveLessonInfo,
@@ -212,33 +212,6 @@ export const HomeScreen: React.FC = () => {
   const [planDateEnd, setPlanDateEnd] = useState('');
   const [showPlanDatePicker, setShowPlanDatePicker] = useState<'start' | 'end' | null>(null);
   const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
-  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
-
-  useEffect(() => {
-    if (pdfViewerModalVisible && yearlyPlanPdf?.file_uri) {
-      let isMounted = true;
-      setPdfLoading(true);
-      FileSystem.readAsStringAsync(yearlyPlanPdf.file_uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      })
-        .then((b64) => {
-          if (isMounted) {
-            setPdfBase64(b64);
-            setPdfLoading(false);
-          }
-        })
-        .catch((err) => {
-          console.error('PDF Base64 read error:', err);
-          if (isMounted) setPdfLoading(false);
-        });
-      return () => {
-        isMounted = false;
-      };
-    } else {
-      setPdfBase64(null);
-    }
-  }, [pdfViewerModalVisible, yearlyPlanPdf]);
 
   const loadDaySchedule = async (day: number, overrideShowAll?: boolean) => {
     try {
@@ -1582,101 +1555,21 @@ export const HomeScreen: React.FC = () => {
       </Modal>
 
       {/* 3. PDF GÖRÜNTÜLEME MODALI */}
-      <Modal
+      <PdfViewerModal
         visible={pdfViewerModalVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setPdfViewerModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalContainer, { height: '85%' }]}>
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalClassTag}>PDF DOKÜMANI</Text>
-                <Text style={styles.modalTitle} numberOfLines={1}>
-                  {yearlyPlanPdf?.file_name || 'Yıllık Plan PDF'}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setPdfViewerModalVisible(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={22} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <View style={{ flex: 1, overflow: 'hidden', borderRadius: 12, backgroundColor: '#F8FAFC' }}>
-              {pdfLoading ? (
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                  <ActivityIndicator size="large" color={Colors.primary} />
-                  <Text style={{ marginTop: 12, fontSize: 14, color: Colors.textSecondary }}>
-                    PDF Yükleniyor...
-                  </Text>
-                </View>
-              ) : pdfBase64 ? (
-                <WebView
-                  originWhitelist={['*']}
-                  source={{
-                    html: `
-                      <!DOCTYPE html>
-                      <html>
-                        <head>
-                          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
-                          <style>
-                            body, html { margin: 0; padding: 0; height: 100%; background: #525659; }
-                            embed { width: 100%; height: 100%; }
-                          </style>
-                        </head>
-                        <body>
-                          <embed src="data:application/pdf;base64,${pdfBase64}" type="application/pdf" />
-                        </body>
-                      </html>
-                    `,
-                  }}
-                  style={{ flex: 1 }}
-                  startInLoadingState={true}
-                  renderLoading={() => (
-                    <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'center', alignItems: 'center' }}>
-                      <ActivityIndicator size="large" color={Colors.primary} />
-                    </View>
-                  )}
-                />
-              ) : (
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-                  <Ionicons name="alert-circle-outline" size={48} color={Colors.warning} />
-                  <Text style={{ fontSize: 14, color: Colors.textSecondary, marginTop: 12, textAlign: 'center' }}>
-                    PDF verisi okunamadı.
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity
-                style={[styles.pdfOpenBtn, { flex: 1, backgroundColor: Colors.secondary }]}
-                onPress={() => {
-                  if (yearlyPlanPdf) {
-                    viewYearlyPlanPdf(
-                      yearlyPlanPdf.file_uri,
-                      `${yearlyPlanMeta?.gradeLevel}. Sınıf ${yearlyPlanMeta?.courseName} Yıllık Planı`
-                    );
-                  }
-                }}
-              >
-                <Ionicons name="open-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.pdfOpenBtnText}>Dış Uygulama / Paylaş</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.planManageBtn, { paddingHorizontal: 16 }]}
-                onPress={() => setPdfViewerModalVisible(false)}
-              >
-                <Text style={styles.planManageBtnText}>Kapat</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setPdfViewerModalVisible(false)}
+        fileUri={yearlyPlanPdf?.file_uri || null}
+        fileName={yearlyPlanPdf?.file_name}
+        title={`${yearlyPlanMeta?.gradeLevel || ''}. Sınıf ${yearlyPlanMeta?.courseName || ''} Yıllık Planı`}
+        onShareOrExternal={() => {
+          if (yearlyPlanPdf) {
+            viewYearlyPlanPdf(
+              yearlyPlanPdf.file_uri,
+              `${yearlyPlanMeta?.gradeLevel}. Sınıf ${yearlyPlanMeta?.courseName} Yıllık Planı`
+            );
+          }
+        }}
+      />
 
       {/* 4. OKUL DEĞİŞTİRME & EKLEME POP-UP MODALI */}
       <Modal

@@ -138,3 +138,26 @@ export const removeYearlyPlanPdf = async (
     console.error('removeYearlyPlanPdf error:', e);
   }
 };
+
+export const getCachedPdfJs = async (): Promise<string | null> => {
+  try {
+    const dir = `${FileSystem.documentDirectory}pdfjs/`;
+    const jsPath = `${dir}pdf.min.js`;
+    const info = await FileSystem.getInfoAsync(jsPath);
+    if (info.exists) {
+      return await FileSystem.readAsStringAsync(jsPath);
+    }
+    // Arka planda bir defaya mahsus indir ve önbelleğe al
+    FileSystem.makeDirectoryAsync(dir, { intermediates: true })
+      .then(() =>
+        FileSystem.downloadAsync(
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+          jsPath
+        )
+      )
+      .catch((err) => console.warn('Background PDF.js download failed:', err));
+    return null;
+  } catch {
+    return null;
+  }
+};
