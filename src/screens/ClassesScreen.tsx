@@ -11,10 +11,11 @@ import {
   ScrollView,
   ActivityIndicator,
   TextInput,
+  Platform,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../theme/colors';
+import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -557,18 +558,15 @@ export const ClassesScreen: React.FC = () => {
         </View>
       </Modal>
 
-      {/* ── Global Student Search Modal ─────────────────────── */}
+      {/* ── Global Student Search Modal (Top Sheet) ─────────────────────── */}
       <Modal
         visible={searchModalVisible}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         onRequestClose={handleCloseSearch}
       >
         <View style={styles.searchModalOverlay}>
           <View style={styles.searchModalSheet}>
-            {/* Drag Handle */}
-            <View style={styles.sheetHandle} />
-
             {/* Header */}
             <View style={styles.searchModalHeader}>
               <View>
@@ -711,20 +709,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // ── Search Modal styles ──
+  // ── Search Modal styles (Top Popup) ──
   searchModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10, 18, 35, 0.55)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(10, 18, 35, 0.65)',
+    justifyContent: 'flex-start',
+    paddingTop: Platform.OS === 'ios' ? 44 : 24,
+    paddingHorizontal: 12,
   },
   searchModalSheet: {
     backgroundColor: Colors.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 10,
+    borderRadius: 20,
+    paddingTop: 16,
     paddingHorizontal: 16,
-    paddingBottom: 32,
-    maxHeight: '88%',
+    paddingBottom: 20,
+    maxHeight: '82%',
+    ...Shadows.large,
   },
   sheetHandle: {
     width: 40,

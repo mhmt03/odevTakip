@@ -143,6 +143,16 @@ export const bulkUpdateStudentPhotos = async (
   return updatedCount;
 };
 
+export const clearStudentPhotosByClass = async (classId: number): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync('UPDATE students SET photo_uri = NULL WHERE class_id = ?', classId);
+};
+
+export const clearAllStudentPhotos = async (): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync('UPDATE students SET photo_uri = NULL');
+};
+
 export const deleteStudent = async (id: number): Promise<void> => {
   const db = await getDB();
   await db.runAsync('DELETE FROM students WHERE id = ?', id);

@@ -14,6 +14,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
@@ -30,6 +31,8 @@ import {
   bulkCreateStudents,
   updateStudentPhoto,
   bulkUpdateStudentPhotos,
+  clearStudentPhotosByClass,
+  clearAllStudentPhotos,
   bulkDeleteStudents,
   bulkTransferStudents,
 } from '../database/operations/studentOperations';
@@ -79,6 +82,7 @@ export const ClassDetailScreen: React.FC = () => {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const { classId, className } = route.params;
+  const insets = useSafeAreaInsets();
 
   const [students, setStudents] = useState<Student[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,6 +112,16 @@ export const ClassDetailScreen: React.FC = () => {
   const [pdfExtractItems, setPdfExtractItems] = useState<PdfExtractedStudentPhoto[]>([]);
   const [savingPdfPhotos, setSavingPdfPhotos] = useState(false);
   const [pdfScope, setPdfScope] = useState<'class' | 'all'>('class');
+
+  // Single Student PDF Picker Modal state
+  const [singlePdfGridModalVisible, setSinglePdfGridModalVisible] = useState(false);
+  const [singlePdfGridPhotos, setSinglePdfGridPhotos] = useState<PdfExtractedStudentPhoto[]>([]);
+  const [singlePdfLoading, setSinglePdfLoading] = useState(false);
+
+  // Manual Student Picker for PDF match list
+  const [studentSelectModalVisible, setStudentSelectModalVisible] = useState(false);
+  const [studentSelectTargetPhotoIndex, setStudentSelectTargetPhotoIndex] = useState<number | null>(null);
+  const [studentSelectSearchQuery, setStudentSelectSearchQuery] = useState('');
 
   // Student Detail & Opinion Modal state
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -493,6 +507,51 @@ export const ClassDetailScreen: React.FC = () => {
     }
   };
 
+  const handlePickSinglePhotoFromPdf = async () => {
+    if (!photoTargetStudent) return;
+    setPhotoModalVisible(false);
+    try {
+      setSinglePdfLoading(true);
+      const res = await extractPhotosFromPdf(students);
+      if (!res.success) {
+        if (res.error && res.error !== 'Dosya seçilmedi.') {
+          Alert.alert('Hata', res.error);
+        }
+        return;
+      }
+      if (res.extractedPhotos.length === 0) {
+        Alert.alert('Bilgi', 'PDF içinde fotoğraf bulunamadı.');
+        return;
+      }
+      setSinglePdfGridPhotos(res.extractedPhotos);
+      setSinglePdfGridModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Hata', e?.message || 'PDF işlenirken bir hata oluştu.');
+    } finally {
+      setSinglePdfLoading(false);
+    }
+  };
+
+  const handleSelectPhotoFromPdfForStudent = async (photo: PdfExtractedStudentPhoto) => {
+    if (!photoTargetStudent) return;
+    try {
+      const permanentUri = await savePhotoPermanently(
+        photo.tempUri,
+        photoTargetStudent.student_number || photoTargetStudent.id
+      );
+      await updateStudentPhoto(photoTargetStudent.id, permanentUri);
+      if (detailStudent && detailStudent.id === photoTargetStudent.id) {
+        setDetailStudent({ ...detailStudent, photo_uri: permanentUri });
+      }
+      setSinglePdfGridModalVisible(false);
+      setSinglePdfGridPhotos([]);
+      loadStudents();
+      Alert.alert('Başarılı', `${photoTargetStudent.first_name} ${photoTargetStudent.last_name} için fotoğraf PDF'ten kaydedildi.`);
+    } catch (e) {
+      Alert.alert('Hata', 'Fotoğraf kaydedilemedi.');
+    }
+  };
+
   // --- BULK PHOTO PICKING & MATCHING ---
   const handleStartBulkPhoto = async () => {
     try {
@@ -544,7 +603,6 @@ export const ClassDetailScreen: React.FC = () => {
     }
   };
 
-  // --- PDF PHOTO EXTRACTION & MATCHING ---
   const handleStartPdfPhoto = () => {
     Alert.alert(
       'PDF\'ten Fotoğraf Aktar',
@@ -569,6 +627,52 @@ export const ClassDetailScreen: React.FC = () => {
     );
   };
 
+  const handleClearClassPhotos = () => {
+    Alert.alert(
+      'Sınıf Fotoğraflarını Sil',
+      `"${className}" sınıfındaki tüm öğrencilerin fotoğraflarını silmek istediğinize emin misiniz?`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Tümünü Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearStudentPhotosByClass(classId);
+              await loadStudents();
+              Alert.alert('Başarılı', `"${className}" sınıfındaki tüm öğrenci fotoğrafları silindi.`);
+            } catch (e) {
+              Alert.alert('Hata', 'Fotoğraflar silinirken bir hata oluştu.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearAllPhotos = () => {
+    Alert.alert(
+      'Tüm Fotoğrafları Sil',
+      'Sistemdeki TÜM sınıflara ait TÜM öğrenci fotoğraflarını silmek istediğinize emin misiniz? Bu işlem geri alınamaz.',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Tüm Sistemdeki Fotoğrafları Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearAllStudentPhotos();
+              await loadStudents();
+              Alert.alert('Başarılı', 'Sistemdeki tüm öğrenci fotoğrafları başarıyla temizlendi.');
+            } catch (e) {
+              Alert.alert('Hata', 'Fotoğraflar silinirken bir hata oluştu.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const runPdfExtraction = async (scope: 'class' | 'all') => {
     try {
       setPdfExtracting(true);
@@ -584,7 +688,8 @@ export const ClassDetailScreen: React.FC = () => {
           notes: s.notes,
           photo_uri: s.photo_uri,
           created_at: s.created_at,
-        }));
+          class_name: s.class_name,
+        } as any));
       }
       if (targetStudents.length === 0) {
         Alert.alert('Bilgi', 'Eşleştirilecek öğrenci bulunamadı.');
@@ -1474,7 +1579,8 @@ export const ClassDetailScreen: React.FC = () => {
             </View>
 
             {/* Action Items */}
-            <View style={styles.actionSheetContent}>
+            <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={true}>
+              <View style={styles.actionSheetContent}>
               {/* 1. Manuel Öğrenci Ekle */}
               <TouchableOpacity
                 style={styles.actionSheetItem}
@@ -1590,6 +1696,48 @@ export const ClassDetailScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
 
+              {/* 5b. Sınıf Fotoğraflarını Sil */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleClearClassPhotos(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#FEF2F2' }]}>
+                  <Ionicons name="trash" size={22} color="#EF4444" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={[styles.actionSheetItemTitle, { color: '#DC2626' }]}>Sınıf Fotoğraflarını Sil</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Bu sınıftaki tüm öğrencilerin fotoğraflarını topluca kaldırın.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 5c. Tüm Fotoğrafları Sil (Sistem) */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleClearAllPhotos(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#7F1D1D' }]}>
+                  <Ionicons name="trash-bin" size={22} color="#FFFFFF" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={[styles.actionSheetItemTitle, { color: '#991B1B' }]}>Tüm Fotoğrafları Sil (Tüm Okul)</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Tüm sınıflardaki öğrenci fotoğraflarını sistemden sıfırlayın.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
               {/* 6. Çoklu Seçim Modu */}
               <TouchableOpacity
                 style={styles.actionSheetItem}
@@ -1611,6 +1759,7 @@ export const ClassDetailScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
             </View>
+            </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -1710,6 +1859,14 @@ export const ClassDetailScreen: React.FC = () => {
               >
                 <Ionicons name="images" size={20} color={Colors.secondary} />
                 <Text style={styles.photoChoiceText}>Galeriden Seç</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.photoChoiceBtn}
+                onPress={handlePickSinglePhotoFromPdf}
+              >
+                <Ionicons name="document-text" size={20} color="#DC2626" />
+                <Text style={styles.photoChoiceText}>PDF'ten Fotoğraf Seç</Text>
               </TouchableOpacity>
 
               {photoTargetStudent?.photo_uri ? (
@@ -1913,8 +2070,23 @@ export const ClassDetailScreen: React.FC = () => {
         transparent={true}
         onRequestClose={() => setPdfPhotoModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+        <View style={[
+          styles.modalOverlay,
+          {
+            justifyContent: 'flex-start',
+            paddingTop: 0,
+            paddingBottom: 0,
+          },
+        ]}>
+          <View style={[
+            styles.modalContent,
+            {
+              flex: 1,
+              borderRadius: 0,
+              paddingTop: Math.max(16, insets.top + 8),
+              paddingBottom: Math.max(16, insets.bottom + 12),
+            },
+          ]}>
             <View style={styles.modalHeader}>
               <View style={styles.detailHeaderInfo}>
                 <Text style={styles.modalTitle}>PDF'ten Fotoğraf Yükle</Text>
@@ -1941,12 +2113,20 @@ export const ClassDetailScreen: React.FC = () => {
             <ScrollView style={styles.pdfMatchScroll} showsVerticalScrollIndicator={true}>
               {pdfExtractItems.map((item, idx) => {
                 const matched = item.matchedStudent;
+                const pdfDetectedStr = item.detectedNumber
+                  ? `PDF No: ${item.detectedNumber}`
+                  : item.detectedName
+                  ? `PDF Metin: ${item.detectedName}`
+                  : 'PDF\'ten numara okunamadı';
+
                 return (
                   <View key={idx} style={styles.pdfMatchRow}>
                     <Image source={{ uri: item.tempUri }} style={styles.pdfMatchThumb} />
                     <View style={styles.pdfMatchInfo}>
                       <View style={styles.pdfMatchBadgeRow}>
-                        <Text style={styles.pdfOrderText}>#{idx + 1}. Fotoğraf</Text>
+                        <Text style={styles.pdfOrderText}>
+                          #{idx + 1}. Fotoğraf {item.pageNumber ? `(Sayfa ${item.pageNumber})` : ''}
+                        </Text>
                         {matched ? (
                           <View style={styles.matchedBadgeSuccess}>
                             <Ionicons name="checkmark-circle" size={12} color="#047857" />
@@ -1959,15 +2139,69 @@ export const ClassDetailScreen: React.FC = () => {
                         )}
                       </View>
 
+                      {/* PDF Detected Info */}
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.primary, marginTop: 2 }}>
+                        {pdfDetectedStr}
+                      </Text>
+
+                      {/* System Matched Student Info */}
                       {matched ? (
-                        <Text style={styles.pdfMatchedStudentName}>
-                          {matched.student_number} - {matched.first_name} {matched.last_name}
-                        </Text>
+                        <View style={{ marginTop: 2 }}>
+                          <Text style={styles.pdfMatchedStudentName}>
+                            Sistem: {matched.first_name} {matched.last_name}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 1 }}>
+                            Öğrenci No: {matched.student_number || '-'} • Şube: {(matched as any).class_name || className}
+                          </Text>
+                        </View>
                       ) : (
                         <Text style={styles.pdfUnmatchedText}>
-                          Sıradaki öğrenci bulunamadı
+                          Sistemde bu numarayla öğrenci bulunamadı
                         </Text>
                       )}
+
+                      {/* Row Action Buttons */}
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                        {matched ? (
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              backgroundColor: '#FEE2E2',
+                              paddingHorizontal: 8,
+                              paddingVertical: 4,
+                              borderRadius: 6,
+                            }}
+                            onPress={() => handleUpdatePdfMatchStudent(idx, null)}
+                          >
+                            <Ionicons name="close-circle-outline" size={13} color="#DC2626" />
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626' }}>Hatalı / Kaldır</Text>
+                          </TouchableOpacity>
+                        ) : null}
+
+                        <TouchableOpacity
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            backgroundColor: Colors.primaryLight,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                          }}
+                          onPress={() => {
+                            setStudentSelectTargetPhotoIndex(idx);
+                            setStudentSelectSearchQuery('');
+                            setStudentSelectModalVisible(true);
+                          }}
+                        >
+                          <Ionicons name="person-add-outline" size={13} color={Colors.primary} />
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.primary }}>
+                            {matched ? 'Öğrenci Değiştir' : 'Öğrenci Seç'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 );
@@ -1991,6 +2225,151 @@ export const ClassDetailScreen: React.FC = () => {
                 }
                 style={{ flex: 1.5 }}
                 onPress={handleConfirmSavePdfPhotos}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Manual Student Picker Modal for PDF match row */}
+      <Modal
+        visible={studentSelectModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setStudentSelectModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '85%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Fotoğrafa Öğrenci Atayın</Text>
+                <Text style={styles.modalSubtitle}>
+                  {studentSelectTargetPhotoIndex !== null ? `#${studentSelectTargetPhotoIndex + 1}. Fotoğraf için listeden öğrenci seçin:` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setStudentSelectModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ marginVertical: 8 }}>
+              <Input
+                placeholder="Öğrenci adı veya numarası ara..."
+                value={studentSelectSearchQuery}
+                onChangeText={setStudentSelectSearchQuery}
+              />
+            </View>
+
+            <ScrollView style={{ maxHeight: 340 }}>
+              {students
+                .filter((s) => {
+                  if (!studentSelectSearchQuery.trim()) return true;
+                  const q = studentSelectSearchQuery.toLowerCase();
+                  return (
+                    (s.first_name + ' ' + s.last_name).toLowerCase().includes(q) ||
+                    (s.student_number || '').toLowerCase().includes(q)
+                  );
+                })
+                .map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: 10,
+                      paddingHorizontal: 8,
+                      borderBottomWidth: 1,
+                      borderBottomColor: Colors.borderLight,
+                      justifyContent: 'space-between',
+                    }}
+                    onPress={() => {
+                      if (studentSelectTargetPhotoIndex !== null) {
+                        handleUpdatePdfMatchStudent(studentSelectTargetPhotoIndex, s);
+                      }
+                      setStudentSelectModalVisible(false);
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      {s.photo_uri ? (
+                        <Image source={{ uri: s.photo_uri }} style={{ width: 34, height: 34, borderRadius: 17 }} />
+                      ) : (
+                        <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center' }}>
+                          <Ionicons name="person" size={16} color={Colors.primary} />
+                        </View>
+                      )}
+                      <View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textPrimary }}>
+                          {s.first_name} {s.last_name}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: Colors.textSecondary }}>
+                          No: {s.student_number || '-'} • {className}
+                        </Text>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Single Student PDF Photo Grid Picker Modal */}
+      <Modal
+        visible={singlePdfGridModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSinglePdfGridModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>PDF'ten Fotoğraf Seç</Text>
+                <Text style={styles.modalSubtitle}>
+                  {photoTargetStudent ? `${photoTargetStudent.first_name} ${photoTargetStudent.last_name} için bir fotoğraf seçin:` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setSinglePdfGridModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ fontSize: 12, color: Colors.textSecondary, marginBottom: 12 }}>
+              PDF dosyasından ayıklanan {singlePdfGridPhotos.length} vesikalık fotoğraf gösteriliyor. Uygulamak istediğiniz fotoğrafa tıklayın:
+            </Text>
+
+            <ScrollView style={{ maxHeight: 440 }} contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between' }}>
+              {singlePdfGridPhotos.map((photo, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={{
+                    width: '30%',
+                    backgroundColor: Colors.cardSubtle,
+                    borderRadius: 12,
+                    padding: 6,
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: Colors.border,
+                  }}
+                  onPress={() => handleSelectPhotoFromPdfForStudent(photo)}
+                >
+                  <Image source={{ uri: photo.tempUri }} style={{ width: '100%', height: 90, borderRadius: 8 }} resizeMode="cover" />
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primary, marginTop: 4 }}>
+                    #{idx + 1}. Foto
+                  </Text>
+                  {photo.detectedNumber ? (
+                    <Text style={{ fontSize: 9, color: Colors.textSecondary }}>No: {photo.detectedNumber}</Text>
+                  ) : null}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={{ marginTop: 14 }}>
+              <Button
+                title="Kapat"
+                variant="outline"
+                onPress={() => setSinglePdfGridModalVisible(false)}
               />
             </View>
           </View>
@@ -2632,7 +3011,7 @@ const styles = StyleSheet.create({
   },
   floatingActionPill: {
     position: 'absolute',
-    bottom: 24,
+    bottom: 44,
     right: 20,
     flexDirection: 'row',
     alignItems: 'center',
@@ -3171,7 +3550,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   pdfMatchScroll: {
-    maxHeight: 340,
+    flex: 1,
     marginBottom: 12,
   },
   pdfMatchRow: {

@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import { WebView } from 'react-native-webview';
@@ -194,6 +195,9 @@ export const HomeScreen: React.FC = () => {
     courseId: number;
   } | null>(null);
   const [planSearchQuery, setPlanSearchQuery] = useState('');
+  const [planDateStart, setPlanDateStart] = useState('');
+  const [planDateEnd, setPlanDateEnd] = useState('');
+  const [showPlanDatePicker, setShowPlanDatePicker] = useState<'start' | 'end' | null>(null);
   const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -353,6 +357,8 @@ export const HomeScreen: React.FC = () => {
     };
     setYearlyPlanMeta(meta);
     setPlanSearchQuery('');
+    setPlanDateStart('');
+    setPlanDateEnd('');
     setYearlyPlanLoading(true);
     setYearlyPlanModalVisible(true);
 
@@ -375,6 +381,26 @@ export const HomeScreen: React.FC = () => {
 
       setYearlyPlanList(plans);
       setYearlyPlanPdf(doc);
+
+      // Başlangıç tarihi varsayılanı: Yıllık planın başladığı ilk hafta tarihi
+      const firstWeekStart = plans.find((p) => p.date_start)?.date_start;
+      if (firstWeekStart) {
+        setPlanDateStart(firstWeekStart);
+        // Bitiş tarihi varsayılanı: Tam 1 yıl sonrası
+        const sDate = new Date(firstWeekStart);
+        if (!isNaN(sDate.getTime())) {
+          sDate.setFullYear(sDate.getFullYear() + 1);
+          setPlanDateEnd(sDate.toISOString().split('T')[0]);
+        } else {
+          setPlanDateEnd('');
+        }
+      } else {
+        const todayStr = new Date().toISOString().split('T')[0];
+        setPlanDateStart(todayStr);
+        const nextYearDate = new Date();
+        nextYearDate.setFullYear(nextYearDate.getFullYear() + 1);
+        setPlanDateEnd(nextYearDate.toISOString().split('T')[0]);
+      }
     } catch (e) {
       console.error('Error loading yearly plan:', e);
       Alert.alert('Hata', 'Yıllık plan yüklenirken bir sorun oluştu.');
@@ -406,14 +432,20 @@ export const HomeScreen: React.FC = () => {
     : [];
 
   const filteredPlanList = yearlyPlanList.filter((p) => {
-    if (!planSearchQuery.trim()) return true;
-    const q = planSearchQuery.toLowerCase();
-    return (
-      p.subject_topic.toLowerCase().includes(q) ||
-      (p.learning_outcomes && p.learning_outcomes.toLowerCase().includes(q)) ||
-      `hafta ${p.week_number}`.includes(q) ||
-      `${p.week_number}. hafta`.includes(q)
-    );
+    if (planSearchQuery.trim()) {
+      const q = planSearchQuery.toLowerCase();
+      const matchText =
+        p.subject_topic.toLowerCase().includes(q) ||
+        (p.learning_outcomes && p.learning_outcomes.toLowerCase().includes(q)) ||
+        `hafta ${p.week_number}`.includes(q) ||
+        `${p.week_number}. hafta`.includes(q) ||
+        (p.date_start && p.date_start.includes(q)) ||
+        (p.date_end && p.date_end.includes(q));
+      if (!matchText) return false;
+    }
+    if (planDateStart.trim() && p.date_end && p.date_end < planDateStart.trim()) return false;
+    if (planDateEnd.trim() && p.date_start && p.date_start > planDateEnd.trim()) return false;
+    return true;
   });
 
   const isViewingToday = selectedDay === todayIndex;
@@ -1138,7 +1170,7 @@ export const HomeScreen: React.FC = () => {
         onRequestClose={() => setYearlyPlanModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalContainer}>
+          <View style={[styles.modalContainer, styles.yearlyPlanModalContainer]}>
             {/* Modal Başlığı */}
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
@@ -1171,7 +1203,7 @@ export const HomeScreen: React.FC = () => {
                     style={styles.pdfOpenBtn}
                     onPress={() => setPdfViewerModalVisible(true)}
                   >
-                    <Ionicons name="document-text" size={16} color="#FFFFFF" />
+                    <Ionicons name="document-text" size={14} color="#FFFFFF" />
                     <Text style={styles.pdfOpenBtnText}>PDF Gör</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -1183,7 +1215,7 @@ export const HomeScreen: React.FC = () => {
                       )
                     }
                   >
-                    <Ionicons name="share-outline" size={16} color="#FFFFFF" />
+                    <Ionicons name="share-outline" size={14} color="#FFFFFF" />
                     <Text style={styles.pdfOpenBtnText}>PDF Paylaş/Aç</Text>
                   </TouchableOpacity>
                 </>
@@ -1195,14 +1227,14 @@ export const HomeScreen: React.FC = () => {
                   navigation.navigate('YearlyPlan');
                 }}
               >
-                <Ionicons name="create-outline" size={16} color={Colors.primary} />
+                <Ionicons name="create-outline" size={14} color={Colors.primary} />
                 <Text style={styles.planManageBtnText}>Planı Yönet</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Arama Çubuğu */}
+            {/* Arama ve Tarih Filtreleme Çubuğu */}
             <View style={styles.searchBarWrap}>
-              <Ionicons name="search" size={18} color={Colors.textMuted} />
+              <Ionicons name="search" size={16} color={Colors.textMuted} />
               <TextInput
                 style={styles.searchInput}
                 placeholder="Konu, hafta veya kazanım ara..."
@@ -1212,10 +1244,68 @@ export const HomeScreen: React.FC = () => {
               />
               {planSearchQuery ? (
                 <TouchableOpacity onPress={() => setPlanSearchQuery('')}>
-                  <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+                  <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
                 </TouchableOpacity>
               ) : null}
             </View>
+
+            {/* Tarih Aralığı Filtresi (Picker) */}
+            <View style={styles.dateFilterContainer}>
+              <TouchableOpacity
+                style={styles.dateFilterInputBox}
+                onPress={() => setShowPlanDatePicker('start')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="calendar-outline" size={14} color={Colors.primary} />
+                <Text style={styles.dateFilterText}>
+                  {planDateStart ? formatDateToTR(planDateStart) : 'Başlangıç Tarihi'}
+                </Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 12, color: Colors.textMuted }}>-</Text>
+              <TouchableOpacity
+                style={styles.dateFilterInputBox}
+                onPress={() => setShowPlanDatePicker('end')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="calendar-outline" size={14} color={Colors.primary} />
+                <Text style={styles.dateFilterText}>
+                  {planDateEnd ? formatDateToTR(planDateEnd) : 'Bitiş Tarihi'}
+                </Text>
+              </TouchableOpacity>
+              {(planDateStart || planDateEnd) && (
+                <TouchableOpacity onPress={() => { setPlanDateStart(''); setPlanDateEnd(''); }}>
+                  <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {showPlanDatePicker && (
+              <DateTimePicker
+                value={
+                  showPlanDatePicker === 'start'
+                    ? (planDateStart && !isNaN(new Date(planDateStart).getTime()) ? new Date(planDateStart) : new Date())
+                    : (planDateEnd && !isNaN(new Date(planDateEnd).getTime()) ? new Date(planDateEnd) : new Date())
+                }
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event, selectedDate) => {
+                  const mode = showPlanDatePicker;
+                  setShowPlanDatePicker(null);
+                  if (selectedDate) {
+                    const isoStr = selectedDate.toISOString().split('T')[0];
+                    if (mode === 'start') {
+                      setPlanDateStart(isoStr);
+                      // Başlangıç değişirse varsayılan bitişi de 1 yıl sonrasına ayarla
+                      const endDateObj = new Date(selectedDate);
+                      endDateObj.setFullYear(endDateObj.getFullYear() + 1);
+                      setPlanDateEnd(endDateObj.toISOString().split('T')[0]);
+                    } else {
+                      setPlanDateEnd(isoStr);
+                    }
+                  }
+                }}
+              />
+            )}
 
             {yearlyPlanLoading ? (
               <View style={styles.modalLoadingWrap}>
@@ -1227,11 +1317,11 @@ export const HomeScreen: React.FC = () => {
                 <Ionicons name="calendar-outline" size={44} color={Colors.textMuted} />
                 <Text style={styles.modalEmptyTitle}>Kayıt Bulunamadı</Text>
                 <Text style={styles.modalEmptyDesc}>
-                  {planSearchQuery
-                    ? 'Aramanıza uygun plan satırı bulunamadı.'
+                  {planSearchQuery || planDateStart || planDateEnd
+                    ? 'Filtrelerinize uygun plan satırı bulunamadı.'
                     : 'Bu sınıf düzeyi için henüz yıllık plan yüklenmemiş.'}
                 </Text>
-                {!planSearchQuery && (
+                {!planSearchQuery && !planDateStart && !planDateEnd && (
                   <TouchableOpacity
                     style={styles.modalEmptyBtn}
                     onPress={() => {
@@ -1263,8 +1353,9 @@ export const HomeScreen: React.FC = () => {
                         isThisWeek && styles.planItemCardActive,
                       ]}
                     >
+                      {/* Hafta Numarası, Tarih Aralığı ve Bu Hafta rozeti aynı satırda */}
                       <View style={styles.planItemHeaderRow}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, flexWrap: 'wrap' }}>
                           <View
                             style={[
                               styles.weekBadge,
@@ -1280,21 +1371,22 @@ export const HomeScreen: React.FC = () => {
                               {plan.week_number}. Hafta
                             </Text>
                           </View>
+
+                          {plan.date_start && plan.date_end && (
+                            <Text style={styles.planDateInlineText}>
+                              📅 {formatDateToTR(plan.date_start)} - {formatDateToTR(plan.date_end)}
+                            </Text>
+                          )}
+
                           {isThisWeek && (
                             <Badge label="Bu Hafta" status="yapildi" size="sm" />
                           )}
                         </View>
 
                         <Text style={styles.planHoursText}>
-                          {plan.lesson_hours ? `${plan.lesson_hours} Saat` : ''}
+                          {plan.lesson_hours ? `${plan.lesson_hours} Sa` : ''}
                         </Text>
                       </View>
-
-                      {plan.date_start && plan.date_end && (
-                        <Text style={styles.planDateText}>
-                          📅 {formatDateToTR(plan.date_start)} - {formatDateToTR(plan.date_end)}
-                        </Text>
-                      )}
 
                       <Text style={styles.planSubjectText} selectable={true}>
                         {plan.subject_topic}
@@ -2455,10 +2547,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+  yearlyPlanModalContainer: {
+    maxHeight: '96%',
+    height: '96%',
+    paddingTop: Platform.OS === 'ios' ? 44 : 16,
+    paddingBottom: 16,
+  },
   yearlyPlanActionsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
+    gap: 6,
+    marginBottom: 10,
   },
   pdfOpenBtn: {
     flex: 1,
@@ -2466,12 +2564,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#EF4444',
-    paddingVertical: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
     borderRadius: 8,
-    gap: 6,
+    gap: 4,
   },
   pdfOpenBtnText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
     color: '#FFFFFF',
   },
@@ -2481,12 +2580,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.primaryLight,
-    paddingVertical: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
     borderRadius: 8,
-    gap: 6,
+    gap: 4,
   },
   planManageBtnText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.primaryDark,
   },
@@ -2495,26 +2595,56 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: Colors.background,
     borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 40,
-    marginBottom: 12,
+    paddingHorizontal: 10,
+    height: 36,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 8,
+    gap: 6,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textPrimary,
     paddingVertical: 0,
+  },
+  dateFilterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  dateFilterInputBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    height: 34,
+    gap: 4,
+  },
+  dateFilterInput: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.textPrimary,
+    paddingVertical: 0,
+  },
+  dateFilterText: {
+    flex: 1,
+    fontSize: 11,
+    color: Colors.textPrimary,
+    fontWeight: '500',
   },
   planItemCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 12,
+    padding: 10,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 10,
+    marginBottom: 8,
     ...Shadows.small,
   },
   planItemCardActive: {
@@ -2530,17 +2660,22 @@ const styles = StyleSheet.create({
   },
   weekBadge: {
     backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderRadius: 6,
   },
   weekBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     color: Colors.primaryDark,
   },
+  planDateInlineText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
   planHoursText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.textSecondary,
   },

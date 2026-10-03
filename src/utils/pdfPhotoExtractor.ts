@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
+import { Platform } from 'react-native';
 import { Student } from '../types';
 
 export interface PdfExtractedStudentPhoto {
@@ -10,6 +11,7 @@ export interface PdfExtractedStudentPhoto {
   matchedStudent: Student | null;
   detectedNumber?: string;
   detectedName?: string;
+  pageNumber?: number;
 }
 
 export interface PdfPhotoExtractResult {
@@ -45,22 +47,29 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 
 async function readPdfBytes(asset: DocumentPicker.DocumentPickerAsset): Promise<Uint8Array> {
   const uri = asset.uri;
-  try {
-    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-    if (b64) return base64ToUint8Array(b64);
-  } catch (e) {
-    console.warn('readAsStringAsync failed:', e);
+
+  // On Android, DocumentPicker URIs in the Expo cache are not directly accessible
+  // via expo-file-system due to Scoped Storage restrictions.
+  // Skip straight to fetch which works reliably on all platforms.
+  if (Platform.OS !== 'android') {
+    try {
+      const b64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+      if (b64) return base64ToUint8Array(b64);
+    } catch (e) {
+      console.warn('readAsStringAsync failed, trying fetch fallback:', e);
+    }
   }
+
+  // Fetch with ArrayBuffer — avoids the slow base64 blob round-trip
   try {
-    const tmp = `${FileSystem.cacheDirectory}tmp_pdf_${Date.now()}.pdf`;
-    await FileSystem.copyAsync({ from: uri, to: tmp });
-    const b64 = await FileSystem.readAsStringAsync(tmp, { encoding: 'base64' });
-    await FileSystem.deleteAsync(tmp, { idempotent: true });
-    if (b64) return base64ToUint8Array(b64);
+    const res = await fetch(uri);
+    const arrayBuffer = await res.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
   } catch (e) {
-    console.warn('copyAsync failed:', e);
+    console.warn('fetch arrayBuffer failed, trying blob fallback:', e);
   }
-  // fetch fallback
+
+  // Final fallback: blob (slower, but most compatible)
   const res = await fetch(uri);
   const blob = await res.blob();
   return new Promise<Uint8Array>((resolve, reject) => {
@@ -428,26 +437,100 @@ function getObjRawStream(objNum: number, text: string, buf: Uint8Array): Uint8Ar
 
 interface StudentInfo { imgName: string; number: string; name: string; }
 
-function extractInfoFromContent(content: string): StudentInfo[] {
-  const results: StudentInfo[] = [];
-  const doRe = /\/img(\d+)\s+Do/g;
-  let m: RegExpExecArray | null;
-  while ((m = doRe.exec(content)) !== null) {
-    const idx = parseInt(m[1], 10);
-    const ctx = content.substring(Math.max(0, m.index - 900), m.index);
-    const parts: string[] = [];
-    const tj = /\(([^)]*)\)\s*Tj/g;
-    let tm: RegExpExecArray | null;
-    while ((tm = tj.exec(ctx)) !== null) {
-      const s = tm[1].trim();
-      if (s) parts.push(s);
+function getPdfObjContent(objNum: number, text: string): string | null {
+  const re = new RegExp('(?:^|\\r?\\n)' + objNum + '\\s+0\\s+obj([\\s\\S]*?)endobj');
+  const m = re.exec(text);
+  return m ? m[1] : null;
+}
+
+function getPageXObjectMap(pageObjNum: number, pageDictText: string, text: string): Record<string, number> {
+  const map: Record<string, number> = {};
+
+  // 1. Find Resources text (direct reference, inline, or inherited from parent)
+  let resDictText = '';
+  const resRef = /\/Resources\s+(\d+)\s+0\s+R/.exec(pageDictText);
+  if (resRef) {
+    resDictText = getPdfObjContent(parseInt(resRef[1], 10), text) || '';
+  } else {
+    const resInline = /\/Resources\s*<<([\s\S]*?)>>/.exec(pageDictText);
+    if (resInline) {
+      resDictText = resInline[1];
+    } else if (pageObjNum > 0) {
+      const pageObj = getPdfObjContent(pageObjNum, text);
+      if (pageObj) {
+        const pResRef = /\/Resources\s+(\d+)\s+0\s+R/.exec(pageObj);
+        if (pResRef) {
+          resDictText = getPdfObjContent(parseInt(pResRef[1], 10), text) || '';
+        } else {
+          const parentRef = /\/Parent\s+(\d+)\s+0\s+R/.exec(pageObj);
+          if (parentRef) {
+            const parentObj = getPdfObjContent(parseInt(parentRef[1], 10), text);
+            if (parentObj) {
+              const prRef = /\/Resources\s+(\d+)\s+0\s+R/.exec(parentObj);
+              if (prRef) {
+                resDictText = getPdfObjContent(parseInt(prRef[1], 10), text) || '';
+              }
+            }
+          }
+        }
+      }
     }
-    const numStr = [...parts].reverse().find(p => /^\d{4,6}$/.test(p)) || '';
-    const nameParts = parts.filter(p => /[A-Za-zÇĞİÖŞÜçğışöşü]/.test(p) && !/^\d+$/.test(p));
-    const name = nameParts.slice(-3).join(' ').trim();
-    results.push({ imgName: 'img' + idx, number: numStr, name });
   }
-  return results;
+
+  if (!resDictText) return map;
+
+  // 2. Find XObject dictionary (direct reference or inline)
+  let xobjDictText = '';
+  const xobjRef = /\/XObject\s+(\d+)\s+0\s+R/.exec(resDictText);
+  if (xobjRef) {
+    xobjDictText = getPdfObjContent(parseInt(xobjRef[1], 10), text) || '';
+  } else {
+    const xobjInline = /\/XObject\s*<<([\s\S]*?)>>/.exec(resDictText);
+    if (xobjInline) {
+      xobjDictText = xobjInline[1];
+    }
+  }
+
+  if (!xobjDictText) return map;
+
+  // 3. Extract alias -> objNum entries
+  const itemRe = /\/([a-zA-Z0-9_\-]+)\s+(\d+)\s+0\s+R/g;
+  let im: RegExpExecArray | null;
+  while ((im = itemRe.exec(xobjDictText)) !== null) {
+    map[im[1]] = parseInt(im[2], 10);
+  }
+
+  return map;
+}
+
+function extractStringsFromContext(ctx: string): string[] {
+  const list: string[] = [];
+  const parseStr = (s: string) => {
+    return s.replace(/\\([()\\])/g, '$1').trim();
+  };
+
+  // Match text inside BT ... ET blocks
+  const btEtRe = /BT([\s\S]*?)ET/g;
+  let bm: RegExpExecArray | null;
+  while ((bm = btEtRe.exec(ctx)) !== null) {
+    const block = bm[1];
+    const strRe = /\(((\\.|[^)])*)\)/g;
+    let sm: RegExpExecArray | null;
+    while ((sm = strRe.exec(block)) !== null) {
+      const s = parseStr(sm[1]);
+      if (s) list.push(s);
+    }
+  }
+  // Fallback to literal strings outside BT...ET
+  if (list.length === 0) {
+    const directRe = /\(((\\.|[^)])*)\)/g;
+    let dm: RegExpExecArray | null;
+    while ((dm = directRe.exec(ctx)) !== null) {
+      const s = parseStr(dm[1]);
+      if (s) list.push(s);
+    }
+  }
+  return list;
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +554,7 @@ export const extractPhotosFromPdf = async (
     // Latin-1 string for text scanning (binary-safe)
     const text = Array.from(buf).map(b => String.fromCharCode(b)).join('');
 
-    // 1. Parse image objects
+    // 1. Parse image objects (all pages, binary order)
     const allImgs = parsePdfImageObjs(text, buf);
     const photoObjs = allImgs.filter(img => img.height >= 50 && img.width >= 40 && img.height / img.width >= 0.8);
 
@@ -482,46 +565,229 @@ export const extractPhotosFromPdf = async (
       };
     }
 
-    // 2. Extract student info from page content streams
-    const allInfo: StudentInfo[] = [];
-    const pageRe = /\/Type\s*\/Page\b/g;
-    let pm: RegExpExecArray | null;
-    while ((pm = pageRe.exec(text)) !== null) {
-      const ctx = text.substring(pm.index, pm.index + 500);
-      const cm = /\/Contents\s+\[\s*(\d+)\s+0\s+R/.exec(ctx);
-      if (!cm) continue;
-      const stream = getObjRawStream(parseInt(cm[1], 10), text, buf);
-      if (!stream) continue;
-      try {
-        const decoded = await inflateAsync(stream);
-        const content = Array.from(decoded).map(b => String.fromCharCode(b)).join('');
-        allInfo.push(...extractInfoFromContent(content));
-      } catch (_) { /* skip */ }
-    }
-    const infoMap: Record<string, StudentInfo> = {};
-    for (const info of allInfo) infoMap[info.imgName] = info;
-
-    // 3. Ensure cache dir
+    // ── Ensure cache dir ────────────────────────────────────────────────────
     const cacheDir = `${FileSystem.cacheDirectory}pdf_photos/`;
     if (!(await FileSystem.getInfoAsync(cacheDir)).exists) {
       await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
     }
 
-    // 4. Convert images to files
     const numSet = new Set(students.map(s => s.student_number));
-    const sorted = [...students].sort((a, b) => parseInt(a.student_number || '0', 10) - parseInt(b.student_number || '0', 10));
-    const extractedPhotos: PdfExtractedStudentPhoto[] = [];
 
-    for (let i = 0; i < photoObjs.length; i++) {
-      const img = photoObjs[i];
-      const imgKey = 'img' + i;
+    // ── Per-page algorithm ──────────────────────────────────────────────────
+    interface PagePair {
+      photo: PdfImageObj;
+      info: StudentInfo;
+      pageNumber: number;
+    }
+    const orderedPairs: PagePair[] = [];
+    const usedObjNums = new Set<number>();
+    let positionalCursor = 0;
+
+    const pageRe = /\/Type\s*\/Page\b/g;
+    let pm: RegExpExecArray | null;
+    let pageNumber = 0;
+
+    while ((pm = pageRe.exec(text)) !== null) {
+      pageNumber++;
+
+      // ── 1. Decode this page's content stream(s) ──
+      const pageWindow = text.substring(Math.max(0, pm.index - 200), pm.index + 3000);
+      const textBefore = text.substring(Math.max(0, pm.index - 300), pm.index);
+      const objNumM = /(\d+)\s+0\s+obj[\s\S]*?$/i.exec(textBefore);
+      const pageObjNum = objNumM ? parseInt(objNumM[1], 10) : 0;
+
+      let pageContent = '';
+      const arrayM = /\/Contents\s+\[([\s\S]*?)\]/.exec(pageWindow);
+      if (arrayM) {
+        const refs: number[] = [];
+        const rRe = /(\d+)\s+0\s+R/g;
+        let rm: RegExpExecArray | null;
+        while ((rm = rRe.exec(arrayM[1])) !== null) {
+          refs.push(parseInt(rm[1], 10));
+        }
+        const chunks: Uint8Array[] = [];
+        for (const ref of refs) {
+          const s = getObjRawStream(ref, text, buf);
+          if (s) {
+            try {
+              chunks.push(await inflateAsync(s));
+            } catch {
+              chunks.push(s);
+            }
+          }
+        }
+        if (chunks.length > 0) {
+          const tot = chunks.reduce((acc, c) => acc + c.length, 0);
+          const comb = new Uint8Array(tot);
+          let offset = 0;
+          for (const c of chunks) { comb.set(c, offset); offset += c.length; }
+          pageContent = Array.from(comb).map(b => String.fromCharCode(b)).join('');
+        }
+      } else {
+        const contentsM = /\/Contents\s+(\d+)\s+0\s+R/.exec(pageWindow);
+        if (contentsM) {
+          const raw = getObjRawStream(parseInt(contentsM[1], 10), text, buf);
+          if (raw) {
+            try {
+              const decoded = await inflateAsync(raw);
+              pageContent = Array.from(decoded).map(b => String.fromCharCode(b)).join('');
+            } catch {
+              pageContent = Array.from(raw).map(b => String.fromCharCode(b)).join('');
+            }
+          }
+        }
+      }
+
+      if (!pageContent) continue;
+
+      // ── 2. Build per-page XObject map ──
+      const pageXobjMap = getPageXObjectMap(pageObjNum, pageWindow, text);
+      const hasAliasMap = Object.keys(pageXobjMap).length > 0;
+
+      // ── 3. Find image placements on this page ──
+      const doRe = /\/([a-zA-Z0-9_\-]+)\s+Do/g;
+      let dm: RegExpExecArray | null;
+      interface PagePlacement {
+        alias: string;
+        index: number;
+        objNum: number;
+        photo?: PdfImageObj;
+      }
+      const pagePlacements: PagePlacement[] = [];
+      while ((dm = doRe.exec(pageContent)) !== null) {
+        const alias = dm[1];
+        const objNum = pageXobjMap[alias] || 0;
+        let photo: PdfImageObj | undefined;
+        if (objNum > 0) {
+          photo = photoObjs.find(p => p.objNum === objNum);
+        }
+        pagePlacements.push({ alias, index: dm.index, objNum, photo });
+      }
+
+      // Filter to student photos (skips logos, headers, stamps not matching photoObjs criteria)
+      let photoPlacements: PagePlacement[] = [];
+      if (hasAliasMap) {
+        photoPlacements = pagePlacements.filter(p => p.photo !== undefined);
+      }
+      if (photoPlacements.length === 0) {
+        const imgDoRe = /\/(img\d+|Im\d+|I\d+)\s+Do/gi;
+        let idm: RegExpExecArray | null;
+        while ((idm = imgDoRe.exec(pageContent)) !== null) {
+          photoPlacements.push({ alias: idm[1], index: idm.index, objNum: 0 });
+        }
+      }
+
+      if (photoPlacements.length === 0) continue;
+
+      // ── 4. Determine whether text is drawn before or after photo on this page ──
+      const firstPhotoIdx = photoPlacements[0].index;
+      const region0Text = pageContent.substring(Math.max(0, firstPhotoIdx - 1200), firstPhotoIdx);
+      const region0Strings = extractStringsFromContext(region0Text);
+      const region0Numbers = region0Strings.filter(s => /^\d{1,6}$/.test(s));
+
+      // Does the region before the first photo contain a student number?
+      // (either in numSet, or 3+ digits like 1465)
+      const hasStudentNumBeforeFirstPhoto = region0Numbers.some(n => numSet.has(n) || n.length >= 3);
+      const textOrder: 'before' | 'after' = hasStudentNumBeforeFirstPhoto ? 'before' : 'after';
+
+      const IGNORE_WORDS = new Set([
+        'T.C.', 'TC', 'MİLLİ', 'MILLI', 'EĞİTİM', 'EGITIM', 'BAKANLIĞI', 'BAKANLIGI',
+        'ÖĞRENCİ', 'OGRENCI', 'FOTOĞRAF', 'FOTOGRAF', 'LİSTESİ', 'LISTESI', 'SINIF',
+        'ŞUBE', 'SUBE', 'SAYFA', 'SIRA', 'NO', 'NUMARASI', 'OKUL', 'DERS', 'TARİH', 'TARIH'
+      ]);
+
+      const usedNumbersOnPage = new Set<string>();
+
+      for (let k = 0; k < photoPlacements.length; k++) {
+        const cur = photoPlacements[k];
+        let ctx = '';
+
+        if (textOrder === 'before') {
+          // Context is strictly between previous photo and current photo
+          const prevIdx = k > 0 ? photoPlacements[k - 1].index : 0;
+          ctx = pageContent.substring(Math.max(prevIdx, cur.index - 1200), cur.index);
+        } else {
+          // Context is strictly between current photo and next photo
+          const nextIdx = k + 1 < photoPlacements.length ? photoPlacements[k + 1].index : pageContent.length;
+          ctx = pageContent.substring(cur.index, Math.min(nextIdx, cur.index + 1200));
+        }
+
+        let strings = extractStringsFromContext(ctx);
+        if (strings.length === 0) {
+          if (textOrder === 'before') {
+            const nextIdx = k + 1 < photoPlacements.length ? photoPlacements[k + 1].index : pageContent.length;
+            ctx = pageContent.substring(cur.index, Math.min(nextIdx, cur.index + 1200));
+          } else {
+            const prevIdx = k > 0 ? photoPlacements[k - 1].index : 0;
+            ctx = pageContent.substring(Math.max(prevIdx, cur.index - 1200), cur.index);
+          }
+          strings = extractStringsFromContext(ctx);
+        }
+
+        const candidateNumbers = strings.filter(s => /^\d{1,6}$/.test(s));
+        const candidateNames = strings.filter(
+          s => /[A-Za-zÇĞİÖŞÜçğışöşü]/.test(s) &&
+               !/^\d+$/.test(s) &&
+               !IGNORE_WORDS.has(s.toUpperCase())
+        );
+
+        let detNum = '';
+        // 1. Look for numbers that actually belong to the students in the class/system
+        const matchingKnown = candidateNumbers.filter(n => numSet.has(n) && !usedNumbersOnPage.has(n));
+        if (matchingKnown.length > 0) {
+          // If multiple match, prefer longer number (e.g. 1465 > 2)
+          matchingKnown.sort((a, b) => b.length - a.length);
+          detNum = matchingKnown[0];
+        } else {
+          // 2. If not in known numbers, only accept 3+ digit numbers
+          // (eliminates stray page numbers like "2" or row counters)
+          const validCandidates = candidateNumbers.filter(n => n.length >= 3 && !usedNumbersOnPage.has(n));
+          if (validCandidates.length > 0) {
+            validCandidates.sort((a, b) => b.length - a.length);
+            detNum = validCandidates[0];
+          }
+        }
+
+        if (detNum) {
+          usedNumbersOnPage.add(detNum);
+        }
+
+        const name = candidateNames.slice(-3).join(' ').trim();
+        const info: StudentInfo = { imgName: cur.alias, number: detNum, name };
+
+        // ── 5. Resolve image object for this photo ──
+        let photo: PdfImageObj | undefined = cur.photo;
+        if (photo && !usedObjNums.has(photo.objNum)) {
+          orderedPairs.push({ photo, info, pageNumber });
+          usedObjNums.add(photo.objNum);
+        } else {
+          // Positional fallback if direct alias photo was not found or already used
+          while (positionalCursor < photoObjs.length && usedObjNums.has(photoObjs[positionalCursor].objNum)) {
+            positionalCursor++;
+          }
+          if (positionalCursor < photoObjs.length) {
+            const posPhoto = photoObjs[positionalCursor];
+            orderedPairs.push({ photo: posPhoto, info, pageNumber });
+            usedObjNums.add(posPhoto.objNum);
+            positionalCursor++;
+          }
+        }
+      }
+    }
+
+    // ── Convert matched image objects to files and resolve students ─────────
+    const extractedPhotos: PdfExtractedStudentPhoto[] = [];
+    // Her öğrenci yalnızca bir kez eşleştirilebilir
+    const usedStudentIds = new Set<number>();
+
+    for (let i = 0; i < orderedPairs.length; i++) {
+      const { photo: img, info, pageNumber } = orderedPairs[i];
       try {
         const rawStream = buf.subarray(img.streamStart, img.streamEnd);
         let tempPath: string | null = null;
         let fileSize = 0;
 
         if (img.filter === 'DCTDecode') {
-          // JPEG – save directly
           tempPath = `${cacheDir}pdf_${Date.now()}_${i}.jpg`;
           await FileSystem.writeAsStringAsync(tempPath, uint8ArrayToBase64(rawStream), { encoding: 'base64' });
           fileSize = rawStream.length;
@@ -538,7 +804,6 @@ export const extractPhotosFromPdf = async (
           } else if (img.csType === 'DeviceRGB') {
             pngBytes = buildRgbPng(pixels, img.width, img.height);
           } else if (img.csType === 'DeviceGray') {
-            // Convert grayscale to RGB
             const rgb = new Uint8Array(pixels.length * 3);
             for (let j = 0; j < pixels.length; j++) { rgb[j*3]=rgb[j*3+1]=rgb[j*3+2]=pixels[j]; }
             pngBytes = buildRgbPng(rgb, img.width, img.height);
@@ -553,11 +818,22 @@ export const extractPhotosFromPdf = async (
 
         if (!tempPath) continue;
 
-        const info = infoMap[imgKey];
+        const detNum = info.number;
         let matched: Student | null = null;
-        const detNum = info?.number;
-        if (detNum && numSet.has(detNum)) matched = students.find(s => s.student_number === detNum) || null;
-        if (!matched && i < sorted.length) matched = sorted[i];
+
+        // ── Öğrenci eşleştirme kuralları ────────────────────────────────────
+        // 1. Sadece numara ile eşleştir (isim tahmini yapma).
+        //    Numara sistemde yoksa matched = null kalır; kullanıcı manuel atar.
+        // 2. Aynı öğrenci birden fazla fotoğrafa atanamaz (usedStudentIds).
+        // ────────────────────────────────────────────────────────────────────
+        if (detNum && numSet.has(detNum)) {
+          const candidate = students.find(s => s.student_number === detNum) || null;
+          if (candidate && !usedStudentIds.has(candidate.id)) {
+            matched = candidate;
+          }
+        }
+
+        if (matched) usedStudentIds.add(matched.id);
 
         extractedPhotos.push({
           id: `pdf-${i}-${Date.now()}`,
@@ -565,8 +841,9 @@ export const extractPhotosFromPdf = async (
           tempUri: tempPath,
           fileSize,
           matchedStudent: matched,
-          detectedNumber: detNum || matched?.student_number,
-          detectedName: info?.name,
+          detectedNumber: detNum,
+          detectedName: info.name,
+          pageNumber,
         });
       } catch (e) {
         console.warn(`Photo ${i} error:`, e);
@@ -575,8 +852,10 @@ export const extractPhotosFromPdf = async (
 
     if (!extractedPhotos.length) {
       return {
-        success: false, totalImages: photoObjs.length, extractedPhotos: [],
-        error: `PDF'de ${photoObjs.length} fotoğraf algılandı ancak hiçbiri dönüştürülemedi. Farklı bir PDF deneyin.`,
+        success: false,
+        totalImages: orderedPairs.length || photoObjs.length,
+        extractedPhotos: [],
+        error: `PDF'de fotoğraf algılandı ancak hiçbiri işlenemedi. Farklı bir PDF deneyin.`,
       };
     }
 

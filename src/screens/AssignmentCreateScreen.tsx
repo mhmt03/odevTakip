@@ -525,5 +525,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.border,
     padding: 14,
+    marginBottom:50,
   },
 });
