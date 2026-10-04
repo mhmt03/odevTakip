@@ -2715,7 +2715,10 @@ export const ClassDetailScreen: React.FC = () => {
 
               {/* Navigate to full notes history tab */}
               <TouchableOpacity
-                style={styles.fullHistoryBtn}
+                style={[
+                  styles.fullHistoryBtn,
+                  { marginBottom: Math.max(40, insets.bottom + 24) },
+                ]}
                 onPress={() => {
                   setDetailModalVisible(false);
                   if (detailStudent) {
@@ -3959,6 +3962,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 6,
     marginTop: 4,
+    marginBottom: 40,
   },
   fullHistoryBtnText: {
     fontSize: 13,
