@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -213,6 +213,11 @@ export const HomeScreen: React.FC = () => {
   const [showPlanDatePicker, setShowPlanDatePicker] = useState<'start' | 'end' | null>(null);
   const [pdfViewerModalVisible, setPdfViewerModalVisible] = useState(false);
 
+  // Yearly plan scroll & highlight refs
+  const planScrollRef = useRef<ScrollView>(null);
+  const planItemOffsets = useRef<Record<number, number>>({});
+  const [highlightedPlanId, setHighlightedPlanId] = useState<number | null>(null);
+
   const loadDaySchedule = async (day: number, overrideShowAll?: boolean) => {
     try {
       const showAll = overrideShowAll !== undefined ? overrideShowAll : showAllSchoolsSchedule;
@@ -355,6 +360,8 @@ export const HomeScreen: React.FC = () => {
     setPlanDateEnd('');
     setYearlyPlanLoading(true);
     setYearlyPlanModalVisible(true);
+    planItemOffsets.current = {};
+    setHighlightedPlanId(null);
 
     try {
       // 1. Şubeye özel değil sınıf düzeyine ait planı ara (class_id göndermeden)
@@ -400,6 +407,111 @@ export const HomeScreen: React.FC = () => {
       Alert.alert('Hata', 'Yıllık plan yüklenirken bir sorun oluştu.');
     } finally {
       setYearlyPlanLoading(false);
+    }
+  };
+
+  const getClosestPlanItem = (plans: YearlyPlanItem[]): YearlyPlanItem | null => {
+    if (!plans || plans.length === 0) return null;
+    const todayStr = getTodayDateString();
+    const todayTime = new Date(todayStr).getTime();
+
+    // 1. Doğrudan bu haftaya denk gelen kazanım
+    const exactMatch = plans.find(
+      (p) => Boolean(p.date_start && p.date_end && p.date_start <= todayStr && p.date_end >= todayStr)
+    );
+    if (exactMatch) return exactMatch;
+
+    // 2. Bugünün tarihine gün farkı olarak en yakın kazanım
+    let closestPlan: YearlyPlanItem | null = null;
+    let minDiff = Infinity;
+
+    for (const p of plans) {
+      if (p.date_start && p.date_end) {
+        const startTime = new Date(p.date_start).getTime();
+        const endTime = new Date(p.date_end).getTime();
+        let diff = 0;
+        if (todayTime < startTime) {
+          diff = startTime - todayTime;
+        } else if (todayTime > endTime) {
+          diff = todayTime - endTime;
+        } else {
+          diff = 0;
+        }
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPlan = p;
+        }
+      } else if (p.date_start) {
+        const diff = Math.abs(todayTime - new Date(p.date_start).getTime());
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPlan = p;
+        }
+      } else if (p.date_end) {
+        const diff = Math.abs(todayTime - new Date(p.date_end).getTime());
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPlan = p;
+        }
+      }
+    }
+
+    return closestPlan || plans[0] || null;
+  };
+
+  const handleScrollToTodayPlan = () => {
+    if (!yearlyPlanList || yearlyPlanList.length === 0) return;
+
+    // Filtreleme yapmadan, tüm listede rahatça yukarı-aşağı kaydırılabilmesi için arama/tarih filtresini sıfırlar
+    let needFilterReset = false;
+    if (planSearchQuery) {
+      setPlanSearchQuery('');
+      needFilterReset = true;
+    }
+    const todayStr = getTodayDateString();
+    if (planDateStart && planDateEnd) {
+      if (planDateStart > todayStr || planDateEnd < todayStr) {
+        const firstWeekStart = yearlyPlanList.find((p) => p.date_start)?.date_start;
+        if (firstWeekStart) {
+          setPlanDateStart(firstWeekStart);
+          try {
+            const sDate = new Date(firstWeekStart);
+            sDate.setFullYear(sDate.getFullYear() + 1);
+            setPlanDateEnd(sDate.toISOString().split('T')[0]);
+          } catch {
+            setPlanDateEnd('');
+          }
+        } else {
+          setPlanDateStart('');
+          setPlanDateEnd('');
+        }
+        needFilterReset = true;
+      }
+    }
+
+    const targetPlan = getClosestPlanItem(yearlyPlanList);
+    if (!targetPlan) return;
+
+    setHighlightedPlanId(targetPlan.id);
+    setTimeout(() => {
+      setHighlightedPlanId(null);
+    }, 3000);
+
+    const performScroll = () => {
+      const y = planItemOffsets.current[targetPlan.id];
+      if (y !== undefined && planScrollRef.current) {
+        planScrollRef.current.scrollTo({
+          y: Math.max(0, y - 10),
+          animated: true,
+        });
+      }
+    };
+
+    if (needFilterReset) {
+      setTimeout(performScroll, 120);
+    } else {
+      performScroll();
+      setTimeout(performScroll, 120);
     }
   };
 
@@ -1331,13 +1443,23 @@ export const HomeScreen: React.FC = () => {
                   {yearlyPlanMeta?.className ? `${yearlyPlanMeta.className} Yıllık Müfredat Planı` : 'Yıllık Plan'}
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => setYearlyPlanModalVisible(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={22} color={Colors.textSecondary} />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={handleScrollToTodayPlan}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={styles.headerTodayIconBtn}
+                  accessibilityLabel="Bugünün Kazanımına Git"
+                >
+                  <Ionicons name="locate-outline" size={17} color={Colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setYearlyPlanModalVisible(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={styles.modalCloseBtn}
+                >
+                  <Ionicons name="close" size={22} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Üst İşlem Butonları */}
@@ -1422,6 +1544,16 @@ export const HomeScreen: React.FC = () => {
                   <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
                 </TouchableOpacity>
               )}
+              {/* Mini Icon: Bugünün / Bu Haftanın Kazanımına Git */}
+              <TouchableOpacity
+                style={styles.todayJumpIconBtn}
+                onPress={handleScrollToTodayPlan}
+                activeOpacity={0.7}
+                accessibilityLabel="Bugünün Kazanımına Git"
+              >
+                <Ionicons name="navigate-circle" size={16} color="#FFFFFF" />
+                <Text style={styles.todayJumpIconBtnText}>Bugün</Text>
+              </TouchableOpacity>
             </View>
 
             {showPlanDatePicker && (
@@ -1481,6 +1613,7 @@ export const HomeScreen: React.FC = () => {
               </View>
             ) : (
               <ScrollView
+                ref={planScrollRef}
                 style={styles.modalScroll}
                 contentContainerStyle={{ paddingBottom: 30 }}
                 showsVerticalScrollIndicator={true}
@@ -1489,13 +1622,19 @@ export const HomeScreen: React.FC = () => {
                   const todayStr = getTodayDateString();
                   const isThisWeek =
                     Boolean(plan.date_start && plan.date_end && plan.date_start <= todayStr && plan.date_end >= todayStr);
+                  const isHighlighted = highlightedPlanId === plan.id;
 
                   return (
                     <View
                       key={plan.id}
+                      onLayout={(event) => {
+                        const y = event.nativeEvent.layout.y;
+                        planItemOffsets.current[plan.id] = y;
+                      }}
                       style={[
                         styles.planItemCard,
                         isThisWeek && styles.planItemCardActive,
+                        isHighlighted && styles.planItemCardHighlighted,
                       ]}
                     >
                       {/* Hafta Numarası, Tarih Aralığı ve Bu Hafta rozeti aynı satırda */}
@@ -1525,6 +1664,9 @@ export const HomeScreen: React.FC = () => {
 
                           {isThisWeek && (
                             <Badge label="Bu Hafta" status="yapildi" size="sm" />
+                          )}
+                          {!isThisWeek && isHighlighted && (
+                            <Badge label="Bugüne En Yakın" status="bekliyor" size="sm" />
                           )}
                         </View>
 
@@ -2777,6 +2919,39 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textPrimary,
     fontWeight: '500',
+  },
+  headerTodayIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  todayJumpIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    height: 34,
+    paddingHorizontal: 9,
+    borderRadius: 8,
+    gap: 4,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  todayJumpIconBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  planItemCardHighlighted: {
+    borderColor: Colors.primary,
+    borderWidth: 2,
+    backgroundColor: '#EEF2FF',
   },
   planItemCard: {
     backgroundColor: '#FFFFFF',
