@@ -14,6 +14,7 @@ import {
   Alert,
   ActivityIndicator,
   Switch,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -92,6 +93,22 @@ export const HomeScreen: React.FC = () => {
     } catch (e) {
       console.warn('Error loading schools:', e);
     }
+  };
+
+  const handleExitApp = () => {
+    Alert.alert(
+      'Uygulamayı Kapat',
+      'Uygulamadan çıkmak istediğinize emin misiniz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Kapat',
+          style: 'destructive',
+          onPress: () => BackHandler.exitApp(),
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const handleToggleShowAllSchools = async (val: boolean) => {
@@ -608,13 +625,23 @@ export const HomeScreen: React.FC = () => {
         </TouchableOpacity>
 
         <View style={{ alignItems: 'flex-end', gap: 6 }}>
-          <TouchableOpacity
-            style={styles.settingsHeaderBtn}
-            onPress={() => navigation.navigate('Operations')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="options-outline" size={18} color={activeSchool?.color || Colors.primary} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              style={styles.settingsHeaderBtn}
+              onPress={() => navigation.navigate('Operations')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="options-outline" size={18} color={activeSchool?.color || Colors.primary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.settingsHeaderBtn, styles.exitHeaderBtn]}
+              onPress={handleExitApp}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="power" size={16} color={Colors.danger} />
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.clockBadge}>
             <Ionicons name="time-outline" size={12} color={activeSchool?.color || Colors.primary} />
@@ -2077,6 +2104,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...Shadows.small,
+  },
+  exitHeaderBtn: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
   },
   heroCardContainer: {
     marginBottom: 16,
