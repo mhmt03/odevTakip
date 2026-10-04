@@ -192,3 +192,8 @@ export interface StudentGradeRow {
   quizAvg?: number | null;
   overallAvg?: number | null;
 }
+
+export interface GradeLevelItem {
+  level: number;
+  label: string;
+}

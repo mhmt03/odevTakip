@@ -34,7 +34,15 @@ import {
   resetDaySlotTimes,
   loadOfficialWeeklySchedule,
 } from '../database/operations/scheduleOperations';
-import { CourseName, LessonSlot, DaySlotInfo } from '../types';
+import {
+  getGradeLevels,
+  addGradeLevel,
+  updateGradeLevel,
+  deleteGradeLevel,
+  setGradeLevelsPreset,
+} from '../database/operations/gradeLevelOperations';
+import { CourseName, LessonSlot, DaySlotInfo, GradeLevelItem } from '../types';
+import { EmptyState } from '../components/EmptyState';
 import { DAYS_OF_WEEK } from '../utils/dateUtils';
 
 export const ScheduleManageScreen: React.FC = () => {
@@ -44,7 +52,16 @@ export const ScheduleManageScreen: React.FC = () => {
   const initialTab = route.params?.initialTab || 'courses';
   const initialDay = route.params?.initialDay !== undefined ? route.params.initialDay : 0;
 
-  const [activeTab, setActiveTab] = useState<'courses' | 'slots'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'courses' | 'slots' | 'grades'>(
+    initialTab === 'grades' ? 'grades' : initialTab === 'slots' ? 'slots' : 'courses'
+  );
+
+  // Grade levels state
+  const [gradeLevels, setGradeLevels] = useState<GradeLevelItem[]>([]);
+  const [gradeModal, setGradeModal] = useState(false);
+  const [editingGrade, setEditingGrade] = useState<GradeLevelItem | null>(null);
+  const [gradeNumInput, setGradeNumInput] = useState('');
+  const [gradeLabelInput, setGradeLabelInput] = useState('');
 
   // Courses state
   const [courses, setCourses] = useState<CourseName[]>([]);
@@ -79,14 +96,16 @@ export const ScheduleManageScreen: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const crs = await getCourses();
+      const [crs, slt, cDays, gLevels] = await Promise.all([
+        getCourses(),
+        getLessonSlots(),
+        getCustomDaysWithOverrides(),
+        getGradeLevels(),
+      ]);
       setCourses(crs);
-
-      const slt = await getLessonSlots();
       setSlots(slt);
-
-      const cDays = await getCustomDaysWithOverrides();
       setCustomDays(cDays);
+      setGradeLevels(gLevels);
 
       if (slotDayTab > 0) {
         const dSlt = await getSlotsForDay(slotDayTab);
@@ -108,6 +127,86 @@ export const ScheduleManageScreen: React.FC = () => {
       getSlotsForDay(slotDayTab).then(setDaySlots);
     }
   }, [slotDayTab]);
+
+  // Grade level handlers
+  const handleOpenAddGrade = () => {
+    setEditingGrade(null);
+    setGradeNumInput('');
+    setGradeLabelInput('');
+    setGradeModal(true);
+  };
+
+  const handleOpenEditGrade = (item: GradeLevelItem) => {
+    setEditingGrade(item);
+    setGradeNumInput(String(item.level));
+    setGradeLabelInput(item.label);
+    setGradeModal(true);
+  };
+
+  const handleSaveGrade = async () => {
+    const num = parseInt(gradeNumInput.trim(), 10);
+    if (isNaN(num) || num < 1 || num > 99) {
+      Alert.alert('Uyarı', 'Lütfen geçerli bir sınıf düzeyi numarası giriniz (Örn: 9, 10, 11 veya 5).');
+      return;
+    }
+    const label = gradeLabelInput.trim() || `${num}. Sınıf`;
+
+    try {
+      if (editingGrade) {
+        await updateGradeLevel(editingGrade.level, num, label);
+      } else {
+        await addGradeLevel(num, label);
+      }
+      setGradeModal(false);
+      const updated = await getGradeLevels();
+      setGradeLevels(updated);
+    } catch (e) {
+      Alert.alert('Hata', 'Sınıf düzeyi kaydedilemedi.');
+    }
+  };
+
+  const handleDeleteGrade = (item: GradeLevelItem) => {
+    Alert.alert(
+      'Düzeyi Sil',
+      `"${item.label}" sınıf düzeyini silmek istediğinize emin misiniz?`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const updated = await deleteGradeLevel(item.level);
+              setGradeLevels(updated);
+            } catch (e) {
+              Alert.alert('Hata', 'Sınıf düzeyi silinemedi.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleApplyPreset = (preset: 'high' | 'middle' | 'primary' | 'all', name: string) => {
+    Alert.alert(
+      'Şablon Uygula',
+      `Sınıf düzeyleri "${name}" olarak güncellensin mi?`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Uygula',
+          onPress: async () => {
+            try {
+              const updated = await setGradeLevelsPreset(preset);
+              setGradeLevels(updated);
+            } catch (e) {
+              Alert.alert('Hata', 'Şablon uygulanamadı.');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // Course handlers
   const handleOpenAddCourse = () => {
@@ -395,7 +494,7 @@ export const ScheduleManageScreen: React.FC = () => {
     <View style={styles.container}>
       <Header
         title="Tanımlamalar"
-        subtitle="Ders Adları ve Saat Aralıkları"
+        subtitle="Ders, Saat ve Sınıf Düzeyleri"
         showBack
         onBack={() => navigation.goBack()}
       />
@@ -408,11 +507,11 @@ export const ScheduleManageScreen: React.FC = () => {
         >
           <Ionicons
             name="book-outline"
-            size={18}
+            size={16}
             color={activeTab === 'courses' ? Colors.primary : Colors.textSecondary}
           />
           <Text style={[styles.tabBtnText, activeTab === 'courses' && styles.tabBtnTextActive]}>
-            Ders Adları ({courses.length})
+            Dersler ({courses.length})
           </Text>
         </TouchableOpacity>
 
@@ -422,11 +521,25 @@ export const ScheduleManageScreen: React.FC = () => {
         >
           <Ionicons
             name="time-outline"
-            size={18}
+            size={16}
             color={activeTab === 'slots' ? Colors.primary : Colors.textSecondary}
           />
           <Text style={[styles.tabBtnText, activeTab === 'slots' && styles.tabBtnTextActive]}>
-            Ders Saatleri ({slots.length})
+            Saatler ({slots.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'grades' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('grades')}
+        >
+          <Ionicons
+            name="school-outline"
+            size={16}
+            color={activeTab === 'grades' ? Colors.primary : Colors.textSecondary}
+          />
+          <Text style={[styles.tabBtnText, activeTab === 'grades' && styles.tabBtnTextActive]}>
+            Düzeyler ({gradeLevels.length})
           </Text>
         </TouchableOpacity>
       </View>
@@ -883,6 +996,103 @@ export const ScheduleManageScreen: React.FC = () => {
         </View>
       )}
 
+      {/* GRADES TAB */}
+      {activeTab === 'grades' && (
+        <View style={styles.tabContent}>
+          <View style={styles.contentHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Tanımlı Sınıf Düzeyleri</Text>
+              <Text style={styles.sectionSub}>
+                Yıllık planda takip edilecek kademeler ({gradeLevels.length} Seviye)
+              </Text>
+            </View>
+            <Button title="Yeni Düzey" icon="add" size="sm" onPress={handleOpenAddGrade} />
+          </View>
+
+          {/* Quick Presets */}
+          <View style={styles.presetSection}>
+            <Text style={styles.presetTitle}>Hızlı Kademe Şablonları:</Text>
+            <View style={styles.presetButtonsRow}>
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() => handleApplyPreset('high', 'Lise (9, 10, 11, 12)')}
+              >
+                <Ionicons name="school" size={13} color={Colors.primary} />
+                <Text style={styles.presetChipText}>Lise (9-12)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() => handleApplyPreset('middle', 'Ortaokul (5, 6, 7, 8)')}
+              >
+                <Ionicons name="book" size={13} color={Colors.secondary} />
+                <Text style={styles.presetChipText}>Ortaokul (5-8)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() => handleApplyPreset('primary', 'İlkokul (1, 2, 3, 4)')}
+              >
+                <Ionicons name="pencil" size={13} color="#059669" />
+                <Text style={styles.presetChipText}>İlkokul (1-4)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.presetChip}
+                onPress={() => handleApplyPreset('all', 'Tüm Kademeler (1-12)')}
+              >
+                <Ionicons name="layers-outline" size={13} color="#7C3AED" />
+                <Text style={styles.presetChipText}>Tümü (1-12)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <FlatList
+            data={gradeLevels}
+            keyExtractor={(item) => item.level.toString()}
+            contentContainerStyle={styles.listPadding}
+            renderItem={({ item }) => (
+              <Card style={styles.itemCard}>
+                <View style={styles.itemRow}>
+                  <View style={[styles.codeBadge, { backgroundColor: Colors.primaryLight }]}>
+                    <Text style={[styles.codeText, { color: Colors.primaryDark, fontWeight: '800' }]}>
+                      {item.level}
+                    </Text>
+                  </View>
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemName}>{item.label}</Text>
+                    <Text style={styles.itemSub}>Düzey Seviyesi: {item.level}</Text>
+                  </View>
+                  <View style={styles.itemActions}>
+                    <TouchableOpacity
+                      style={styles.iconBtn}
+                      onPress={() => handleOpenEditGrade(item)}
+                    >
+                      <Ionicons name="pencil" size={16} color={Colors.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.iconBtn}
+                      onPress={() => handleDeleteGrade(item)}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={Colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Card>
+            )}
+            ListEmptyComponent={
+              <EmptyState
+                icon="school-outline"
+                title="Sınıf Düzeyi Bulunamadı"
+                description="Henüz hiçbir sınıf düzeyi tanımlanmamış. Yukarıdaki şablonlardan seçebilir veya 'Yeni Düzey' butonuyla ekleyebilirsiniz."
+                actionTitle="Lise Şablonunu Yükle"
+                onAction={() => handleApplyPreset('high', 'Lise (9, 10, 11, 12)')}
+              />
+            }
+          />
+        </View>
+      )}
+
       {/* Course Modal */}
       <Modal visible={courseModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -1014,11 +1224,90 @@ export const ScheduleManageScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Grade Level Modal */}
+      <Modal visible={gradeModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>
+                {editingGrade ? 'Sınıf Düzeyini Düzenle' : 'Yeni Sınıf Düzeyi Tanımla'}
+              </Text>
+              <TouchableOpacity onPress={() => setGradeModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Input
+              label="Düzey Numarası *"
+              placeholder="Örn: 9, 10, 11 veya 5"
+              value={gradeNumInput}
+              onChangeText={setGradeNumInput}
+              keyboardType="numeric"
+            />
+
+            <Input
+              label="Etiket / Başlık"
+              placeholder={gradeNumInput ? `${gradeNumInput}. Sınıf` : 'Örn: 9. Sınıf'}
+              value={gradeLabelInput}
+              onChangeText={setGradeLabelInput}
+            />
+
+            <View style={styles.modalActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setGradeModal(false)}
+              />
+              <Button
+                title={editingGrade ? 'Güncelle' : 'Kaydet'}
+                style={{ flex: 1 }}
+                onPress={handleSaveGrade}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  presetSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  presetTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  presetButtonsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  presetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 5,
+  },
+  presetChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,

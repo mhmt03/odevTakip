@@ -43,20 +43,15 @@ import {
   removeYearlyPlanPdf,
 } from '../utils/pdfPlanService';
 import { getTodayDateString, formatDateToTR } from '../utils/dateUtils';
-import { YearlyPlanItem, CourseName, ClassItem } from '../types';
-
-const GRADE_LEVELS = [
-  { level: 11, label: '11. Sınıf' },
-  { level: 12, label: '12. Sınıf' },
-  { level: 9, label: '9. Sınıf' },
-  { level: 10, label: '10. Sınıf' },
-];
+import { getGradeLevels } from '../database/operations/gradeLevelOperations';
+import { YearlyPlanItem, CourseName, ClassItem, GradeLevelItem } from '../types';
 
 export const YearlyPlanScreen: React.FC = () => {
   const navigation = useNavigation<any>();
 
   const [courses, setCourses] = useState<CourseName[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [gradeLevels, setGradeLevels] = useState<GradeLevelItem[]>([]);
   const [selectedGradeLevel, setSelectedGradeLevel] = useState<number>(11);
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [plans, setPlans] = useState<YearlyPlanItem[]>([]);
@@ -88,9 +83,20 @@ export const YearlyPlanScreen: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [crs, cls] = await Promise.all([getCourses(), getClasses()]);
+      const [crs, cls, gLevels] = await Promise.all([
+        getCourses(),
+        getClasses(),
+        getGradeLevels(),
+      ]);
       setCourses(crs);
       setClasses(cls);
+      setGradeLevels(gLevels);
+
+      let targetGrade = selectedGradeLevel;
+      if (gLevels.length > 0 && !gLevels.some((g) => g.level === targetGrade)) {
+        targetGrade = gLevels[0].level;
+        setSelectedGradeLevel(targetGrade);
+      }
 
       let targetCourseId = selectedCourseId;
       if (!targetCourseId && crs.length > 0) {
@@ -102,13 +108,13 @@ export const YearlyPlanScreen: React.FC = () => {
 
       if (targetCourseId) {
         // Verify schedule for selected course and grade
-        const schedInfo = await getScheduleInfoForCourseAndGrade(targetCourseId, selectedGradeLevel);
+        const schedInfo = await getScheduleInfoForCourseAndGrade(targetCourseId, targetGrade);
         setScheduleInfo(schedInfo);
 
         // Fetch plans and pdf document for this grade level and course
         const [planList, doc] = await Promise.all([
-          getYearlyPlans(targetCourseId, selectedGradeLevel),
-          getYearlyPlanDocument(targetCourseId, selectedGradeLevel),
+          getYearlyPlans(targetCourseId, targetGrade),
+          getYearlyPlanDocument(targetCourseId, targetGrade),
         ]);
         setPlans(planList);
         setPdfDoc(doc);
@@ -404,11 +410,21 @@ export const YearlyPlanScreen: React.FC = () => {
         }}
       />
 
-      {/* 1. Sınıf Düzeyi Seçicisi (9, 10, 11, 12) */}
+      {/* 1. Sınıf Düzeyi Seçicisi */}
       <View style={styles.levelBar}>
-        <Text style={styles.levelBarLabel}>Sınıf Düzeyi:</Text>
+        <View style={styles.levelBarHeader}>
+          <Text style={styles.levelBarLabel}>Sınıf Düzeyi:</Text>
+          <TouchableOpacity
+            style={styles.manageLevelsBtn}
+            onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'grades' })}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="settings-outline" size={13} color={Colors.primary} />
+            <Text style={styles.manageLevelsBtnText}>Düzeyleri Yönet</Text>
+          </TouchableOpacity>
+        </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.levelScroll}>
-          {GRADE_LEVELS.map((g) => {
+          {gradeLevels.map((g) => {
             const isSel = selectedGradeLevel === g.level;
             return (
               <TouchableOpacity
@@ -874,19 +890,37 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   levelBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: Colors.card,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    gap: 10,
+    gap: 8,
+  },
+  levelBarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
   },
   levelBarLabel: {
     fontSize: 13,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  manageLevelsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  manageLevelsBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primaryDark,
   },
   levelScroll: {
     gap: 8,
