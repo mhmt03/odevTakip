@@ -149,12 +149,15 @@ export const StudentNotesScreen: React.FC = () => {
       if (editingNoteId) {
         await updateNote(editingNoteId, noteInput.trim());
       } else {
+        const lessonInfoToSave = activeLesson
+          ? `${activeLesson.fullText} (${activeLesson.startTime} - ${activeLesson.endTime})`
+          : null;
         await createNote(
           selectedStudent.id,
           selectedClassId,
           noteInput.trim(),
           undefined,
-          activeLesson?.fullText
+          lessonInfoToSave
         );
       }
 

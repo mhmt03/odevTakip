@@ -17,10 +17,26 @@ export const getDayOfWeekIndex = (date: Date = new Date()): number => {
 export const formatDateToTR = (dateString?: string): string => {
   if (!dateString) return '-';
   try {
-    // If it contains time (YYYY-MM-DD HH:mm:ss or YYYY-MM-DD HH:mm)
-    if (dateString.includes(' ') || dateString.includes('T')) {
-      const d = new Date(dateString.replace(' ', 'T'));
-      if (isNaN(d.getTime())) return dateString;
+    const clean = dateString.trim().replace('T', ' ');
+    const parts = clean.split(' ');
+    const datePart = parts[0];
+    const timePart = parts[1];
+
+    const dParts = datePart.split('-');
+    if (dParts.length === 3) {
+      const formattedDate = `${dParts[2].padStart(2, '0')}.${dParts[1].padStart(2, '0')}.${dParts[0]}`;
+      if (timePart) {
+        const tParts = timePart.split(':');
+        if (tParts.length >= 2) {
+          return `${formattedDate} ${tParts[0].padStart(2, '0')}:${tParts[1].padStart(2, '0')}`;
+        }
+      }
+      return formattedDate;
+    }
+
+    // Fallback
+    const d = new Date(dateString);
+    if (!isNaN(d.getTime())) {
       const day = String(d.getDate()).padStart(2, '0');
       const month = String(d.getMonth() + 1).padStart(2, '0');
       const year = d.getFullYear();
@@ -28,11 +44,7 @@ export const formatDateToTR = (dateString?: string): string => {
       const minutes = String(d.getMinutes()).padStart(2, '0');
       return `${day}.${month}.${year} ${hours}:${minutes}`;
     }
-    // Date only YYYY-MM-DD
-    const parts = dateString.split('-');
-    if (parts.length === 3) {
-      return `${parts[2]}.${parts[1]}.${parts[0]}`;
-    }
+
     return dateString;
   } catch {
     return dateString;

@@ -97,19 +97,22 @@ export const createNote = async (
   if (finalLessonInfo === undefined) {
     try {
       const active = await getCurrentActiveLessonSummary();
-      finalLessonInfo = active ? active.fullText : null;
+      finalLessonInfo = active
+        ? `${active.fullText} (${active.startTime} - ${active.endTime})`
+        : null;
     } catch {
       finalLessonInfo = null;
     }
   }
 
   const res = await db.runAsync(
-    'INSERT INTO student_notes (student_id, class_id, note, note_date, lesson_info) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO student_notes (student_id, class_id, note, note_date, lesson_info, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     studentId,
     classId,
     note.trim(),
     dateToUse,
-    finalLessonInfo || null
+    finalLessonInfo || null,
+    dateToUse
   );
   return res.lastInsertRowId;
 };

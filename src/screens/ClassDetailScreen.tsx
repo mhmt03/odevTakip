@@ -41,9 +41,12 @@ import {
   getNotesByStudent,
   createNote,
   deleteNote,
+  updateNote,
+  getStudentNoteCounts,
   getQuickNotes,
   QuickNoteItem,
 } from '../database/operations/noteOperations';
+import { formatDateToTR } from '../utils/dateUtils';
 import {
   getCurrentActiveLessonSummary,
   CurrentLessonSummary,
@@ -134,6 +137,15 @@ export const ClassDetailScreen: React.FC = () => {
   const [savingNote, setSavingNote] = useState(false);
   const [activeLesson, setActiveLesson] = useState<CurrentLessonSummary | null>(null);
 
+  // Student note counts map (studentId -> count)
+  const [noteCounts, setNoteCounts] = useState<Record<number, number>>({});
+
+  // Single Note Edit Modal in detail modal
+  const [editNoteModalVisible, setEditNoteModalVisible] = useState(false);
+  const [editingNote, setEditingNote] = useState<StudentNote | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
+  const [savingEditNote, setSavingEditNote] = useState(false);
+
   // Multi-select / Bulk operations state
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
@@ -183,10 +195,22 @@ export const ClassDetailScreen: React.FC = () => {
   });
   const [savingSingleGrade, setSavingSingleGrade] = useState(false);
 
+  const loadNoteCounts = async () => {
+    try {
+      const counts = await getStudentNoteCounts();
+      setNoteCounts(counts);
+    } catch (e) {
+      console.error('Error loading note counts:', e);
+    }
+  };
+
   const loadStudents = async () => {
     try {
       setLoading(true);
-      const data = await getStudentsByClass(classId);
+      const [data] = await Promise.all([
+        getStudentsByClass(classId),
+        loadNoteCounts(),
+      ]);
       setStudents(data);
     } catch (error) {
       console.error('Error loading students:', error);
@@ -823,10 +847,14 @@ export const ClassDetailScreen: React.FC = () => {
     if (!text || !detailStudent) return;
     setSavingNote(true);
     try {
-      await createNote(detailStudent.id, classId, text, undefined, activeLesson?.fullText);
+      const lessonInfoToSave = activeLesson
+        ? `${activeLesson.fullText} (${activeLesson.startTime} - ${activeLesson.endTime})`
+        : null;
+      await createNote(detailStudent.id, classId, text, undefined, lessonInfoToSave);
       setNewNoteText('');
       const updatedNotes = await getNotesByStudent(detailStudent.id);
       setStudentNotesList(updatedNotes);
+      await loadNoteCounts();
     } catch (e) {
       Alert.alert('Hata', 'Görüş kaydedilemedi.');
     } finally {
@@ -834,15 +862,49 @@ export const ClassDetailScreen: React.FC = () => {
     }
   };
 
-  const handleDeleteNoteFromDetail = async (noteId: number) => {
-    if (!detailStudent) return;
+  const handleOpenEditNote = (n: StudentNote) => {
+    setEditingNote(n);
+    setEditingNoteText(n.note);
+    setEditNoteModalVisible(true);
+  };
+
+  const handleSaveEditNote = async () => {
+    if (!editingNote || !editingNoteText.trim() || !detailStudent) return;
+    setSavingEditNote(true);
     try {
-      await deleteNote(noteId);
+      await updateNote(editingNote.id, editingNoteText.trim());
+      setEditNoteModalVisible(false);
+      setEditingNote(null);
+      setEditingNoteText('');
       const updatedNotes = await getNotesByStudent(detailStudent.id);
       setStudentNotesList(updatedNotes);
+      await loadNoteCounts();
     } catch (e) {
-      Alert.alert('Hata', 'Görüş silinemedi.');
+      Alert.alert('Hata', 'Görüş güncellenemedi.');
+    } finally {
+      setSavingEditNote(false);
     }
+  };
+
+  const handleDeleteNoteFromDetail = async (noteId: number) => {
+    if (!detailStudent) return;
+    Alert.alert('Görüşü Sil', 'Bu görüş kaydını silmek istediğinize emin misiniz?', [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteNote(noteId);
+            const updatedNotes = await getNotesByStudent(detailStudent.id);
+            setStudentNotesList(updatedNotes);
+            await loadNoteCounts();
+          } catch (e) {
+            Alert.alert('Hata', 'Görüş silinemedi.');
+          }
+        },
+      },
+    ]);
   };
 
   // --- MULTI-SELECT & BULK ACTIONS ---
@@ -1206,11 +1268,22 @@ export const ClassDetailScreen: React.FC = () => {
                     onPress={() => handleOpenStudentDetail(item)}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.studentName}>
-                      {item.first_name} {item.last_name}
-                    </Text>
+                    <View style={styles.studentNameRow}>
+                      <Text style={styles.studentName}>
+                        {item.first_name} {item.last_name}
+                      </Text>
+                      {(noteCounts[item.id] || 0) > 0 && (
+                        <View style={styles.inlineNoteBadge}>
+                          <Ionicons name="chatbubbles" size={10} color="#B45309" />
+                          <Text style={styles.inlineNoteBadgeText}>
+                            {noteCounts[item.id]}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.studentSubInfo}>
                       No: {item.student_number || '-'}
+                      {(noteCounts[item.id] || 0) > 0 ? ` • ${noteCounts[item.id]} görüş` : ''}
                       {item.notes ? ` • ${item.notes}` : ''}
                     </Text>
                   </TouchableOpacity>
@@ -1219,10 +1292,30 @@ export const ClassDetailScreen: React.FC = () => {
                     <View style={styles.studentActions}>
                       {/* Quick opinion / student detail modal */}
                       <TouchableOpacity
-                        style={[styles.smallIconBtn, { backgroundColor: Colors.warningLight }]}
+                        style={[
+                          styles.opinionCountBtn,
+                          (noteCounts[item.id] || 0) > 0
+                            ? styles.opinionCountBtnActive
+                            : styles.opinionCountBtnZero,
+                        ]}
                         onPress={() => handleOpenStudentDetail(item)}
+                        activeOpacity={0.7}
                       >
-                        <Ionicons name="chatbox-ellipses" size={16} color={Colors.warningDark} />
+                        <Ionicons
+                          name="chatbox-ellipses"
+                          size={14}
+                          color={(noteCounts[item.id] || 0) > 0 ? '#B45309' : Colors.textMuted}
+                        />
+                        <Text
+                          style={[
+                            styles.opinionCountBtnText,
+                            (noteCounts[item.id] || 0) > 0
+                              ? styles.opinionCountBtnTextActive
+                              : styles.opinionCountBtnTextZero,
+                          ]}
+                        >
+                          {noteCounts[item.id] || 0}
+                        </Text>
                       </TouchableOpacity>
 
                       {/* Edit button */}
@@ -2682,15 +2775,9 @@ export const ClassDetailScreen: React.FC = () => {
                         <Text style={styles.noteItemText}>{n.note}</Text>
                         <View style={styles.noteMetaRow}>
                           <View style={styles.noteDateWrap}>
-                            <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
+                            <Ionicons name="calendar-outline" size={11} color={Colors.textSecondary} />
                             <Text style={styles.noteItemDate}>
-                              {new Date(n.created_at || Date.now()).toLocaleDateString('tr-TR', {
-                                day: 'numeric',
-                                month: 'long',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
+                              {formatDateToTR(n.note_date || n.created_at)}
                             </Text>
                           </View>
                           {n.lesson_info ? (
@@ -2701,13 +2788,24 @@ export const ClassDetailScreen: React.FC = () => {
                           ) : null}
                         </View>
                       </View>
-                      <TouchableOpacity
-                        style={styles.deleteNoteBtn}
-                        onPress={() => handleDeleteNoteFromDetail(n.id)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons name="trash-outline" size={16} color="#DC2626" />
-                      </TouchableOpacity>
+                      <View style={styles.noteActionsRow}>
+                        <TouchableOpacity
+                          style={styles.editNoteBtn}
+                          onPress={() => handleOpenEditNote(n)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="Görüşü Düzenle"
+                        >
+                          <Ionicons name="pencil" size={14} color={Colors.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.deleteNoteBtn}
+                          onPress={() => handleDeleteNoteFromDetail(n.id)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="Görüşü Sil"
+                        >
+                          <Ionicons name="trash-outline" size={14} color="#DC2626" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   ))
                 )}
@@ -2735,6 +2833,62 @@ export const ClassDetailScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Student Note Modal */}
+      <Modal visible={editNoteModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Görüşü Düzenle</Text>
+                <Text style={styles.modalSubtitle}>
+                  {detailStudent?.first_name} {detailStudent?.last_name}
+                  {editingNote?.lesson_info ? ` • ${editingNote.lesson_info}` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setEditNoteModalVisible(false);
+                  setEditingNote(null);
+                  setEditingNoteText('');
+                }}
+              >
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Input
+              placeholder="Görüş metnini düzenleyin..."
+              value={editingNoteText}
+              onChangeText={setEditingNoteText}
+              multiline
+              numberOfLines={4}
+              style={{ minHeight: 90, textAlignVertical: 'top' }}
+            />
+
+            <View style={[styles.modalActions, { marginTop: 16 }]}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => {
+                  setEditNoteModalVisible(false);
+                  setEditingNote(null);
+                  setEditingNoteText('');
+                }}
+              />
+              <Button
+                title="Güncelle"
+                icon="checkmark"
+                loading={savingEditNote}
+                disabled={!editingNoteText.trim() || savingEditNote}
+                style={{ flex: 1 }}
+                onPress={handleSaveEditNote}
+              />
+            </View>
           </View>
         </View>
       </Modal>
@@ -3306,10 +3460,29 @@ const styles = StyleSheet.create({
   studentInfo: {
     flex: 1,
   },
+  studentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   studentName: {
     fontSize: 15,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  inlineNoteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+    gap: 3,
+  },
+  inlineNoteBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B45309',
   },
   studentSubInfo: {
     fontSize: 12,
@@ -3320,6 +3493,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  opinionCountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+    height: 32,
+    borderRadius: 8,
+    gap: 4,
+  },
+  opinionCountBtnActive: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  opinionCountBtnZero: {
+    backgroundColor: Colors.cardSubtle,
+  },
+  opinionCountBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  opinionCountBtnTextActive: {
+    color: '#B45309',
+  },
+  opinionCountBtnTextZero: {
+    color: Colors.textMuted,
   },
   smallIconBtn: {
     width: 32,
@@ -3950,8 +4150,20 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontWeight: '500',
   },
+  noteActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  editNoteBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: Colors.primaryLight,
+  },
   deleteNoteBtn: {
-    padding: 4,
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#FEE2E2',
   },
   fullHistoryBtn: {
     flexDirection: 'row',
