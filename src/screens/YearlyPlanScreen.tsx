@@ -446,117 +446,120 @@ export const YearlyPlanScreen: React.FC = () => {
         </ScrollView>
       </View>
 
-      {/* 3. Ders Programı Doğrulama ve Saat Bilgi Kartı */}
-      <View style={styles.statusSection}>
-        {scheduleInfo?.hasSchedule ? (
-          <View style={styles.verifiedScheduleCard}>
-            <View style={styles.verifiedRow}>
-              <View style={styles.verifiedIconWrap}>
-                <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.verifiedTitle}>
-                    {selectedGradeLevel}. Sınıf Ders Programı Doğrulandı
-                  </Text>
-                  <View style={styles.hoursBadge}>
-                    <Text style={styles.hoursBadgeText}>
-                      Haftalık {scheduleInfo.totalWeeklyHours} Saat
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.verifiedSub}>
-                  Şubeler: {scheduleInfo.distinctClasses.join(', ')} ({scheduleInfo.daysSummary})
-                </Text>
-              </View>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.warningScheduleCard}>
-            <View style={styles.warningRow}>
-              <Ionicons name="warning-outline" size={20} color="#B45309" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.warningTitle}>
-                  {selectedGradeLevel}. Sınıf İçin Ders Programı Bulunamadı
-                </Text>
-                <Text style={styles.warningSub}>
-                  Haftalık ders saatinin hesaplanması ve günlere dağıtılabilmesi için önce ders programınızı oluşturunuz.
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.goToScheduleBtn}
-                onPress={() => navigation.navigate('ScheduleTab')}
-              >
-                <Text style={styles.goToScheduleBtnText}>Programa Git</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* 4. Hızlı Aksiyon Şeridi (Excel Yükle & Şablon İndir) */}
-      <View style={styles.actionStrip}>
-        <TouchableOpacity
-          style={styles.actionStripBtn}
-          onPress={handleOpenBulkModal}
-        >
-          <Ionicons name="cloud-upload-outline" size={17} color={Colors.primary} />
-          <Text style={styles.actionStripBtnText}>Excel ile Yıllık Plan Yükle</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionStripSecondaryBtn}
-          onPress={handleDownloadTemplate}
-          disabled={loadingExcel}
-        >
-          <Ionicons name="document-text-outline" size={16} color={Colors.textSecondary} />
-          <Text style={styles.actionStripSecondaryBtnText}>Şablon İndir</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* PDF Dosyası Yönetim Çubuğu */}
-      <View style={styles.pdfSectionContainer}>
-        {pdfDoc ? (
-          <View style={styles.pdfBanner}>
-            <View style={styles.pdfIconCircle}>
-              <Ionicons name="document-text" size={18} color="#DC2626" />
-            </View>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={styles.pdfBannerTitle} numberOfLines={1}>{pdfDoc.file_name}</Text>
-              <Text style={styles.pdfBannerSub}>Yıllık Planın Orijinal PDF Dosyası</Text>
-            </View>
-            <TouchableOpacity style={styles.pdfViewBtn} onPress={handleViewPdf} activeOpacity={0.8}>
-              <Ionicons name="eye-outline" size={14} color="#FFFFFF" />
-              <Text style={styles.pdfViewBtnText}>PDF Aç</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.pdfDeleteBtn}
-              onPress={handleDeletePdf}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="trash-outline" size={16} color="#DC2626" />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.pdfAttachBtn}
-            onPress={handleUploadPdf}
-            activeOpacity={0.8}
-            disabled={loadingPdf}
-          >
-            <Ionicons name="document-attach-outline" size={17} color={Colors.primary} />
-            <Text style={styles.pdfAttachBtnText}>
-              {loadingPdf ? 'PDF Yükleniyor...' : 'Yıllık Planın Orijinal PDF Halini Sakla / Yükle'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
       {/* 5. Yıllık Plan Listesi */}
       <FlatList
         data={plans}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <View style={styles.listHeaderWrapper}>
+            {/* 3. Ders Programı Doğrulama ve Saat Bilgi Kartı */}
+            <View style={styles.statusSection}>
+              {scheduleInfo?.hasSchedule ? (
+                <View style={styles.verifiedScheduleCard}>
+                  <View style={styles.verifiedRow}>
+                    <View style={styles.verifiedIconWrap}>
+                      <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.verifiedTitle}>
+                          {selectedGradeLevel}. Sınıf Ders Programı Doğrulandı
+                        </Text>
+                        <View style={styles.hoursBadge}>
+                          <Text style={styles.hoursBadgeText}>
+                            Haftalık {scheduleInfo.totalWeeklyHours} Saat
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.verifiedSub}>
+                        Şubeler: {scheduleInfo.distinctClasses.join(', ')} ({scheduleInfo.daysSummary})
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.warningScheduleCard}>
+                  <View style={styles.warningRow}>
+                    <Ionicons name="warning-outline" size={20} color="#B45309" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.warningTitle}>
+                        {selectedGradeLevel}. Sınıf İçin Ders Programı Bulunamadı
+                      </Text>
+                      <Text style={styles.warningSub}>
+                        Haftalık ders saatinin hesaplanması ve günlere dağıtılabilmesi için önce ders programınızı oluşturunuz.
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.goToScheduleBtn}
+                      onPress={() => navigation.navigate('ScheduleTab')}
+                    >
+                      <Text style={styles.goToScheduleBtnText}>Programa Git</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* 4. Hızlı Aksiyon Şeridi (Excel Yükle & Şablon İndir) */}
+            <View style={styles.actionStrip}>
+              <TouchableOpacity
+                style={styles.actionStripBtn}
+                onPress={handleOpenBulkModal}
+              >
+                <Ionicons name="cloud-upload-outline" size={17} color={Colors.primary} />
+                <Text style={styles.actionStripBtnText}>Excel ile Yıllık Plan Yükle</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionStripSecondaryBtn}
+                onPress={handleDownloadTemplate}
+                disabled={loadingExcel}
+              >
+                <Ionicons name="document-text-outline" size={16} color={Colors.textSecondary} />
+                <Text style={styles.actionStripSecondaryBtnText}>Şablon İndir</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* PDF Dosyası Yönetim Çubuğu */}
+            <View style={styles.pdfSectionContainer}>
+              {pdfDoc ? (
+                <View style={styles.pdfBanner}>
+                  <View style={styles.pdfIconCircle}>
+                    <Ionicons name="document-text" size={18} color="#DC2626" />
+                  </View>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={styles.pdfBannerTitle} numberOfLines={1}>{pdfDoc.file_name}</Text>
+                    <Text style={styles.pdfBannerSub}>Yıllık Planın Orijinal PDF Dosyası</Text>
+                  </View>
+                  <TouchableOpacity style={styles.pdfViewBtn} onPress={handleViewPdf} activeOpacity={0.8}>
+                    <Ionicons name="eye-outline" size={14} color="#FFFFFF" />
+                    <Text style={styles.pdfViewBtnText}>PDF Aç</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.pdfDeleteBtn}
+                    onPress={handleDeletePdf}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.pdfAttachBtn}
+                  onPress={handleUploadPdf}
+                  activeOpacity={0.8}
+                  disabled={loadingPdf}
+                >
+                  <Ionicons name="document-attach-outline" size={17} color={Colors.primary} />
+                  <Text style={styles.pdfAttachBtnText}>
+                    {loadingPdf ? 'PDF Yükleniyor...' : 'Yıllık Planın Orijinal PDF Halini Sakla / Yükle'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        }
         ListEmptyComponent={
           <EmptyState
             icon="calendar-outline"
@@ -940,9 +943,11 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
     fontWeight: '700',
   },
+  listHeaderWrapper: {
+    paddingBottom: 4,
+  },
   statusSection: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
+    paddingTop: 8,
   },
   verifiedScheduleCard: {
     backgroundColor: '#F0FDF4',
@@ -1017,7 +1022,6 @@ const styles = StyleSheet.create({
   },
   actionStrip: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 8,
   },
@@ -1055,8 +1059,7 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   pdfSectionContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 6,
+    paddingBottom: 8,
   },
   pdfBanner: {
     flexDirection: 'row',
