@@ -71,6 +71,18 @@ export const getAllNotes = async (): Promise<StudentNote[]> => {
   return await db.getAllAsync<StudentNote>(query);
 };
 
+export const getStudentNoteCounts = async (): Promise<Record<number, number>> => {
+  const db = await getDB();
+  const rows = await db.getAllAsync<{ student_id: number; count: number }>(
+    'SELECT student_id, COUNT(*) as count FROM student_notes GROUP BY student_id'
+  );
+  const map: Record<number, number> = {};
+  for (const r of rows) {
+    map[r.student_id] = r.count;
+  }
+  return map;
+};
+
 export const createNote = async (
   studentId: number,
   classId: number,

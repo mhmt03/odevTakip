@@ -31,6 +31,7 @@ import {
   updateQuickNote,
   deleteQuickNote,
   resetDefaultQuickNotes,
+  getStudentNoteCounts,
   QuickNoteItem,
 } from '../database/operations/noteOperations';
 import { exportStudentNotesToExcel } from '../utils/excelService';
@@ -51,6 +52,7 @@ export const StudentNotesScreen: React.FC = () => {
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [noteCounts, setNoteCounts] = useState<Record<number, number>>({});
 
   // Quick preset tags state
   const [quickTags, setQuickTags] = useState<QuickNoteItem[]>([]);
@@ -67,12 +69,19 @@ export const StudentNotesScreen: React.FC = () => {
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [activeLesson, setActiveLesson] = useState<CurrentLessonSummary | null>(null);
 
+  const loadNoteCounts = async () => {
+    try {
+      const counts = await getStudentNoteCounts();
+      setNoteCounts(counts);
+    } catch (e) {
+      console.error('Error loading note counts:', e);
+    }
+  };
+
   const loadData = async () => {
     try {
-      const cls = await getClasses();
+      const [cls, tags] = await Promise.all([getClasses(), getQuickNotes(), loadNoteCounts()]);
       setClasses(cls);
-
-      const tags = await getQuickNotes();
       setQuickTags(tags);
 
       const initialClassId = route.params?.initialClassId;
@@ -97,6 +106,7 @@ export const StudentNotesScreen: React.FC = () => {
     try {
       const studs = await getStudentsByClass(classId);
       setStudents(studs);
+      loadNoteCounts();
 
       // If initialStudentId was passed in route params
       const initialStudentId = route.params?.initialStudentId;
@@ -151,9 +161,10 @@ export const StudentNotesScreen: React.FC = () => {
       setNoteInput('');
       setEditingNoteId(null);
 
-      // Refresh history
+      // Refresh history & counts
       const history = await getNotesByStudent(selectedStudent.id);
       setStudentHistory(history);
+      await loadNoteCounts();
     } catch (e) {
       Alert.alert('Hata', 'Görüş kaydedilemedi.');
     }
@@ -172,6 +183,7 @@ export const StudentNotesScreen: React.FC = () => {
               const history = await getNotesByStudent(selectedStudent.id);
               setStudentHistory(history);
             }
+            await loadNoteCounts();
           } catch (e) {
             Alert.alert('Hata', 'Kayıt silinemedi.');
           }
@@ -374,29 +386,51 @@ export const StudentNotesScreen: React.FC = () => {
             }
           />
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={() => handleOpenStudentModal(item)}
-          >
-            <Card style={styles.studentCard}>
-              <View style={styles.studentRow}>
-                <View style={styles.noCircle}>
-                  <Text style={styles.noText}>{item.student_number || '-'}</Text>
+        renderItem={({ item }) => {
+          const count = noteCounts[item.id] || 0;
+          return (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => handleOpenStudentModal(item)}
+            >
+              <Card style={styles.studentCard}>
+                <View style={styles.studentRow}>
+                  <View style={styles.noCircle}>
+                    <Text style={styles.noText}>{item.student_number || '-'}</Text>
+                  </View>
+                  <View style={styles.studentInfo}>
+                    <Text style={styles.studentName}>
+                      {item.first_name} {item.last_name}
+                    </Text>
+                    <Text style={styles.clickHint}>
+                      {count > 0 ? `${count} görüş kayıtlı` : 'Görüş yazmak için tıklayın'}
+                    </Text>
+                  </View>
+                  <View style={styles.rightActionWrap}>
+                    <View
+                      style={[
+                        styles.countBadge,
+                        count > 0 ? styles.countBadgeActive : styles.countBadgeZero,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.countBadgeText,
+                          count > 0 ? styles.countBadgeTextActive : styles.countBadgeTextZero,
+                        ]}
+                      >
+                        {count} görüş
+                      </Text>
+                    </View>
+                    <View style={styles.iconCircle}>
+                      <Ionicons name="chatbox-ellipses" size={18} color={Colors.primary} />
+                    </View>
+                  </View>
                 </View>
-                <View style={styles.studentInfo}>
-                  <Text style={styles.studentName}>
-                    {item.first_name} {item.last_name}
-                  </Text>
-                  <Text style={styles.clickHint}>Görüş yazmak için tıklayın</Text>
-                </View>
-                <View style={styles.iconCircle}>
-                  <Ionicons name="chatbox-ellipses" size={20} color={Colors.primary} />
-                </View>
-              </View>
-            </Card>
-          </TouchableOpacity>
-        )}
+              </Card>
+            </TouchableOpacity>
+          );
+        }}
       />
 
       {/* Student Opinion Modal */}
@@ -818,6 +852,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textSecondary,
     marginTop: 2,
+  },
+  rightActionWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  countBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  countBadgeActive: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  countBadgeZero: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  countBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  countBadgeTextActive: {
+    color: '#4338CA',
+  },
+  countBadgeTextZero: {
+    color: '#94A3B8',
   },
   iconCircle: {
     width: 34,
