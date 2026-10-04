@@ -7,10 +7,12 @@ import {
   ActivityIndicator,
   StyleSheet,
   Alert,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../theme/colors';
 import { getCachedPdfJs } from '../utils/pdfPlanService';
 
@@ -31,6 +33,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
   title,
   onShareOrExternal,
 }) => {
+  const insets = useSafeAreaInsets();
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [localScript, setLocalScript] = useState<string | null>(null);
@@ -329,99 +332,104 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
       visible={visible}
       transparent={true}
       animationType="slide"
+      statusBarTranslucent={true}
       onRequestClose={onClose}
     >
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalContainer}>
-          {/* HEADER */}
-          <View style={styles.modalHeader}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                <Text style={styles.modalClassTag}>PDF DOKÜMANI</Text>
-                {totalPages !== null && (
-                  <View style={styles.pageBadge}>
-                    <Text style={styles.pageBadgeText}>{totalPages} Sayfa</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.modalTitle} numberOfLines={1}>
-                {fileName || title || 'Yıllık Plan PDF'}
+      <View style={styles.modalRoot}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={true} />
+
+        {/* HEADER */}
+        <View style={[styles.modalHeader, { paddingTop: Math.max(insets.top, 10) + 8 }]}>
+          <View style={{ flex: 1, marginRight: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              <Text style={styles.modalClassTag}>PDF DOKÜMANI</Text>
+              {totalPages !== null && (
+                <View style={styles.pageBadge}>
+                  <Text style={styles.pageBadgeText}>{totalPages} Sayfa</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.modalTitle} numberOfLines={1}>
+              {fileName || title || 'Yıllık Plan PDF'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={onClose}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.modalCloseBtn}
+          >
+            <Ionicons name="close" size={24} color={Colors.textPrimary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* WEBVIEW CONTAINER */}
+        <View style={styles.viewerContent}>
+          {loading ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.loadingText}>PDF Hazırlanıyor...</Text>
+            </View>
+          ) : pdfBase64 ? (
+            <WebView
+              originWhitelist={['*']}
+              source={{ html: generateHtml(pdfBase64, localScript) }}
+              style={{ flex: 1, backgroundColor: '#0F172A' }}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              allowFileAccess={true}
+              allowUniversalAccessFromFileURLs={true}
+              allowFileAccessFromFileURLs={true}
+              scalesPageToFit={true}
+              scrollEnabled={true}
+              bounces={false}
+              showsVerticalScrollIndicator={true}
+              startInLoadingState={false}
+              mixedContentMode="always"
+              onMessage={(event) => {
+                try {
+                  const data = JSON.parse(event.nativeEvent.data);
+                  if (data.type === 'PAGES' && typeof data.totalPages === 'number') {
+                    setTotalPages(data.totalPages);
+                  }
+                } catch (e) {
+                  // Ignore non-json messages
+                }
+              }}
+            />
+          ) : (
+            <View style={styles.emptyBox}>
+              <Ionicons name="alert-circle-outline" size={48} color={Colors.warning} />
+              <Text style={styles.emptyText}>
+                PDF verisi okunamadı.
               </Text>
             </View>
+          )}
+        </View>
+
+        {/* FOOTER ACTIONS */}
+        <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, 14) + 16 }]}>
+          {onShareOrExternal && (
             <TouchableOpacity
-              onPress={onClose}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={styles.modalCloseBtn}
-            >
-              <Ionicons name="close" size={22} color={Colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          {/* WEBVIEW CONTAINER */}
-          <View style={styles.viewerContent}>
-            {loading ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator size="large" color={Colors.primary} />
-                <Text style={styles.loadingText}>PDF Hazırlanıyor...</Text>
-              </View>
-            ) : pdfBase64 ? (
-              <WebView
-                originWhitelist={['*']}
-                source={{ html: generateHtml(pdfBase64, localScript) }}
-                style={{ flex: 1, backgroundColor: '#0F172A' }}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                allowFileAccess={true}
-                allowUniversalAccessFromFileURLs={true}
-                allowFileAccessFromFileURLs={true}
-                scalesPageToFit={true}
-                scrollEnabled={true}
-                bounces={false}
-                showsVerticalScrollIndicator={true}
-                startInLoadingState={false}
-                mixedContentMode="always"
-                onMessage={(event) => {
-                  try {
-                    const data = JSON.parse(event.nativeEvent.data);
-                    if (data.type === 'PAGES' && typeof data.totalPages === 'number') {
-                      setTotalPages(data.totalPages);
-                    }
-                  } catch (e) {
-                    // Ignore non-json messages
-                  }
-                }}
-              />
-            ) : (
-              <View style={styles.emptyBox}>
-                <Ionicons name="alert-circle-outline" size={48} color={Colors.warning} />
-                <Text style={styles.emptyText}>
-                  PDF verisi okunamadı.
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* FOOTER ACTIONS */}
-          <View style={styles.modalFooter}>
-            {onShareOrExternal && (
-              <TouchableOpacity
-                style={styles.shareBtn}
-                onPress={onShareOrExternal}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="open-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.shareBtnText}>Dış Uygulamada Aç / Paylaş</Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={onClose}
+              style={styles.shareBtn}
+              onPress={onShareOrExternal}
               activeOpacity={0.8}
             >
-              <Text style={styles.closeBtnText}>Kapat</Text>
+              <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.shareBtnText}>Dış Uygulamada Aç / Paylaş</Text>
             </TouchableOpacity>
-          </View>
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.closeBtn,
+              !onShareOrExternal && { flex: 1 },
+            ]}
+            onPress={onClose}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="close-circle-outline" size={18} color={Colors.textSecondary} />
+            <Text style={styles.closeBtnText}>Kapat</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -429,27 +437,26 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  modalBackdrop: {
+  modalRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    justifyContent: 'flex-end',
-  },
-  modalContainer: {
-    height: '90%',
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 16,
-    paddingHorizontal: 16,
-    paddingBottom: 20,
-    display: 'flex',
     flexDirection: 'column',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    zIndex: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
   },
   modalClassTag: {
     fontSize: 11,
@@ -480,8 +487,6 @@ const styles = StyleSheet.create({
   },
   viewerContent: {
     flex: 1,
-    overflow: 'hidden',
-    borderRadius: 12,
     backgroundColor: '#0F172A',
   },
   loadingBox: {
@@ -511,8 +516,13 @@ const styles = StyleSheet.create({
   },
   modalFooter: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   shareBtn: {
     flex: 1,
@@ -520,26 +530,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.secondary,
-    paddingVertical: 12,
-    borderRadius: 10,
-    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 12,
+    gap: 8,
   },
   shareBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
   closeBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-    justifyContent: 'center',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    gap: 6,
   },
   closeBtnText: {
     color: Colors.textSecondary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
 });
