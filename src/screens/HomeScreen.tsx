@@ -57,6 +57,13 @@ import { YearlyPlanItem, ScheduleItem } from '../types';
 import { School, getSchools, getActiveSchool, setActiveSchool, createSchool, SCHOOL_COLORS } from '../database/operations/schoolOperations';
 import { useSchoolTheme } from '../context/SchoolThemeContext';
 
+interface HeroNavTarget {
+  day: number;
+  lesson: ScheduleItem;
+  dayLessons: ScheduleItem[];
+  index: number;
+}
+
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const { reloadSchoolTheme, bgTint } = useSchoolTheme();
@@ -115,13 +122,6 @@ export const HomeScreen: React.FC = () => {
     setShowAllSchoolsSchedule(val);
     await setShowAllSchoolsSetting(val);
     await loadDaySchedule(selectedDay, val);
-    try {
-      const info = await getActiveAndTodayLessons(val ? 'all' : undefined);
-      setLessonInfo(info);
-      setHeroNavIndex(null);
-    } catch (e) {
-      console.error(e);
-    }
   };
 
   const handleSelectSchool = async (schoolId: number) => {
@@ -207,7 +207,7 @@ export const HomeScreen: React.FC = () => {
     nextLesson: null,
     todayLessons: [],
   });
-  const [heroNavIndex, setHeroNavIndex] = useState<number | null>(null);
+  const [heroNavTarget, setHeroNavTarget] = useState<HeroNavTarget | null>(null);
   const [heroTopic, setHeroTopic] = useState<YearlyPlanItem | null>(null);
   const [heroTopicLoading, setHeroTopicLoading] = useState(false);
   const [stats, setStats] = useState({
@@ -259,6 +259,50 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
+  const fetchAssignedLessonsForDay = async (day: number, overrideShowAll?: boolean): Promise<ScheduleItem[]> => {
+    try {
+      const showAll = overrideShowAll !== undefined ? overrideShowAll : showAllSchoolsSchedule;
+      const items = await getScheduleByDay(day, showAll ? 'all' : undefined);
+      const valid = items.filter((item) => item.class_id || item.course_id);
+      if (showAll) {
+        return mergeAndDetectConflicts(valid, activeSchool?.id);
+      }
+      return valid;
+    } catch (err) {
+      console.error('Error fetching lessons for day', day, err);
+      return [];
+    }
+  };
+
+  const findNextDayWithLessons = async (
+    startDay: number,
+    overrideShowAll?: boolean
+  ): Promise<{ day: number; lessons: ScheduleItem[] } | null> => {
+    for (let offset = 1; offset <= 7; offset++) {
+      const nextDay = ((startDay - 1 + offset) % 7) + 1;
+      const lessons = await fetchAssignedLessonsForDay(nextDay, overrideShowAll);
+      if (lessons.length > 0) {
+        return { day: nextDay, lessons };
+      }
+    }
+    return null;
+  };
+
+  const findPrevDayWithLessons = async (
+    startDay: number,
+    overrideShowAll?: boolean
+  ): Promise<{ day: number; lessons: ScheduleItem[] } | null> => {
+    for (let offset = 1; offset <= 7; offset++) {
+      let prevDay = startDay - offset;
+      while (prevDay <= 0) prevDay += 7;
+      const lessons = await fetchAssignedLessonsForDay(prevDay, overrideShowAll);
+      if (lessons.length > 0) {
+        return { day: prevDay, lessons };
+      }
+    }
+    return null;
+  };
+
   const loadData = async (dayToLoad?: number) => {
     try {
       setCurrentTime(getCurrentTimeString());
@@ -288,7 +332,7 @@ export const HomeScreen: React.FC = () => {
     useCallback(() => {
       const currentDay = getDayOfWeekIndex();
       setSelectedDay(currentDay);
-      setHeroNavIndex(null);
+      setHeroNavTarget(null);
       loadData(currentDay);
       const interval = setInterval(() => {
         setCurrentTime(getCurrentTimeString());
@@ -304,7 +348,7 @@ export const HomeScreen: React.FC = () => {
     setRefreshing(true);
     const currentDay = getDayOfWeekIndex();
     setSelectedDay(currentDay);
-    setHeroNavIndex(null);
+    setHeroNavTarget(null);
     await loadData(currentDay);
     setRefreshing(false);
   };
@@ -323,13 +367,13 @@ export const HomeScreen: React.FC = () => {
 
   const handleJumpToToday = () => {
     setSelectedDay(todayIndex);
-    setHeroNavIndex(null);
+    setHeroNavTarget(null);
   };
 
   const handleJumpToCurrentDayAndLesson = async () => {
     const currentDay = getDayOfWeekIndex();
     setSelectedDay(currentDay);
-    setHeroNavIndex(null);
+    setHeroNavTarget(null);
     await loadDaySchedule(currentDay);
     try {
       const info = await getActiveAndTodayLessons(showAllSchoolsSchedule ? 'all' : undefined);
@@ -544,40 +588,45 @@ export const HomeScreen: React.FC = () => {
   const currentActiveIndex = lessonInfo.currentLesson
     ? todayLessons.findIndex((item) => item.slot_id === lessonInfo.currentLesson?.slot_id)
     : -1;
-  const nextActiveIndex = lessonInfo.nextLesson
-    ? todayLessons.findIndex((item) => item.slot_id === lessonInfo.nextLesson?.slot_id)
-    : -1;
 
-  let effectiveHeroIndex = -1;
-  if (todayLessons.length > 0) {
-    if (heroNavIndex !== null && heroNavIndex >= 0 && heroNavIndex < todayLessons.length) {
-      effectiveHeroIndex = heroNavIndex;
-    } else if (currentActiveIndex !== -1) {
-      effectiveHeroIndex = currentActiveIndex;
-    } else if (nextActiveIndex !== -1) {
-      effectiveHeroIndex = nextActiveIndex;
-    } else {
-      effectiveHeroIndex = 0;
-    }
-  }
+  // Gezinme hedefi varsa o ders gösterilir.
+  // Gezinme hedefi yoksa SADECE o an devam eden aktif ders gösterilir.
+  // Eğer o an ders yoksa effectiveHeroLesson = null olur ve 'Şu An Boş Ders' kartı gösterilir!
+  const effectiveHeroLesson: ScheduleItem | null = heroNavTarget
+    ? heroNavTarget.lesson
+    : (lessonInfo.currentLesson || null);
 
-  const effectiveHeroLesson: ScheduleItem | null =
-    effectiveHeroIndex >= 0 && effectiveHeroIndex < todayLessons.length
-      ? todayLessons[effectiveHeroIndex]
-      : (lessonInfo.currentLesson || null);
+  const heroDay = heroNavTarget ? heroNavTarget.day : todayIndex;
+  const isHeroToday = heroDay === todayIndex;
+  const heroDayObj = DAYS_OF_WEEK.find((d) => d.id === heroDay);
+  const heroDayName = heroDayObj ? heroDayObj.name : '';
 
   const isCurrentLesson = Boolean(
     lessonInfo.currentLesson &&
     effectiveHeroLesson &&
-    effectiveHeroLesson.slot_id === lessonInfo.currentLesson.slot_id
+    effectiveHeroLesson.slot_id === lessonInfo.currentLesson.slot_id &&
+    isHeroToday &&
+    !heroNavTarget
   );
 
   const isNextLesson = Boolean(
     !lessonInfo.currentLesson &&
     lessonInfo.nextLesson &&
     effectiveHeroLesson &&
-    effectiveHeroLesson.slot_id === lessonInfo.nextLesson.slot_id
+    effectiveHeroLesson.slot_id === lessonInfo.nextLesson.slot_id &&
+    isHeroToday &&
+    !heroNavTarget
   );
+
+  const heroDisplayIndex = heroNavTarget
+    ? heroNavTarget.index
+    : currentActiveIndex >= 0
+    ? currentActiveIndex
+    : 0;
+
+  const heroDisplayTotal = heroNavTarget
+    ? heroNavTarget.dayLessons.length
+    : todayLessons.length;
 
   useEffect(() => {
     let isMounted = true;
@@ -619,20 +668,202 @@ export const HomeScreen: React.FC = () => {
     effectiveHeroLesson?.day_of_week,
   ]);
 
-  const handlePrevHeroLesson = () => {
-    if (effectiveHeroIndex > 0) {
-      setHeroNavIndex(effectiveHeroIndex - 1);
+  const handleNextHeroLesson = async () => {
+    const currentDay = getDayOfWeekIndex();
+    const cTime = getCurrentTimeString();
+    const todayAssigned = lessonInfo.todayLessons || [];
+
+    // Durum 1: Halihazırda gezinilen bir dersteysek
+    if (heroNavTarget) {
+      const { day, dayLessons, index } = heroNavTarget;
+      if (index < dayLessons.length - 1) {
+        // Aynı gün içinde bir sonraki ders
+        const nextIndex = index + 1;
+        setHeroNavTarget({
+          day,
+          dayLessons,
+          index: nextIndex,
+          lesson: dayLessons[nextIndex],
+        });
+        return;
+      }
+      // Bu günün son dersindeyiz -> en yakın sonraki günün ilk dersine git
+      const nextResult = await findNextDayWithLessons(day);
+      if (nextResult && nextResult.lessons.length > 0) {
+        setSelectedDay(nextResult.day);
+        setHeroNavTarget({
+          day: nextResult.day,
+          dayLessons: nextResult.lessons,
+          index: 0,
+          lesson: nextResult.lessons[0],
+        });
+      }
+      return;
+    }
+
+    // Durum 2: "Şu An" modundayız ve şu anda devam eden bir aktif ders var
+    if (lessonInfo.currentLesson) {
+      const curIdx = todayAssigned.findIndex((item) => item.slot_id === lessonInfo.currentLesson?.slot_id);
+      if (curIdx !== -1 && curIdx < todayAssigned.length - 1) {
+        // Bugün içindeki bir sonraki ders
+        const nextIndex = curIdx + 1;
+        setHeroNavTarget({
+          day: currentDay,
+          dayLessons: todayAssigned,
+          index: nextIndex,
+          lesson: todayAssigned[nextIndex],
+        });
+        return;
+      }
+      // Bugünün son dersindeydik -> sonraki günün ilk dersine git
+      const nextResult = await findNextDayWithLessons(currentDay);
+      if (nextResult && nextResult.lessons.length > 0) {
+        setSelectedDay(nextResult.day);
+        setHeroNavTarget({
+          day: nextResult.day,
+          dayLessons: nextResult.lessons,
+          index: 0,
+          lesson: nextResult.lessons[0],
+        });
+      }
+      return;
+    }
+
+    // Durum 3: "Şu An Boş Ders" formundayız (şu an ders yok)
+    // En yakın sıradaki derse git
+    if (lessonInfo.nextLesson) {
+      const nextIdx = todayAssigned.findIndex((item) => item.slot_id === lessonInfo.nextLesson?.slot_id);
+      if (nextIdx !== -1) {
+        setHeroNavTarget({
+          day: currentDay,
+          dayLessons: todayAssigned,
+          index: nextIdx,
+          lesson: todayAssigned[nextIdx],
+        });
+        return;
+      }
+    }
+
+    // Ya da bugün saati cTime'dan büyük olan herhangi bir ders
+    const upcomingIdx = todayAssigned.findIndex((item) => Boolean(item.start_time && item.start_time > cTime));
+    if (upcomingIdx !== -1) {
+      setHeroNavTarget({
+        day: currentDay,
+        dayLessons: todayAssigned,
+        index: upcomingIdx,
+        lesson: todayAssigned[upcomingIdx],
+      });
+      return;
+    }
+
+    // Bugün başka ders kalmadıysa -> sonraki günlerin ilk dersine git
+    const nextResult = await findNextDayWithLessons(currentDay);
+    if (nextResult && nextResult.lessons.length > 0) {
+      setSelectedDay(nextResult.day);
+      setHeroNavTarget({
+        day: nextResult.day,
+        dayLessons: nextResult.lessons,
+        index: 0,
+        lesson: nextResult.lessons[0],
+      });
     }
   };
 
-  const handleNextHeroLesson = () => {
-    if (effectiveHeroIndex < todayLessons.length - 1) {
-      setHeroNavIndex(effectiveHeroIndex + 1);
-    }
-  };
+  const handlePrevHeroLesson = async () => {
+    const currentDay = getDayOfWeekIndex();
+    const cTime = getCurrentTimeString();
+    const todayAssigned = lessonInfo.todayLessons || [];
 
-  const handleResetHeroNav = () => {
-    setHeroNavIndex(null);
+    // Durum 1: Halihazırda gezinilen bir dersteysek
+    if (heroNavTarget) {
+      const { day, dayLessons, index } = heroNavTarget;
+      if (index > 0) {
+        // Aynı gün içinde bir önceki ders
+        const prevIndex = index - 1;
+        setHeroNavTarget({
+          day,
+          dayLessons,
+          index: prevIndex,
+          lesson: dayLessons[prevIndex],
+        });
+        return;
+      }
+      // Bu günün ilk dersindeyiz -> en yakın önceki günün son dersine git
+      const prevResult = await findPrevDayWithLessons(day);
+      if (prevResult && prevResult.lessons.length > 0) {
+        const lastIdx = prevResult.lessons.length - 1;
+        setSelectedDay(prevResult.day);
+        setHeroNavTarget({
+          day: prevResult.day,
+          dayLessons: prevResult.lessons,
+          index: lastIdx,
+          lesson: prevResult.lessons[lastIdx],
+        });
+      }
+      return;
+    }
+
+    // Durum 2: "Şu An" modundayız ve şu anda devam eden bir aktif ders var
+    if (lessonInfo.currentLesson) {
+      const curIdx = todayAssigned.findIndex((item) => item.slot_id === lessonInfo.currentLesson?.slot_id);
+      if (curIdx > 0) {
+        // Bugün içindeki bir önceki ders
+        const prevIndex = curIdx - 1;
+        setHeroNavTarget({
+          day: currentDay,
+          dayLessons: todayAssigned,
+          index: prevIndex,
+          lesson: todayAssigned[prevIndex],
+        });
+        return;
+      }
+      // Bugünün ilk dersindeydik -> önceki günün son dersine git
+      const prevResult = await findPrevDayWithLessons(currentDay);
+      if (prevResult && prevResult.lessons.length > 0) {
+        const lastIdx = prevResult.lessons.length - 1;
+        setSelectedDay(prevResult.day);
+        setHeroNavTarget({
+          day: prevResult.day,
+          dayLessons: prevResult.lessons,
+          index: lastIdx,
+          lesson: prevResult.lessons[lastIdx],
+        });
+      }
+      return;
+    }
+
+    // Durum 3: "Şu An Boş Ders" formundayız (şu an ders yok)
+    // Bugün daha önce bitmiş ders varsa en son biten derse git
+    let lastPastIdx = -1;
+    for (let i = todayAssigned.length - 1; i >= 0; i--) {
+      if (todayAssigned[i].end_time && todayAssigned[i].end_time! <= cTime) {
+        lastPastIdx = i;
+        break;
+      }
+    }
+
+    if (lastPastIdx !== -1) {
+      setHeroNavTarget({
+        day: currentDay,
+        dayLessons: todayAssigned,
+        index: lastPastIdx,
+        lesson: todayAssigned[lastPastIdx],
+      });
+      return;
+    }
+
+    // Bugün geçmiş ders yoksa (örneğin sabah erken veya bugün ders yok) -> önceki günlerin son dersine git
+    const prevResult = await findPrevDayWithLessons(currentDay);
+    if (prevResult && prevResult.lessons.length > 0) {
+      const lastIdx = prevResult.lessons.length - 1;
+      setSelectedDay(prevResult.day);
+      setHeroNavTarget({
+        day: prevResult.day,
+        dayLessons: prevResult.lessons,
+        index: lastIdx,
+        lesson: prevResult.lessons[lastIdx],
+      });
+    }
   };
 
   const currentTopicItem = topicInfo?.allTopics[selectedTopicIndex] || null;
@@ -768,12 +999,12 @@ export const HomeScreen: React.FC = () => {
             {/* 1. ÜST ROZETLER VE MİNİK SAĞ-SOL GEZİNME OKLARI */}
             <View style={styles.activeBadgeRow}>
               <View style={styles.activeStatusWrap}>
-                {isCurrentLesson && isViewingToday ? (
+                {isCurrentLesson ? (
                   <View style={styles.liveIndicator}>
                     <View style={styles.pulsingDot} />
                     <Text style={styles.liveText}>ŞU ANDAKİ DERS</Text>
                   </View>
-                ) : isNextLesson && isViewingToday ? (
+                ) : isNextLesson ? (
                   <View style={styles.nextIndicator}>
                     <View style={[styles.pulsingDot, { backgroundColor: Colors.primary }]} />
                     <Text style={styles.nextText}>SIRADAKİ DERS</Text>
@@ -782,14 +1013,15 @@ export const HomeScreen: React.FC = () => {
                   <View style={styles.otherIndicator}>
                     <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
                     <Text style={styles.otherText}>
-                      {effectiveHeroLesson.slot_name || `${effectiveHeroIndex + 1}. Ders`}
+                      {!isHeroToday ? `${heroDayName} • ` : ''}
+                      {effectiveHeroLesson.slot_name || `${effectiveHeroLesson.slot_number || heroDisplayIndex + 1}. Ders`}
                     </Text>
                   </View>
                 )}
 
                 <Badge
                   label={`${effectiveHeroLesson.start_time || ''} - ${effectiveHeroLesson.end_time || ''}`}
-                  status={isCurrentLesson && isViewingToday ? 'yapildi' : isNextLesson && isViewingToday ? 'bekliyor' : 'varsayilan'}
+                  status={isCurrentLesson ? 'yapildi' : isNextLesson ? 'bekliyor' : 'varsayilan'}
                   size="sm"
                 />
               </View>
@@ -800,7 +1032,7 @@ export const HomeScreen: React.FC = () => {
                 <TouchableOpacity
                   style={[
                     styles.heroCurrentJumpBtn,
-                    isCurrentLesson && isViewingToday ? styles.heroCurrentJumpBtnActive : null,
+                    isCurrentLesson && !heroNavTarget ? styles.heroCurrentJumpBtnActive : null,
                   ]}
                   onPress={handleJumpToCurrentDayAndLesson}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -809,12 +1041,12 @@ export const HomeScreen: React.FC = () => {
                   <Ionicons
                     name="locate"
                     size={12}
-                    color={isCurrentLesson && isViewingToday ? Colors.success : Colors.primary}
+                    color={isCurrentLesson && !heroNavTarget ? Colors.success : Colors.primary}
                   />
                   <Text
                     style={[
                       styles.heroCurrentJumpBtnText,
-                      isCurrentLesson && isViewingToday ? { color: Colors.successDark } : null,
+                      isCurrentLesson && !heroNavTarget ? { color: Colors.successDark } : null,
                     ]}
                   >
                     Şu An
@@ -822,49 +1054,35 @@ export const HomeScreen: React.FC = () => {
                 </TouchableOpacity>
 
                 {/* SAĞ-SOL GEZİNME OKLARI (MİNİK SAĞ SOL OKLARI) */}
-                {todayLessons.length > 1 && (
-                  <View style={styles.heroNavContainer}>
-                    <TouchableOpacity
-                      style={[
-                        styles.heroNavArrowBtn,
-                        effectiveHeroIndex <= 0 && styles.heroNavArrowDisabled,
-                      ]}
-                      onPress={handlePrevHeroLesson}
-                      disabled={effectiveHeroIndex <= 0}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons
-                        name="chevron-back"
-                        size={14}
-                        color={effectiveHeroIndex <= 0 ? Colors.textMuted : Colors.primary}
-                      />
-                    </TouchableOpacity>
+                <View style={styles.heroNavContainer}>
+                  <TouchableOpacity
+                    style={styles.heroNavArrowBtn}
+                    onPress={handlePrevHeroLesson}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons
+                      name="chevron-back"
+                      size={14}
+                      color={Colors.primary}
+                    />
+                  </TouchableOpacity>
 
-                    <Text style={styles.heroNavCounter}>
-                      {effectiveHeroIndex + 1}/{todayLessons.length}
-                    </Text>
+                  <Text style={styles.heroNavCounter}>
+                    {heroDisplayIndex + 1}/{heroDisplayTotal || 1}
+                  </Text>
 
-                    <TouchableOpacity
-                      style={[
-                        styles.heroNavArrowBtn,
-                        effectiveHeroIndex >= todayLessons.length - 1 && styles.heroNavArrowDisabled,
-                      ]}
-                      onPress={handleNextHeroLesson}
-                      disabled={effectiveHeroIndex >= todayLessons.length - 1}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons
-                        name="chevron-forward"
-                        size={14}
-                        color={
-                          effectiveHeroIndex >= todayLessons.length - 1
-                            ? Colors.textMuted
-                            : Colors.primary
-                        }
-                      />
-                    </TouchableOpacity>
-                  </View>
-                )}
+                  <TouchableOpacity
+                    style={styles.heroNavArrowBtn}
+                    onPress={handleNextHeroLesson}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons
+                      name="chevron-forward"
+                      size={14}
+                      color={Colors.primary}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
 
@@ -908,7 +1126,7 @@ export const HomeScreen: React.FC = () => {
               {/* Ders Numarası */}
               <View style={styles.heroSlotBadge}>
                 <Text style={styles.heroSlotBadgeText}>
-                  {effectiveHeroLesson.slot_name || `${effectiveHeroLesson.slot_number || effectiveHeroIndex + 1}. Ders`}
+                  {effectiveHeroLesson.slot_name || `${effectiveHeroLesson.slot_number || heroDisplayIndex + 1}. Ders`}
                 </Text>
               </View>
 
@@ -1019,17 +1237,69 @@ export const HomeScreen: React.FC = () => {
             </View>
           </Card>
         ) : (
-          <Card style={styles.idleCard}>
+          <Card style={styles.idleCard} highlightBorder={Colors.primaryLight}>
+            {/* Üst Rozetler ve Sağ Gezinme Butonları */}
+            <View style={styles.activeBadgeRow}>
+              <View style={styles.activeStatusWrap}>
+                <View style={styles.idleIndicator}>
+                  <Ionicons name="cafe" size={11} color={Colors.secondary} />
+                  <Text style={styles.idleIndicatorText}>ŞU AN DERS BOŞ</Text>
+                </View>
+                <Badge
+                  label={currentTime}
+                  status="varsayilan"
+                  size="sm"
+                />
+              </View>
+
+              <View style={styles.heroRightControlsRow}>
+                {/* Şu An Butonu - Boş ders modunda aktif yeşil */}
+                <TouchableOpacity
+                  style={[styles.heroCurrentJumpBtn, styles.heroCurrentJumpBtnActive]}
+                  onPress={handleJumpToCurrentDayAndLesson}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="locate" size={12} color={Colors.success} />
+                  <Text style={[styles.heroCurrentJumpBtnText, { color: Colors.successDark }]}>
+                    Şu An
+                  </Text>
+                </TouchableOpacity>
+
+                {/* SAĞ-SOL GEZİNME OKLARI */}
+                <View style={styles.heroNavContainer}>
+                  <TouchableOpacity
+                    style={styles.heroNavArrowBtn}
+                    onPress={handlePrevHeroLesson}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="chevron-back" size={14} color={Colors.primary} />
+                  </TouchableOpacity>
+
+                  <Text style={styles.heroNavCounter}>—</Text>
+
+                  <TouchableOpacity
+                    style={styles.heroNavArrowBtn}
+                    onPress={handleNextHeroLesson}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="chevron-forward" size={14} color={Colors.primary} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {/* İçerik Satırı */}
             <View style={styles.idleRow}>
               <View style={styles.idleIconWrap}>
-                <Ionicons name="cafe-outline" size={28} color={Colors.secondary} />
+                <Ionicons name="cafe-outline" size={24} color={Colors.secondary} />
               </View>
               <View style={styles.idleTextWrap}>
                 <Text style={styles.idleTitle}>Şu An Boş Ders</Text>
-                <Text style={styles.idleSub}>
+                <Text style={styles.idleSub} numberOfLines={2}>
                   {lessonInfo.nextLesson
-                    ? `Sıradaki: ${lessonInfo.nextLesson.start_time} ${lessonInfo.nextLesson.class_name || ''} - ${lessonInfo.nextLesson.course_name || ''}`
-                    : 'Bugün için başka planlanmış ders bulunmuyor.'}
+                    ? `Sıradaki: ${lessonInfo.nextLesson.start_time} • ${lessonInfo.nextLesson.class_name || 'Şube'} - ${lessonInfo.nextLesson.course_name || 'Ders'}`
+                    : 'Bugün için başka planlanmış ders bulunmuyor. Oklara basarak en yakın derslere göz atabilirsiniz.'}
                 </Text>
               </View>
             </View>
@@ -2707,16 +2977,35 @@ const styles = StyleSheet.create({
   },
   idleCard: {
     backgroundColor: Colors.card,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 0,
+  },
+  idleIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.secondaryLight,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  idleIndicatorText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: Colors.secondary,
+    letterSpacing: 0.3,
   },
   idleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 10,
+    marginTop: 6,
   },
   idleIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: Colors.secondaryLight,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2725,14 +3014,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   idleTitle: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
   idleSub: {
-    fontSize: 13,
+    fontSize: 11.5,
     color: Colors.textSecondary,
     marginTop: 2,
+    lineHeight: 16,
   },
   statsRow: {
     flexDirection: 'row',
@@ -2904,13 +3194,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: Colors.card,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 28,
+    paddingVertical: 1,
     borderRadius: 8,
-    marginBottom: 4,
+    marginBottom: 3,
     borderWidth: 1,
     borderColor: Colors.border,
     ...Shadows.small,
+    height:35,
+    
   },
   allProgramsSwitchLeft: {
     flexDirection: 'row',
@@ -2918,9 +3210,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   allProgramsSwitchLabel: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
     color: Colors.textPrimary,
+    
   },
   schoolsCountBadge: {
     paddingHorizontal: 5,
