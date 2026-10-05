@@ -1197,6 +1197,28 @@ export const ClassDetailScreen: React.FC = () => {
         subtitle={`${students.length} Kayıtlı Öğrenci`}
         showBack
         onBack={() => navigation.goBack()}
+        rightContent={
+          activeViewTab === 'gradebook' ? (
+            <View style={[styles.termSelector, { padding: 2 }]}>
+              <TouchableOpacity
+                style={[styles.termBtn, activeTerm === 1 && styles.termBtnActive, { paddingHorizontal: 10, paddingVertical: 5 }]}
+                onPress={() => handleChangeTerm(1)}
+              >
+                <Text style={[styles.termBtnText, activeTerm === 1 && styles.termBtnTextActive, { fontSize: 11 }]}>
+                  1. Dönem
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.termBtn, activeTerm === 2 && styles.termBtnActive, { paddingHorizontal: 10, paddingVertical: 5 }]}
+                onPress={() => handleChangeTerm(2)}
+              >
+                <Text style={[styles.termBtnText, activeTerm === 2 && styles.termBtnTextActive, { fontSize: 11 }]}>
+                  2. Dönem
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : undefined
+        }
       />
 
       {/* View Segment Switch: Öğrenciler / Not Çizelgesi & Quizler / Sınıf Görüşü */}
@@ -1524,27 +1546,8 @@ export const ClassDetailScreen: React.FC = () => {
       {activeViewTab === 'gradebook' && (
         <View style={styles.gradebookContainer}>
           {/* Term Switcher & Gradebook Actions */}
-          <View style={styles.gradebookControlBar}>
-            {/* Term selector (1. Dönem / 2. Dönem) */}
-            <View style={styles.termSelector}>
-              <TouchableOpacity
-                style={[styles.termBtn, activeTerm === 1 && styles.termBtnActive]}
-                onPress={() => handleChangeTerm(1)}
-              >
-                <Text style={[styles.termBtnText, activeTerm === 1 && styles.termBtnTextActive]}>
-                  1. Dönem
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.termBtn, activeTerm === 2 && styles.termBtnActive]}
-                onPress={() => handleChangeTerm(2)}
-              >
-                <Text style={[styles.termBtnText, activeTerm === 2 && styles.termBtnTextActive]}>
-                  2. Dönem
-                </Text>
-              </TouchableOpacity>
-            </View>
-
+          {/* Gradebook Actions */}
+          <View style={[styles.gradebookControlBar, { justifyContent: 'flex-end' }]}>
             {/* Action Buttons */}
             <View style={styles.gradeActionsRow}>
               <TouchableOpacity

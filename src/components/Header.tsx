@@ -14,6 +14,7 @@ interface HeaderProps {
     onPress: () => void;
     label?: string;
   };
+  rightContent?: React.ReactNode;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -22,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   showBack,
   onBack,
   rightAction,
+  rightContent,
 }) => {
   const insets = useSafeAreaInsets();
   const topPadding = Math.max(
@@ -49,7 +51,9 @@ export const Header: React.FC<HeaderProps> = ({
         </View>
       </View>
 
-      {rightAction && (
+      {rightContent ? (
+        rightContent
+      ) : rightAction ? (
         <TouchableOpacity
           style={styles.rightButton}
           onPress={rightAction.onPress}
@@ -60,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
             <Text style={styles.rightLabel}>{rightAction.label}</Text>
           ) : null}
         </TouchableOpacity>
-      )}
+      ) : null}
     </View>
   );
 };
