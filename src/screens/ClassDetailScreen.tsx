@@ -1631,16 +1631,16 @@ export const ClassDetailScreen: React.FC = () => {
               <ScrollView style={styles.tableScrollY} showsVerticalScrollIndicator={true} stickyHeaderIndices={[0]}>
                 
                 {/* Header (Sticky) */}
-                <View style={{ flexDirection: 'row', backgroundColor: '#E2E8F0', zIndex: 10, elevation: 4 }}>
+                <View style={{ flexDirection: 'row', backgroundColor: '#E2E8F0', zIndex: 10, elevation: 4, borderBottomWidth: 2, borderBottomColor: '#94A3B8', minHeight: 40 }}>
                   {/* Left Fixed Header */}
-                  <View style={{ width: 189, flexDirection: 'row' }}>
-                    <Text style={[styles.thCell, styles.colNo]}>No</Text>
-                    <Text style={[styles.thCell, styles.colName]}>Öğrenci</Text>
+                  <View style={{ width: 189, flexDirection: 'row', alignItems: 'stretch' }}>
+                    <Text style={[styles.thCell, styles.colNo, { borderBottomWidth: 0 }]}>No</Text>
+                    <Text style={[styles.thCell, styles.colName, { borderBottomWidth: 0 }]}>Öğrenci</Text>
                   </View>
                   
                   {/* Right Scrollable Header */}
-                  <ScrollView horizontal ref={gradebookHeaderScrollRef} scrollEnabled={false} showsHorizontalScrollIndicator={false}>
-                    <View style={{ flexDirection: 'row' }}>
+                  <ScrollView horizontal ref={gradebookHeaderScrollRef} scrollEnabled={false} showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
                       {/* 3 Yazılı */}
                       <Text style={[styles.thCell, styles.colExam]}>1.Yaz</Text>
                       <Text style={[styles.thCell, styles.colExam]}>2.Yaz</Text>
@@ -1737,6 +1737,7 @@ export const ClassDetailScreen: React.FC = () => {
                         <ScrollView
                           horizontal
                           showsHorizontalScrollIndicator={true}
+                          style={{ flex: 1 }}
                           onScroll={(e) => {
                             gradebookHeaderScrollRef.current?.scrollTo({
                               x: e.nativeEvent.contentOffset.x,
