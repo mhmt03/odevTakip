@@ -12,6 +12,21 @@ const setInstance = (db: SQLite.SQLiteDatabase | null) => {
   g.__sinifTakipDB = db;
 };
 
+// Geliştirme: modül sıcak yeniden yüklenirken native bağlantıyı kapat ki
+// kilit tutan sahipsiz bağlantı kalmasın.
+declare const module: any;
+const hot = typeof module !== 'undefined' ? module?.hot : undefined;
+if (hot && typeof hot.dispose === 'function') {
+  hot.dispose(() => {
+    try {
+      g.__sinifTakipDB?.closeSync?.();
+    } catch {
+      // yoksay
+    }
+    g.__sinifTakipDB = null;
+  });
+}
+
 export const resetDB = () => {
   setInstance(null);
   dbOpenPromise = null;

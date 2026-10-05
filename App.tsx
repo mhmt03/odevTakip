@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, StatusBar, Platform } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, StatusBar, Platform, TouchableOpacity } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -143,24 +143,45 @@ function MainTabs() {
 
 export default function App() {
   const [dbReady, setDbReady] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+
+  const prepare = async () => {
+    setDbError(null);
+    try {
+      await initDatabase();
+      try {
+        await activateDefaultSchoolOnStartup();
+      } catch (err) {
+        console.warn('Default school activation failed:', err);
+      }
+      setDbReady(true);
+    } catch (e: any) {
+      console.error('Failed to initialize database:', e);
+      setDbError(String(e?.message || e));
+    }
+  };
 
   useEffect(() => {
-    async function prepare() {
-      try {
-        await initDatabase();
-        try {
-          await activateDefaultSchoolOnStartup();
-        } catch (err) {
-          console.warn('Default school activation failed:', err);
-        }
-        setDbReady(true);
-      } catch (e) {
-        console.error('Failed to initialize database:', e);
-        setDbReady(true); // Proceed anyway
-      }
-    }
     prepare();
   }, []);
+
+  if (dbError) {
+    const locked = dbError.includes('locked');
+    return (
+      <View style={styles.splashContainer}>
+        <Ionicons name="alert-circle-outline" size={48} color={Colors.danger} />
+        <Text style={styles.splashText}>Veritabanı açılamadı</Text>
+        <Text style={styles.errorText}>
+          {locked
+            ? 'Veritabanı başka bir işlem tarafından kilitli. Uygulamayı tamamen kapatıp (Durmaya zorla) yeniden açın.'
+            : dbError}
+        </Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={prepare} testID="db-retry-btn">
+          <Text style={styles.retryText}>Tekrar Dene</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (!dbReady) {
     return (
@@ -209,5 +230,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  errorText: {
+    marginTop: 8,
+    marginHorizontal: 32,
+    fontSize: 13,
+    textAlign: 'center',
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
+  retryBtn: {
+    marginTop: 18,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
   },
 });
