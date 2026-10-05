@@ -1631,16 +1631,16 @@ export const ClassDetailScreen: React.FC = () => {
               <ScrollView style={styles.tableScrollY} showsVerticalScrollIndicator={true} stickyHeaderIndices={[0]}>
                 
                 {/* Header (Sticky) */}
-                <View style={{ flexDirection: 'row', backgroundColor: '#E2E8F0', zIndex: 10, elevation: 4, borderBottomWidth: 2, borderBottomColor: '#94A3B8', minHeight: 40 }}>
+                <View style={{ flexDirection: 'row', backgroundColor: '#E2E8F0', zIndex: 10, elevation: 4, borderBottomWidth: 2, borderBottomColor: '#94A3B8', minHeight: 40, alignItems: 'center' }}>
                   {/* Left Fixed Header */}
-                  <View style={{ width: 189, flexDirection: 'row', alignItems: 'stretch' }}>
+                  <View style={{ width: 189, flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={[styles.thCell, styles.colNo, { borderBottomWidth: 0 }]}>No</Text>
                     <Text style={[styles.thCell, styles.colName, { borderBottomWidth: 0 }]}>Öğrenci</Text>
                   </View>
                   
                   {/* Right Scrollable Header */}
-                  <ScrollView horizontal ref={gradebookHeaderScrollRef} scrollEnabled={false} showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
+                  <View style={{ flex: 1, overflow: 'hidden' }}>
+                    <ScrollView horizontal ref={gradebookHeaderScrollRef} scrollEnabled={false} showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', alignItems: 'stretch' }}>
                       {/* 3 Yazılı */}
                       <Text style={[styles.thCell, styles.colExam]}>1.Yaz</Text>
                       <Text style={[styles.thCell, styles.colExam]}>2.Yaz</Text>
@@ -1688,8 +1688,8 @@ export const ClassDetailScreen: React.FC = () => {
 
                       {/* Genel Ortalama */}
                       <Text style={[styles.thCell, styles.colOverall]}>Ders Ort.</Text>
-                    </View>
-                  </ScrollView>
+                    </ScrollView>
+                  </View>
                 </View>
 
                 {/* Body Rows */}
@@ -1734,19 +1734,19 @@ export const ClassDetailScreen: React.FC = () => {
                         </View>
 
                         {/* Right Scrollable Body */}
-                        <ScrollView
-                          horizontal
-                          showsHorizontalScrollIndicator={true}
-                          style={{ flex: 1 }}
-                          onScroll={(e) => {
-                            gradebookHeaderScrollRef.current?.scrollTo({
-                              x: e.nativeEvent.contentOffset.x,
-                              animated: false,
-                            });
-                          }}
-                          scrollEventThrottle={16}
-                        >
-                          <View>
+                        <View style={{ flex: 1, overflow: 'hidden' }}>
+                          <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={true}
+                            onScroll={(e) => {
+                              gradebookHeaderScrollRef.current?.scrollTo({
+                                x: e.nativeEvent.contentOffset.x,
+                                animated: false,
+                              });
+                            }}
+                            scrollEventThrottle={16}
+                          >
+                            <View>
                             {filteredStudents.map((row, index) => {
                               const isEven = index % 2 === 0;
                               return (
@@ -1834,7 +1834,8 @@ export const ClassDetailScreen: React.FC = () => {
                               );
                             })}
                           </View>
-                        </ScrollView>
+                          </ScrollView>
+                        </View>
                       </>
                     );
                   })()}
