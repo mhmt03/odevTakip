@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -146,9 +146,6 @@ export const ClassDetailScreen: React.FC = () => {
 
   // Student note counts map (studentId -> count)
   const [noteCounts, setNoteCounts] = useState<Record<number, number>>({});
-
-  // Gradebook Header Scroll Ref for syncing horizontal scroll
-  const gradebookHeaderScrollRef = useRef<any>(null);
 
   // Single Note Edit Modal in detail modal
   const [editNoteModalVisible, setEditNoteModalVisible] = useState(false);
@@ -1627,221 +1624,173 @@ export const ClassDetailScreen: React.FC = () => {
               </Text>
             </View>
           ) : (
-            <View style={styles.tableScrollX}>
-              <ScrollView style={styles.tableScrollY} showsVerticalScrollIndicator={true} stickyHeaderIndices={[0]}>
-                
-                {/* Header (Sticky) */}
-                <View style={{ flexDirection: 'row', backgroundColor: '#E2E8F0', zIndex: 10, elevation: 4, borderBottomWidth: 2, borderBottomColor: '#94A3B8', minHeight: 40, alignItems: 'center' }}>
-                  {/* Left Fixed Header */}
-                  <View style={{ width: 189, flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[styles.thCell, styles.colNo, { borderBottomWidth: 0 }]}>No</Text>
-                    <Text style={[styles.thCell, styles.colName, { borderBottomWidth: 0 }]}>Öğrenci</Text>
-                  </View>
-                  
-                  {/* Right Scrollable Header */}
-                  <View style={{ flex: 1, overflow: 'hidden' }}>
-                    <ScrollView horizontal ref={gradebookHeaderScrollRef} scrollEnabled={false} showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', alignItems: 'stretch' }}>
-                      {/* 3 Yazılı */}
-                      <Text style={[styles.thCell, styles.colExam]}>1.Yaz</Text>
-                      <Text style={[styles.thCell, styles.colExam]}>2.Yaz</Text>
-                      <Text style={[styles.thCell, styles.colExam]}>3.Yaz</Text>
-                      <Text style={[styles.thCell, styles.colAvg, styles.bgExamAvg]}>Y.Ort</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.tableScrollX}>
+              <View>
+                {/* Table Header Row */}
+                <View style={styles.tableHeaderRow}>
+                  <Text style={[styles.thCell, styles.colNo]}>No</Text>
+                  <Text style={[styles.thCell, styles.colName]}>Öğrenci</Text>
 
-                      {/* 3 Performans */}
-                      <Text style={[styles.thCell, styles.colPerf]}>1.Perf</Text>
-                      <Text style={[styles.thCell, styles.colPerf]}>2.Perf</Text>
-                      <Text style={[styles.thCell, styles.colPerf]}>3.Perf</Text>
-                      <Text style={[styles.thCell, styles.colAvg, styles.bgPerfAvg]}>P.Ort</Text>
+                  {/* 3 Yazılı */}
+                  <Text style={[styles.thCell, styles.colExam]}>1.Yaz</Text>
+                  <Text style={[styles.thCell, styles.colExam]}>2.Yaz</Text>
+                  <Text style={[styles.thCell, styles.colExam]}>3.Yaz</Text>
+                  <Text style={[styles.thCell, styles.colAvg, styles.bgExamAvg]}>Y.Ort</Text>
 
-                      {/* Dinamik Quiz Sütunları */}
-                      {gradebookData.quizzes.map((q) => (
-                        <TouchableOpacity
-                          key={q.id}
-                          style={[styles.thCellClickable, styles.colQuiz]}
-                          onLongPress={() => handleDeleteQuizConfirm(q)}
-                          onPress={() =>
-                            Alert.alert(
-                              q.title,
-                              'Bu quizi silmek ister misiniz?',
-                              [
-                                { text: 'Vazgeç', style: 'cancel' },
-                                {
-                                  text: 'Quizi Sil',
-                                  style: 'destructive',
-                                  onPress: () => handleDeleteQuizConfirm(q),
-                                },
-                              ]
-                            )
-                          }
-                        >
-                          <Text style={styles.thQuizTitle} numberOfLines={1}>
-                            {q.title}
-                          </Text>
-                          <Ionicons name="close-circle-outline" size={12} color={Colors.textMuted} />
-                        </TouchableOpacity>
-                      ))}
+                  {/* 3 Performans */}
+                  <Text style={[styles.thCell, styles.colPerf]}>1.Perf</Text>
+                  <Text style={[styles.thCell, styles.colPerf]}>2.Perf</Text>
+                  <Text style={[styles.thCell, styles.colPerf]}>3.Perf</Text>
+                  <Text style={[styles.thCell, styles.colAvg, styles.bgPerfAvg]}>P.Ort</Text>
 
-                      {/* Quiz Ort. */}
-                      {gradebookData.quizzes.length > 0 && (
-                        <Text style={[styles.thCell, styles.colAvg, styles.bgQuizAvg]}>Q.Ort</Text>
-                      )}
+                  {/* Dinamik Quiz Sütunları */}
+                  {gradebookData.quizzes.map((q) => (
+                    <TouchableOpacity
+                      key={q.id}
+                      style={[styles.thCellClickable, styles.colQuiz]}
+                      onLongPress={() => handleDeleteQuizConfirm(q)}
+                      onPress={() =>
+                        Alert.alert(
+                          q.title,
+                          'Bu quizi silmek ister misiniz?',
+                          [
+                            { text: 'Vazgeç', style: 'cancel' },
+                            {
+                              text: 'Quizi Sil',
+                              style: 'destructive',
+                              onPress: () => handleDeleteQuizConfirm(q),
+                            },
+                          ]
+                        )
+                      }
+                    >
+                      <Text style={styles.thQuizTitle} numberOfLines={1}>
+                        {q.title}
+                      </Text>
+                      <Ionicons name="close-circle-outline" size={12} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                  ))}
 
-                      {/* Genel Ortalama */}
-                      <Text style={[styles.thCell, styles.colOverall]}>Ders Ort.</Text>
-                    </ScrollView>
-                  </View>
+                  {/* Quiz Ort. */}
+                  {gradebookData.quizzes.length > 0 && (
+                    <Text style={[styles.thCell, styles.colAvg, styles.bgQuizAvg]}>Q.Ort</Text>
+                  )}
+
+                  {/* Genel Ortalama */}
+                  <Text style={[styles.thCell, styles.colOverall]}>Ders Ort.</Text>
                 </View>
 
-                {/* Body Rows */}
-                <View style={{ flexDirection: 'row' }}>
-                  {(() => {
-                    // Filter students only once
-                    const filteredStudents = gradebookData.students.filter((r) => {
+                {/* Table Body */}
+                <ScrollView style={styles.tableScrollY} showsVerticalScrollIndicator={true}>
+                  {gradebookData.students
+                    .filter((r) => {
                       if (!gradeSearchQuery.trim()) return true;
                       const term = gradeSearchQuery.toLowerCase();
                       const fullName = `${r.first_name} ${r.last_name}`.toLowerCase();
                       const no = (r.student_number || '').toLowerCase();
                       return fullName.includes(term) || no.includes(term);
-                    });
+                    })
+                    .map((row, index) => {
+                      const isEven = index % 2 === 0;
+                      return (
+                        <TouchableOpacity
+                          key={row.student_id}
+                          style={[styles.tableDataRow, isEven && styles.tableDataRowEven]}
+                          onPress={() => handleOpenEditGrade(row)}
+                          activeOpacity={0.7}
+                        >
+                          {/* Student No */}
+                          <Text style={[styles.tdCell, styles.colNo, styles.textBold, { fontSize: 10 }]}>
+                            {row.student_number || '-'}
+                          </Text>
 
-                    return (
-                      <>
-                        {/* Left Fixed Body */}
-                        <View style={{ width: 189, backgroundColor: '#FFFFFF', zIndex: 5, elevation: 2, shadowColor: '#000', shadowOffset: { width: 2, height: 0 }, shadowOpacity: 0.1, shadowRadius: 3 }}>
-                          {filteredStudents.map((row, index) => {
-                            const isEven = index % 2 === 0;
+                          {/* Student Name */}
+                          <View style={[styles.tdCell, styles.colName, styles.tdNameWrap]}>
+                            <Text style={[styles.tdStudentName, { fontSize: 10.5 }]} numberOfLines={1}>
+                              {row.first_name} {row.last_name}
+                            </Text>
+                          </View>
+
+                          {/* 1.Y, 2.Y, 3.Y */}
+                          <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam1)]}>
+                            {formatScore(row.exam1)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam2)]}>
+                            {formatScore(row.exam2)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam3)]}>
+                            {formatScore(row.exam3)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colAvg, styles.bgExamAvg, styles.textBold]}>
+                            {formatScore(row.examAvg)}
+                          </Text>
+
+                          {/* 1.P, 2.P, 3.P */}
+                          <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf1)]}>
+                            {formatScore(row.perf1)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf2)]}>
+                            {formatScore(row.perf2)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf3)]}>
+                            {formatScore(row.perf3)}
+                          </Text>
+                          <Text style={[styles.tdCell, styles.colAvg, styles.bgPerfAvg, styles.textBold]}>
+                            {formatScore(row.perfAvg)}
+                          </Text>
+
+                          {/* Dynamic Quizzes */}
+                          {gradebookData.quizzes.map((q) => {
+                            const qScore = row.quizScores[q.id];
                             return (
-                              <TouchableOpacity
-                                key={`left-${row.student_id}`}
-                                style={[styles.tableDataRow, isEven && styles.tableDataRowEven]}
-                                onPress={() => handleOpenEditGrade(row)}
-                                activeOpacity={0.7}
+                              <Text
+                                key={q.id}
+                                style={[styles.tdCell, styles.colQuiz, getScoreStyle(qScore)]}
                               >
-                                {/* Student No (smaller font) */}
-                                <Text style={[styles.tdCell, styles.colNo, styles.textBold, { fontSize: 10 }]}>
-                                  {row.student_number || '-'}
-                                </Text>
-
-                                {/* Student Name (smaller font) */}
-                                <View style={[styles.tdCell, styles.colName, styles.tdNameWrap]}>
-                                  <Text style={[styles.tdStudentName, { fontSize: 10.5 }]} numberOfLines={1}>
-                                    {row.first_name} {row.last_name}
-                                  </Text>
-                                </View>
-                              </TouchableOpacity>
+                                {formatScore(qScore)}
+                              </Text>
                             );
                           })}
-                        </View>
 
-                        {/* Right Scrollable Body */}
-                        <View style={{ flex: 1, overflow: 'hidden' }}>
-                          <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={true}
-                            onScroll={(e) => {
-                              gradebookHeaderScrollRef.current?.scrollTo({
-                                x: e.nativeEvent.contentOffset.x,
-                                animated: false,
-                              });
-                            }}
-                            scrollEventThrottle={16}
-                          >
-                            <View>
-                            {filteredStudents.map((row, index) => {
-                              const isEven = index % 2 === 0;
-                              return (
-                                <TouchableOpacity
-                                  key={`right-${row.student_id}`}
-                                  style={[styles.tableDataRow, isEven && styles.tableDataRowEven]}
-                                  onPress={() => handleOpenEditGrade(row)}
-                                  activeOpacity={0.7}
-                                >
-                                  {/* 1.Y, 2.Y, 3.Y */}
-                                  <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam1)]}>
-                                    {formatScore(row.exam1)}
-                                  </Text>
-                                  <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam2)]}>
-                                    {formatScore(row.exam2)}
-                                  </Text>
-                                  <Text style={[styles.tdCell, styles.colExam, getScoreStyle(row.exam3)]}>
-                                    {formatScore(row.exam3)}
-                                  </Text>
-                                  <Text style={[styles.tdCell, styles.colAvg, styles.bgExamAvg, styles.textBold]}>
-                                    {formatScore(row.examAvg)}
-                                  </Text>
+                          {/* Quiz Avg */}
+                          {gradebookData.quizzes.length > 0 && (
+                            <Text style={[styles.tdCell, styles.colAvg, styles.bgQuizAvg, styles.textBold]}>
+                              {formatScore(row.quizAvg)}
+                            </Text>
+                          )}
 
-                                  {/* 1.P, 2.P, 3.P */}
-                                  <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf1)]}>
-                                    {formatScore(row.perf1)}
-                                  </Text>
-                                  <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf2)]}>
-                                    {formatScore(row.perf2)}
-                                  </Text>
-                                  <Text style={[styles.tdCell, styles.colPerf, getScoreStyle(row.perf3)]}>
-                                    {formatScore(row.perf3)}
-                                  </Text>
-                                  <Text style={[styles.tdCell, styles.colAvg, styles.bgPerfAvg, styles.textBold]}>
-                                    {formatScore(row.perfAvg)}
-                                  </Text>
-
-                                  {/* Dynamic Quizzes */}
-                                  {gradebookData.quizzes.map((q) => {
-                                    const qScore = row.quizScores[q.id];
-                                    return (
-                                      <Text
-                                        key={q.id}
-                                        style={[styles.tdCell, styles.colQuiz, getScoreStyle(qScore)]}
-                                      >
-                                        {formatScore(qScore)}
-                                      </Text>
-                                    );
-                                  })}
-
-                                  {/* Quiz Avg */}
-                                  {gradebookData.quizzes.length > 0 && (
-                                    <Text style={[styles.tdCell, styles.colAvg, styles.bgQuizAvg, styles.textBold]}>
-                                      {formatScore(row.quizAvg)}
-                                    </Text>
-                                  )}
-
-                                  {/* Overall Avg */}
-                                  <View style={[styles.tdCell, styles.colOverall]}>
-                                    <View
-                                      style={[
-                                        styles.overallBadge,
-                                        row.overallAvg !== null && row.overallAvg !== undefined
-                                          ? row.overallAvg >= 50
-                                            ? styles.badgePass
-                                            : styles.badgeFail
-                                          : null,
-                                      ]}
-                                    >
-                                      <Text
-                                        style={[
-                                          styles.overallText,
-                                          row.overallAvg !== null && row.overallAvg !== undefined
-                                            ? row.overallAvg >= 50
-                                              ? styles.textPass
-                                              : styles.textFail
-                                            : null,
-                                        ]}
-                                      >
-                                        {formatScore(row.overallAvg)}
-                                      </Text>
-                                    </View>
-                                  </View>
-                                </TouchableOpacity>
-                              );
-                            })}
+                          {/* Overall Avg */}
+                          <View style={[styles.tdCell, styles.colOverall]}>
+                            <View
+                              style={[
+                                styles.overallBadge,
+                                row.overallAvg !== null && row.overallAvg !== undefined
+                                  ? row.overallAvg >= 50
+                                    ? styles.badgePass
+                                    : styles.badgeFail
+                                  : null,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.overallText,
+                                  row.overallAvg !== null && row.overallAvg !== undefined
+                                    ? row.overallAvg >= 50
+                                      ? styles.textPass
+                                      : styles.textFail
+                                    : null,
+                                ]}
+                              >
+                                {formatScore(row.overallAvg)}
+                              </Text>
+                            </View>
                           </View>
-                          </ScrollView>
-                        </View>
-                      </>
-                    );
-                  })()}
-                </View>
-              </ScrollView>
-            </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                </ScrollView>
+              </View>
+            </ScrollView>
           )}
         </View>
       )}
