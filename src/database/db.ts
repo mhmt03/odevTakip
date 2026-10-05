@@ -1,10 +1,19 @@
 import * as SQLite from 'expo-sqlite';
 
-let dbInstance: SQLite.SQLiteDatabase | null = null;
+// Fast Refresh sırasında modül yeniden yüklendiğinde aynı bağlantıyı kullanmak için
+// bağlantıyı globalThis üzerinde saklıyoruz. Aksi halde eski (kapanmış) native
+// bağlantıya giden istekler NullPointerException ile reddediliyor.
+const g = globalThis as any;
+let dbInstance: SQLite.SQLiteDatabase | null = g.__sinifTakipDB ?? null;
 let dbOpenPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
+const setInstance = (db: SQLite.SQLiteDatabase | null) => {
+  dbInstance = db;
+  g.__sinifTakipDB = db;
+};
+
 export const resetDB = () => {
-  dbInstance = null;
+  setInstance(null);
   dbOpenPromise = null;
 };
 
@@ -15,9 +24,16 @@ export const closeDatabase = async (): Promise<void> => {
     } catch (e) {
       console.warn('Error closing database:', e);
     }
-    dbInstance = null;
+    setInstance(null);
     dbOpenPromise = null;
   }
+};
+
+const openFresh = async (): Promise<SQLite.SQLiteDatabase> => {
+  const db = await SQLite.openDatabaseAsync('sinif_takip.db');
+  await db.execAsync('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  setInstance(db);
+  return db;
 };
 
 export const getDB = async (): Promise<SQLite.SQLiteDatabase> => {
@@ -31,12 +47,9 @@ export const getDB = async (): Promise<SQLite.SQLiteDatabase> => {
 
   dbOpenPromise = (async () => {
     try {
-      const db = await SQLite.openDatabaseAsync('sinif_takip.db');
-      await db.execAsync('PRAGMA foreign_keys = ON;');
-      dbInstance = db;
-      return db;
+      return await openFresh();
     } catch (err) {
-      dbInstance = null;
+      setInstance(null);
       throw err;
     } finally {
       dbOpenPromise = null;
@@ -44,6 +57,19 @@ export const getDB = async (): Promise<SQLite.SQLiteDatabase> => {
   })();
 
   return await dbOpenPromise;
+};
+
+/** Mevcut bağlantının hâlâ geçerli olduğunu doğrular; değilse yeniden açar. */
+const ensureHealthyDB = async (): Promise<SQLite.SQLiteDatabase> => {
+  const db = await getDB();
+  try {
+    await db.getFirstAsync('SELECT 1');
+    return db;
+  } catch (e) {
+    console.warn('Stale DB connection detected, reopening...', e);
+    setInstance(null);
+    return await openFresh();
+  }
 };
 
 const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
@@ -380,16 +406,13 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
 };
 
 export const initDatabase = async (): Promise<void> => {
-  dbInstance = null;
   try {
-    const db = await getDB();
+    const db = await ensureHealthyDB();
     await runSchema(db);
   } catch (err) {
     console.warn('Initial initDatabase failed, recreating connection...', err);
-    dbInstance = null;
-    const db = await SQLite.openDatabaseAsync('sinif_takip.db');
-    dbInstance = db;
-    await db.execAsync('PRAGMA foreign_keys = ON;');
+    setInstance(null);
+    const db = await openFresh();
     await runSchema(db);
   }
 };
