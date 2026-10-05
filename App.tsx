@@ -7,6 +7,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { initDatabase } from './src/database/db';
+import { activateDefaultSchoolOnStartup } from './src/database/operations/schoolOperations';
 import { Colors } from './src/theme/colors';
 
 import { SchoolThemeProvider, useSchoolTheme } from './src/context/SchoolThemeContext';
@@ -147,6 +148,11 @@ export default function App() {
     async function prepare() {
       try {
         await initDatabase();
+        try {
+          await activateDefaultSchoolOnStartup();
+        } catch (err) {
+          console.warn('Default school activation failed:', err);
+        }
         setDbReady(true);
       } catch (e) {
         console.error('Failed to initialize database:', e);

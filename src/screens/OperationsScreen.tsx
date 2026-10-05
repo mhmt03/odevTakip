@@ -38,6 +38,14 @@ import {
   QuickNoteItem,
 } from '../database/operations/noteOperations';
 import { clearEntireSchedule } from '../database/operations/scheduleOperations';
+import {
+  School,
+  getSchools,
+  getDefaultSchoolId,
+  setDefaultSchoolId,
+  setActiveSchool,
+} from '../database/operations/schoolOperations';
+import { useSchoolTheme } from '../context/SchoolThemeContext';
 
 const APP_VERSION =
   Constants.expoConfig?.version ||
@@ -75,16 +83,59 @@ export const OperationsScreen: React.FC = () => {
   const [editingText, setEditingText] = useState('');
   const [editModalVisible, setEditModalVisible] = useState(false);
 
+  // Default school state
+  const { reloadSchoolTheme } = useSchoolTheme();
+  const [schools, setSchools] = useState<School[]>([]);
+  const [defaultSchoolId, setDefaultSchoolIdState] = useState<number | null>(null);
+
   const loadData = async () => {
     try {
-      const [dbStats, notes] = await Promise.all([
+      const [dbStats, notes, schoolList, defId] = await Promise.all([
         getDatabaseStats(),
         getQuickNotes(),
+        getSchools(),
+        getDefaultSchoolId(),
       ]);
       setStats(dbStats);
       setQuickNotes(notes);
+      setSchools(schoolList);
+      setDefaultSchoolIdState(defId);
     } catch (e) {
       console.error('Error loading operations data:', e);
+    }
+  };
+
+  const handleSelectDefaultSchool = async (school: School) => {
+    try {
+      if (defaultSchoolId === school.id) {
+        Alert.alert(
+          'Varsayılan Okulu Kaldır',
+          `"${school.name}" varsayılan okul olmaktan çıkarılsın mı? Uygulama son kullanılan okulla açılır.`,
+          [
+            { text: 'Vazgeç', style: 'cancel' },
+            {
+              text: 'Kaldır',
+              style: 'destructive',
+              onPress: async () => {
+                await setDefaultSchoolId(null);
+                setDefaultSchoolIdState(null);
+              },
+            },
+          ]
+        );
+        return;
+      }
+      await setDefaultSchoolId(school.id);
+      await setActiveSchool(school.id);
+      setDefaultSchoolIdState(school.id);
+      await reloadSchoolTheme();
+      setSchools(await getSchools());
+      Alert.alert(
+        'Varsayılan Okul Ayarlandı ✅',
+        `Uygulama her açıldığında "${school.name}" otomatik olarak seçilecek.`
+      );
+    } catch (e: any) {
+      Alert.alert('Hata', e?.message || 'Varsayılan okul ayarlanamadı.');
     }
   };
 
@@ -328,8 +379,65 @@ export const OperationsScreen: React.FC = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* SECTION 1: VERİTABANI YEDEKLEME & GERİ YÜKLEME */}
+        {/* SECTION 0: VARSAYILAN OKUL SEÇİMİ */}
         <View style={styles.sectionHeaderRow}>
+          <Ionicons name="star-outline" size={20} color={Colors.primary} />
+          <Text style={styles.sectionHeader}>Varsayılan Okul Seçimi</Text>
+        </View>
+
+        <Card style={styles.dbCard}>
+          <Text style={styles.cardInfoDesc}>
+            Uygulama her açıldığında seçtiğiniz okul otomatik olarak aktif olur ve ajandanız bu okulun programıyla başlar.
+          </Text>
+
+          {schools.length === 0 ? (
+            <Text style={styles.defaultSchoolEmpty}>Henüz kayıtlı okul yok. Ana sayfadan okul ekleyebilirsiniz.</Text>
+          ) : (
+            <View style={{ gap: 8 }}>
+              {schools.map((school) => {
+                const isDefault = defaultSchoolId === school.id;
+                return (
+                  <TouchableOpacity
+                    key={school.id}
+                    testID={`default-school-${school.id}`}
+                    style={[
+                      styles.defaultSchoolRow,
+                      isDefault && {
+                        borderColor: school.color,
+                        backgroundColor: `${school.color}14`,
+                      },
+                    ]}
+                    onPress={() => handleSelectDefaultSchool(school)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={[styles.defaultSchoolDot, { backgroundColor: school.color }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.defaultSchoolName} numberOfLines={1}>
+                        {school.name}
+                      </Text>
+                      {school.is_active === 1 && (
+                        <Text style={styles.defaultSchoolSub}>Şu an aktif</Text>
+                      )}
+                    </View>
+                    {isDefault && (
+                      <View style={[styles.defaultPill, { backgroundColor: school.color }]}>
+                        <Text style={styles.defaultPillText}>Varsayılan</Text>
+                      </View>
+                    )}
+                    <Ionicons
+                      name={isDefault ? 'radio-button-on' : 'radio-button-off'}
+                      size={22}
+                      color={isDefault ? school.color : Colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </Card>
+
+        {/* SECTION 1: VERİTABANI YEDEKLEME & GERİ YÜKLEME */}
+        <View style={[styles.sectionHeaderRow, { marginTop: 24 }]}>
           <Ionicons name="server-outline" size={20} color={Colors.primary} />
           <Text style={styles.sectionHeader}>Veritabanı Yedekleme & Geri Yükleme</Text>
         </View>
@@ -643,6 +751,47 @@ const styles = StyleSheet.create({
   },
   dbCard: {
     padding: 16,
+  },
+  defaultSchoolEmpty: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+  },
+  defaultSchoolRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
+  defaultSchoolDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  defaultSchoolName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  defaultSchoolSub: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  defaultPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  defaultPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   cardInfoTitle: {
     fontSize: 15,
