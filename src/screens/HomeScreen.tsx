@@ -115,6 +115,13 @@ export const HomeScreen: React.FC = () => {
     setShowAllSchoolsSchedule(val);
     await setShowAllSchoolsSetting(val);
     await loadDaySchedule(selectedDay, val);
+    try {
+      const info = await getActiveAndTodayLessons(val ? 'all' : undefined);
+      setLessonInfo(info);
+      setHeroNavIndex(null);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleSelectSchool = async (schoolId: number) => {
@@ -200,7 +207,9 @@ export const HomeScreen: React.FC = () => {
     nextLesson: null,
     todayLessons: [],
   });
-  const [currentTopic, setCurrentTopic] = useState<YearlyPlanItem | null>(null);
+  const [heroNavIndex, setHeroNavIndex] = useState<number | null>(null);
+  const [heroTopic, setHeroTopic] = useState<YearlyPlanItem | null>(null);
+  const [heroTopicLoading, setHeroTopicLoading] = useState(false);
   const [stats, setStats] = useState({
     classCount: 0,
     studentCount: 0,
@@ -253,23 +262,11 @@ export const HomeScreen: React.FC = () => {
   const loadData = async () => {
     try {
       setCurrentTime(getCurrentTimeString());
-      const info = await getActiveAndTodayLessons();
-      setLessonInfo(info);
       const savedSetting = await getShowAllSchoolsSetting();
       setShowAllSchoolsSchedule(savedSetting);
+      const info = await getActiveAndTodayLessons(savedSetting ? 'all' : undefined);
+      setLessonInfo(info);
       await loadDaySchedule(selectedDay, savedSetting);
-
-      if (info.currentLesson && info.currentLesson.class_id) {
-        const topic = await getCurrentTopicForClass(
-          info.currentLesson.class_id,
-          info.currentLesson.course_id || undefined,
-          info.currentLesson.day_of_week,
-          info.currentLesson.slot_id
-        );
-        setCurrentTopic(topic);
-      } else {
-        setCurrentTopic(null);
-      }
 
       const classes = await getClasses();
       const totalStudents = classes.reduce((sum, c) => sum + (c.student_count || 0), 0);
@@ -291,27 +288,17 @@ export const HomeScreen: React.FC = () => {
       loadData();
       const interval = setInterval(() => {
         setCurrentTime(getCurrentTimeString());
-        getActiveAndTodayLessons().then(async (info) => {
+        getActiveAndTodayLessons(showAllSchoolsSchedule ? 'all' : undefined).then(async (info) => {
           setLessonInfo(info);
-          if (info.currentLesson && info.currentLesson.class_id) {
-            const topic = await getCurrentTopicForClass(
-              info.currentLesson.class_id,
-              info.currentLesson.course_id || undefined,
-              info.currentLesson.day_of_week,
-              info.currentLesson.slot_id
-            );
-            setCurrentTopic(topic);
-          } else {
-            setCurrentTopic(null);
-          }
         });
       }, 30000); // 30 sec tick
       return () => clearInterval(interval);
-    }, [])
+    }, [showAllSchoolsSchedule])
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
+    setHeroNavIndex(null);
     await loadData();
     setRefreshing(false);
   };
@@ -532,6 +519,102 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
+  // --- HERO CARD (ACTIVE/NAVIGATED LESSON) COMPUTED & STATE ---
+  const todayLessons = lessonInfo.todayLessons || [];
+  const currentActiveIndex = lessonInfo.currentLesson
+    ? todayLessons.findIndex((item) => item.slot_id === lessonInfo.currentLesson?.slot_id)
+    : -1;
+  const nextActiveIndex = lessonInfo.nextLesson
+    ? todayLessons.findIndex((item) => item.slot_id === lessonInfo.nextLesson?.slot_id)
+    : -1;
+
+  let effectiveHeroIndex = -1;
+  if (todayLessons.length > 0) {
+    if (heroNavIndex !== null && heroNavIndex >= 0 && heroNavIndex < todayLessons.length) {
+      effectiveHeroIndex = heroNavIndex;
+    } else if (currentActiveIndex !== -1) {
+      effectiveHeroIndex = currentActiveIndex;
+    } else if (nextActiveIndex !== -1) {
+      effectiveHeroIndex = nextActiveIndex;
+    } else {
+      effectiveHeroIndex = 0;
+    }
+  }
+
+  const effectiveHeroLesson: ScheduleItem | null =
+    effectiveHeroIndex >= 0 && effectiveHeroIndex < todayLessons.length
+      ? todayLessons[effectiveHeroIndex]
+      : (lessonInfo.currentLesson || null);
+
+  const isCurrentLesson = Boolean(
+    lessonInfo.currentLesson &&
+    effectiveHeroLesson &&
+    effectiveHeroLesson.slot_id === lessonInfo.currentLesson.slot_id
+  );
+
+  const isNextLesson = Boolean(
+    !lessonInfo.currentLesson &&
+    lessonInfo.nextLesson &&
+    effectiveHeroLesson &&
+    effectiveHeroLesson.slot_id === lessonInfo.nextLesson.slot_id
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!effectiveHeroLesson || !effectiveHeroLesson.class_id) {
+      setHeroTopic(null);
+      setHeroTopicLoading(false);
+      return;
+    }
+
+    setHeroTopicLoading(true);
+    getCurrentTopicForClass(
+      effectiveHeroLesson.class_id,
+      effectiveHeroLesson.course_id || undefined,
+      effectiveHeroLesson.day_of_week,
+      effectiveHeroLesson.slot_id
+    )
+      .then((topic) => {
+        if (isMounted) {
+          setHeroTopic(topic);
+          setHeroTopicLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.error('Error loading hero topic:', err);
+        if (isMounted) {
+          setHeroTopic(null);
+          setHeroTopicLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    effectiveHeroLesson?.id,
+    effectiveHeroLesson?.slot_id,
+    effectiveHeroLesson?.class_id,
+    effectiveHeroLesson?.course_id,
+    effectiveHeroLesson?.day_of_week,
+  ]);
+
+  const handlePrevHeroLesson = () => {
+    if (effectiveHeroIndex > 0) {
+      setHeroNavIndex(effectiveHeroIndex - 1);
+    }
+  };
+
+  const handleNextHeroLesson = () => {
+    if (effectiveHeroIndex < todayLessons.length - 1) {
+      setHeroNavIndex(effectiveHeroIndex + 1);
+    }
+  };
+
+  const handleResetHeroNav = () => {
+    setHeroNavIndex(null);
+  };
+
   const currentTopicItem = topicInfo?.allTopics[selectedTopicIndex] || null;
   const prevTopics = topicInfo
     ? [
@@ -650,55 +733,231 @@ export const HomeScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* ACTIVE LESSON HERO CARD */}
+      {/* ACTIVE / NAVIGATED LESSON HERO CARD */}
       <View style={styles.heroCardContainer}>
-        {lessonInfo.currentLesson ? (
-          <Card style={styles.activeCard} highlightBorder={Colors.success}>
+        {effectiveHeroLesson ? (
+          <Card
+            style={[
+              styles.activeCard,
+              effectiveHeroLesson.school_color && showAllSchoolsSchedule
+                ? { borderLeftWidth: 4, borderLeftColor: effectiveHeroLesson.school_color }
+                : null,
+            ]}
+            highlightBorder={isCurrentLesson ? Colors.success : isNextLesson ? Colors.primary : Colors.primaryLight}
+          >
+            {/* 1. ÜST ROZETLER VE MİNİK SAĞ-SOL GEZİNME OKLARI */}
             <View style={styles.activeBadgeRow}>
-              <View style={styles.liveIndicator}>
-                <View style={styles.pulsingDot} />
-                <Text style={styles.liveText}>ŞU ANDAKİ DERS</Text>
-              </View>
-              <Badge
-                label={`${lessonInfo.currentLesson.start_time} - ${lessonInfo.currentLesson.end_time}`}
-                status="yapildi"
-                size="sm"
-              />
-            </View>
+              <View style={styles.activeStatusWrap}>
+                {isCurrentLesson ? (
+                  <View style={styles.liveIndicator}>
+                    <View style={styles.pulsingDot} />
+                    <Text style={styles.liveText}>ŞU ANDAKİ DERS</Text>
+                  </View>
+                ) : isNextLesson ? (
+                  <View style={styles.nextIndicator}>
+                    <View style={[styles.pulsingDot, { backgroundColor: Colors.primary }]} />
+                    <Text style={styles.nextText}>SIRADAKİ DERS</Text>
+                  </View>
+                ) : (
+                  <View style={styles.otherIndicator}>
+                    <Ionicons name="time-outline" size={12} color={Colors.textSecondary} />
+                    <Text style={styles.otherText}>
+                      {effectiveHeroLesson.slot_name || `${effectiveHeroIndex + 1}. Ders`}
+                    </Text>
+                  </View>
+                )}
 
-            <View style={styles.activeDetails}>
-              <Text style={styles.activeClass}>
-                {lessonInfo.currentLesson.class_name || 'Şube Belirtilmemiş'}
-              </Text>
-              <Text style={styles.activeCourse}>
-                {lessonInfo.currentLesson.course_code ? `[${lessonInfo.currentLesson.course_code}] ` : ''}
-                {lessonInfo.currentLesson.course_name || 'Ders Belirtilmemiş'} •{' '}
-                {lessonInfo.currentLesson.slot_name || ''}
-              </Text>
-              {lessonInfo.currentLesson.classroom && (
-                <Text style={styles.classroomText}>
-                  Derslik: {lessonInfo.currentLesson.classroom}
-                </Text>
+                <Badge
+                  label={`${effectiveHeroLesson.start_time || ''} - ${effectiveHeroLesson.end_time || ''}`}
+                  status={isCurrentLesson ? 'yapildi' : isNextLesson ? 'bekliyor' : 'varsayilan'}
+                  size="sm"
+                />
+
+                {lessonInfo.currentLesson && !isCurrentLesson && (
+                  <TouchableOpacity
+                    style={styles.returnCurrentBtn}
+                    onPress={handleResetHeroNav}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="return-down-back" size={11} color={Colors.primary} />
+                    <Text style={styles.returnCurrentBtnText}>Şu An</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* SAĞ-SOL GEZİNME OKLARI (MİNİK SAĞ SOL OKLARI) */}
+              {todayLessons.length > 1 && (
+                <View style={styles.heroNavContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.heroNavArrowBtn,
+                      effectiveHeroIndex <= 0 && styles.heroNavArrowDisabled,
+                    ]}
+                    onPress={handlePrevHeroLesson}
+                    disabled={effectiveHeroIndex <= 0}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons
+                      name="chevron-back"
+                      size={15}
+                      color={effectiveHeroIndex <= 0 ? Colors.textMuted : Colors.primary}
+                    />
+                  </TouchableOpacity>
+
+                  <Text style={styles.heroNavCounter}>
+                    {effectiveHeroIndex + 1}/{todayLessons.length}
+                  </Text>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.heroNavArrowBtn,
+                      effectiveHeroIndex >= todayLessons.length - 1 && styles.heroNavArrowDisabled,
+                    ]}
+                    onPress={handleNextHeroLesson}
+                    disabled={effectiveHeroIndex >= todayLessons.length - 1}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons
+                      name="chevron-forward"
+                      size={15}
+                      color={
+                        effectiveHeroIndex >= todayLessons.length - 1
+                          ? Colors.textMuted
+                          : Colors.primary
+                      }
+                    />
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
 
-            {currentTopic ? (
-              <View style={styles.topicBox}>
-                <Ionicons name="book-outline" size={16} color={Colors.primary} />
-                <Text style={styles.topicText} numberOfLines={2}>
-                  Deftere Yazılacak: {currentTopic.week_number ? `${currentTopic.week_number}. Hafta ` : ''}{currentTopic.lesson_hours ? `(${currentTopic.lesson_hours} Saat) - ` : '- '}{currentTopic.subject_topic}
+            {/* 2. SINIF BİLGİSİ, DERS ADI VE DERS NUMARASI - AYNI SATIRDA */}
+            <View style={styles.heroCompactRow}>
+              {/* Sınıf Bilgisi */}
+              <View
+                style={[
+                  styles.heroClassBadge,
+                  effectiveHeroLesson.school_color
+                    ? { backgroundColor: `${effectiveHeroLesson.school_color}18` }
+                    : null,
+                ]}
+              >
+                <Ionicons
+                  name="school-outline"
+                  size={13}
+                  color={effectiveHeroLesson.school_color || Colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.heroClassBadgeText,
+                    effectiveHeroLesson.school_color
+                      ? { color: effectiveHeroLesson.school_color }
+                      : null,
+                  ]}
+                >
+                  {effectiveHeroLesson.class_name || 'Şube Yok'}
                 </Text>
               </View>
-            ) : null}
 
+              {/* Ders Adı */}
+              <Text style={styles.heroCourseNameText} numberOfLines={1}>
+                {effectiveHeroLesson.course_code ? `[${effectiveHeroLesson.course_code}] ` : ''}
+                {effectiveHeroLesson.course_name || 'Ders Belirtilmemiş'}
+              </Text>
+
+              {/* Ayırıcı Nokta */}
+              <Text style={styles.heroDotSeparator}>•</Text>
+
+              {/* Ders Numarası */}
+              <View style={styles.heroSlotBadge}>
+                <Text style={styles.heroSlotBadgeText}>
+                  {effectiveHeroLesson.slot_name || `${effectiveHeroLesson.slot_number || effectiveHeroIndex + 1}. Ders`}
+                </Text>
+              </View>
+
+              {/* Derslik (varsa) */}
+              {effectiveHeroLesson.classroom ? (
+                <>
+                  <Text style={styles.heroDotSeparator}>•</Text>
+                  <Text style={styles.heroClassroomText}>
+                    {effectiveHeroLesson.classroom}
+                  </Text>
+                </>
+              ) : null}
+            </View>
+
+            {/* 3. KONUNUN YAZILDIĞI KART (BÜYÜTÜLMÜŞ, TAM VE FERAH METİN) */}
+            <View style={styles.expandedTopicCard}>
+              <View style={styles.expandedTopicHeader}>
+                <View style={styles.topicHeaderTitleRow}>
+                  <View style={styles.topicBookIconBg}>
+                    <Ionicons name="book-outline" size={13} color={Colors.primary} />
+                  </View>
+                  <Text style={styles.expandedTopicLabel}>Deftere Yazılacak Konu</Text>
+                </View>
+
+                {heroTopic && (
+                  <View style={styles.topicHeaderBadges}>
+                    {heroTopic.week_number ? (
+                      <View style={styles.topicWeekBadge}>
+                        <Text style={styles.topicWeekBadgeText}>
+                          {heroTopic.week_number}. Hafta{heroTopic.lesson_hours ? ` (${heroTopic.lesson_hours}s)` : ''}
+                        </Text>
+                      </View>
+                    ) : null}
+                    <TouchableOpacity
+                      onPress={() => handleCopyNotebookText(heroTopic.subject_topic)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={styles.topicCopyIconBtn}
+                    >
+                      <Ionicons name="copy-outline" size={13} color={Colors.primary} />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+
+              {heroTopicLoading ? (
+                <View style={styles.topicLoadingContainer}>
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                  <Text style={styles.topicLoadingText}>Konu yükleniyor...</Text>
+                </View>
+              ) : heroTopic ? (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => handleOpenTopicModal(effectiveHeroLesson)}
+                >
+                  <Text style={styles.expandedTopicText} selectable={true}>
+                    {heroTopic.subject_topic}
+                  </Text>
+                  {heroTopic.learning_outcomes ? (
+                    <Text style={styles.expandedOutcomeText} selectable={true} numberOfLines={2}>
+                      Kazanım: {heroTopic.learning_outcomes}
+                    </Text>
+                  ) : null}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.topicEmptyContainer}
+                  onPress={() => handleOpenYearlyPlanModal(effectiveHeroLesson)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="information-circle-outline" size={16} color={Colors.textMuted} />
+                  <Text style={styles.topicEmptyText}>
+                    Bu hafta için plan konusu bulunamadı. Planı açmak için dokunun.
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* 4. AKSİYON BUTONLARI */}
             <View style={styles.cardActionsRow}>
               <TouchableOpacity
                 style={styles.cardActionBtn}
                 onPress={() => {
-                  if (lessonInfo.currentLesson?.class_id) {
+                  if (effectiveHeroLesson?.class_id) {
                     navigation.navigate('ClassDetail', {
-                      classId: lessonInfo.currentLesson.class_id,
-                      className: lessonInfo.currentLesson.class_name,
+                      classId: effectiveHeroLesson.class_id,
+                      className: effectiveHeroLesson.class_name,
                     });
                   }
                 }}
@@ -711,7 +970,7 @@ export const HomeScreen: React.FC = () => {
                 style={[styles.cardActionBtn, { backgroundColor: Colors.warningLight }]}
                 onPress={() => {
                   navigation.navigate('StudentNotesTab', {
-                    initialClassId: lessonInfo.currentLesson?.class_id,
+                    initialClassId: effectiveHeroLesson?.class_id,
                   });
                 }}
               >
@@ -2121,58 +2380,258 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 10,
+    gap: 8,
+  },
+  activeStatusWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    flex: 1,
   },
   liveIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   pulsingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: Colors.success,
   },
   liveText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     color: Colors.successDark,
-    letterSpacing: 0.8,
+    letterSpacing: 0.5,
   },
-  activeDetails: {
-    marginBottom: 12,
-  },
-  activeClass: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: Colors.textPrimary,
-    letterSpacing: -0.5,
-  },
-  activeCourse: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.primary,
-    marginTop: 2,
-  },
-  classroomText: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    marginTop: 4,
-  },
-  topicBox: {
+  nextIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
     backgroundColor: Colors.primaryLight,
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 14,
-    gap: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
-  topicText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
+  nextText: {
+    fontSize: 10,
+    fontWeight: '800',
     color: Colors.primaryDark,
+    letterSpacing: 0.5,
+  },
+  otherIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  otherText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  returnCurrentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: 'rgba(37, 99, 235, 0.25)',
+  },
+  returnCurrentBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  heroNavContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    paddingVertical: 2,
+    gap: 2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  heroNavArrowBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  heroNavArrowDisabled: {
+    backgroundColor: 'transparent',
+    opacity: 0.35,
+  },
+  heroNavCounter: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    minWidth: 26,
+    textAlign: 'center',
+    paddingHorizontal: 2,
+  },
+  heroCompactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 6,
+  },
+  heroClassBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  heroClassBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.primaryDark,
+  },
+  heroCourseNameText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  heroDotSeparator: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    fontWeight: '600',
+  },
+  heroSlotBadge: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  heroSlotBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+  },
+  heroClassroomText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  expandedTopicCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+    padding: 12,
+    marginBottom: 12,
+  },
+  expandedTopicHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  topicHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  topicBookIconBg: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  expandedTopicLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.primaryDark,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  topicHeaderBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  topicWeekBadge: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  topicWeekBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.primaryDark,
+  },
+  topicCopyIconBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  expandedTopicText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    lineHeight: 21,
+  },
+  expandedOutcomeText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 6,
+    lineHeight: 17,
+  },
+  topicLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  topicLoadingText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  topicEmptyContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+  },
+  topicEmptyText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
   },
   cardActionsRow: {
     flexDirection: 'row',

@@ -392,9 +392,11 @@ export interface ActiveLessonInfo {
   todayLessons: ScheduleItem[];
 }
 
-export const getActiveAndTodayLessons = async (): Promise<ActiveLessonInfo> => {
+export const getActiveAndTodayLessons = async (
+  schoolFilter?: number | 'all'
+): Promise<ActiveLessonInfo> => {
   const dayOfWeek = getDayOfWeekIndex();
-  const todayLessonsAll = await getScheduleByDay(dayOfWeek);
+  const todayLessonsAll = await getScheduleByDay(dayOfWeek, schoolFilter);
   const currentTime = getCurrentTimeString();
 
   // Filter only slots that actually have a class or course assigned
