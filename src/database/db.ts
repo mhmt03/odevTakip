@@ -31,7 +31,14 @@ export const closeDatabase = async (): Promise<void> => {
 
 const openFresh = async (): Promise<SQLite.SQLiteDatabase> => {
   const db = await SQLite.openDatabaseAsync('sinif_takip.db');
-  await db.execAsync('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  // busy_timeout: kilitli veritabanında hemen hata vermek yerine 5 sn bekle
+  await db.execAsync('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+  try {
+    // WAL: okuma ve yazma işlemlerinin birbirini kilitlemesini azaltır
+    await db.execAsync('PRAGMA journal_mode = WAL;');
+  } catch (e) {
+    console.warn('WAL mode could not be enabled:', e);
+  }
   setInstance(db);
   return db;
 };
@@ -405,14 +412,28 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
   }
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const initDatabase = async (): Promise<void> => {
-  try {
-    const db = await ensureHealthyDB();
-    await runSchema(db);
-  } catch (err) {
-    console.warn('Initial initDatabase failed, recreating connection...', err);
-    setInstance(null);
-    const db = await openFresh();
-    await runSchema(db);
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const db = await ensureHealthyDB();
+      await runSchema(db);
+      return;
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      const isLocked = msg.includes('database is locked');
+      console.warn(`initDatabase attempt ${attempt} failed${isLocked ? ' (locked)' : ''}`, msg);
+      if (attempt === MAX_ATTEMPTS) throw err;
+      if (isLocked) {
+        // Aynı bağlantıyla, kilidin kalkmasını bekleyerek tekrar dene
+        await sleep(800 * attempt);
+      } else {
+        // Bağlantı bozuk olabilir: düzgünce kapatıp yeniden aç
+        await closeDatabase();
+        await sleep(300);
+      }
+    }
   }
 };
