@@ -46,7 +46,14 @@ import {
   getQuickNotes,
   QuickNoteItem,
 } from '../database/operations/noteOperations';
-import { formatDateToTR } from '../utils/dateUtils';
+import * as Clipboard from 'expo-clipboard';
+import { formatDateToTR, getCurrentDateTimeString } from '../utils/dateUtils';
+import {
+  getClassNotes,
+  createClassNote,
+  updateClassNote,
+  deleteClassNote,
+} from '../database/operations/classNoteOperations';
 import {
   getCurrentActiveLessonSummary,
   CurrentLessonSummary,
@@ -79,7 +86,7 @@ import {
   extractPhotosFromPdf,
   PdfExtractedStudentPhoto,
 } from '../utils/pdfPhotoExtractor';
-import { Student, ClassItem, StudentNote, StudentGradeRow, QuizItem } from '../types';
+import { Student, ClassItem, StudentNote, StudentGradeRow, QuizItem, ClassNote } from '../types';
 
 export const ClassDetailScreen: React.FC = () => {
   const route = useRoute<any>();
@@ -156,8 +163,129 @@ export const ClassDetailScreen: React.FC = () => {
   const [availableClasses, setAvailableClasses] = useState<ClassItem[]>([]);
   const [selectedTargetClassId, setSelectedTargetClassId] = useState<number | null>(null);
 
-  // Top Segment Tab: 'students' (Öğrenci Listesi) vs 'gradebook' (Not Çizelgesi)
-  const [activeViewTab, setActiveViewTab] = useState<'students' | 'gradebook'>('students');
+  // Top Segment Tab: 'students' (Öğrenci Listesi) vs 'gradebook' (Not Çizelgesi) vs 'classNotes' (Sınıf Görüşü)
+  const [activeViewTab, setActiveViewTab] = useState<'students' | 'gradebook' | 'classNotes'>('students');
+
+  // Class Notes (Sınıf Görüşü) State
+  const [classNotes, setClassNotes] = useState<ClassNote[]>([]);
+  const [loadingClassNotes, setLoadingClassNotes] = useState(false);
+  const [classNoteSearchQuery, setClassNoteSearchQuery] = useState('');
+  const [classNoteModalVisible, setClassNoteModalVisible] = useState(false);
+  const [editingClassNote, setEditingClassNote] = useState<ClassNote | null>(null);
+  const [classNoteInput, setClassNoteInput] = useState('');
+  const [classNoteDateInput, setClassNoteDateInput] = useState('');
+  const [classNoteLessonInput, setClassNoteLessonInput] = useState('');
+  const [currentActiveLesson, setCurrentActiveLesson] = useState<CurrentLessonSummary | null>(null);
+  const [savingClassNote, setSavingClassNote] = useState(false);
+
+  const loadClassNotes = async () => {
+    try {
+      setLoadingClassNotes(true);
+      const notes = await getClassNotes(classId);
+      setClassNotes(notes);
+    } catch (e) {
+      console.error('Error loading class notes:', e);
+    } finally {
+      setLoadingClassNotes(false);
+    }
+  };
+
+  const handleOpenAddClassNote = async () => {
+    setEditingClassNote(null);
+    setClassNoteInput('');
+    setClassNoteDateInput(getCurrentDateTimeString());
+    try {
+      const active = await getCurrentActiveLessonSummary();
+      setCurrentActiveLesson(active);
+      if (active) {
+        setClassNoteLessonInput(`${active.fullText} (${active.startTime} - ${active.endTime})`);
+      } else {
+        setClassNoteLessonInput('');
+      }
+    } catch {
+      setCurrentActiveLesson(null);
+      setClassNoteLessonInput('');
+    }
+    setClassNoteModalVisible(true);
+  };
+
+  const handleOpenEditClassNote = (item: ClassNote) => {
+    setEditingClassNote(item);
+    setClassNoteInput(item.note);
+    setClassNoteDateInput(item.note_date);
+    setClassNoteLessonInput(item.lesson_info || '');
+    setClassNoteModalVisible(true);
+  };
+
+  const handleSaveClassNote = async () => {
+    if (!classNoteInput.trim()) {
+      Alert.alert('Uyarı', 'Lütfen bir görüş metni giriniz.');
+      return;
+    }
+    try {
+      setSavingClassNote(true);
+      if (editingClassNote) {
+        await updateClassNote(
+          editingClassNote.id,
+          classNoteInput,
+          classNoteDateInput.trim() || undefined,
+          classNoteLessonInput.trim() || null
+        );
+      } else {
+        await createClassNote(
+          classId,
+          classNoteInput,
+          classNoteDateInput.trim() || undefined,
+          classNoteLessonInput.trim() || null
+        );
+      }
+      setClassNoteModalVisible(false);
+      await loadClassNotes();
+    } catch (e) {
+      console.error('Error saving class note:', e);
+      Alert.alert('Hata', 'Sınıf görüşü kaydedilirken bir hata oluştu.');
+    } finally {
+      setSavingClassNote(false);
+    }
+  };
+
+  const handleDeleteClassNote = (item: ClassNote) => {
+    Alert.alert(
+      'Görüşü Sil',
+      'Bu sınıf görüşünü silmek istediğinize emin misiniz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteClassNote(item.id);
+              await loadClassNotes();
+            } catch (e) {
+              console.error('Error deleting class note:', e);
+              Alert.alert('Hata', 'Görüş silinemedi.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCopyClassNote = async (text: string) => {
+    await Clipboard.setStringAsync(text);
+    Alert.alert('Kopyalandı', 'Görüş panoya kopyalandı.');
+  };
+
+  const filteredClassNotes = classNotes.filter((item) => {
+    if (!classNoteSearchQuery.trim()) return true;
+    const q = classNoteSearchQuery.toLowerCase();
+    return (
+      item.note.toLowerCase().includes(q) ||
+      (item.lesson_info && item.lesson_info.toLowerCase().includes(q)) ||
+      (item.note_date && item.note_date.toLowerCase().includes(q))
+    );
+  });
 
   // Gradebook State
   const [activeTerm, setActiveTerm] = useState<1 | 2>(1);
@@ -392,6 +520,7 @@ export const ClassDetailScreen: React.FC = () => {
     useCallback(() => {
       loadStudents();
       loadGradebook();
+      loadClassNotes();
     }, [classId, activeTerm])
   );
 
@@ -1070,133 +1199,74 @@ export const ClassDetailScreen: React.FC = () => {
         onBack={() => navigation.goBack()}
       />
 
-      {/* View Segment Switch: Öğrenciler / Not Çizelgesi & Quizler */}
-      <View style={styles.segmentSwitchWrap}>
-        <TouchableOpacity
-          style={[styles.segmentBtn, activeViewTab === 'students' && styles.segmentBtnActive]}
-          onPress={() => setActiveViewTab('students')}
-          activeOpacity={0.8}
+      {/* View Segment Switch: Öğrenciler / Not Çizelgesi & Quizler / Sınıf Görüşü */}
+      <View style={styles.segmentSwitchOuter}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.segmentSwitchContent}
         >
-          <Ionicons
-            name="people"
-            size={17}
-            color={activeViewTab === 'students' ? '#FFFFFF' : Colors.textSecondary}
-          />
-          <Text
-            style={[styles.segmentBtnText, activeViewTab === 'students' && styles.segmentBtnTextActive]}
+          <TouchableOpacity
+            style={[styles.segmentBtn, activeViewTab === 'students' && styles.segmentBtnActive]}
+            onPress={() => setActiveViewTab('students')}
+            activeOpacity={0.8}
           >
-            Öğrenciler ({students.length})
-          </Text>
-        </TouchableOpacity>
+            <Ionicons
+              name="people"
+              size={16}
+              color={activeViewTab === 'students' ? '#FFFFFF' : Colors.textSecondary}
+            />
+            <Text
+              style={[styles.segmentBtnText, activeViewTab === 'students' && styles.segmentBtnTextActive]}
+            >
+              Öğrenciler ({students.length})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.segmentBtn, activeViewTab === 'gradebook' && styles.segmentBtnActive]}
-          onPress={() => {
-            setActiveViewTab('gradebook');
-            loadGradebook();
-          }}
-          activeOpacity={0.8}
-        >
-          <Ionicons
-            name="calculator"
-            size={17}
-            color={activeViewTab === 'gradebook' ? '#FFFFFF' : Colors.textSecondary}
-          />
-          <Text
-            style={[styles.segmentBtnText, activeViewTab === 'gradebook' && styles.segmentBtnTextActive]}
+          <TouchableOpacity
+            style={[styles.segmentBtn, activeViewTab === 'gradebook' && styles.segmentBtnActive]}
+            onPress={() => {
+              setActiveViewTab('gradebook');
+              loadGradebook();
+            }}
+            activeOpacity={0.8}
           >
-            Not Çizelgesi & Quizler
-          </Text>
-        </TouchableOpacity>
+            <Ionicons
+              name="calculator"
+              size={16}
+              color={activeViewTab === 'gradebook' ? '#FFFFFF' : Colors.textSecondary}
+            />
+            <Text
+              style={[styles.segmentBtnText, activeViewTab === 'gradebook' && styles.segmentBtnTextActive]}
+            >
+              Not Çizelgesi & Quizler
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.segmentBtn, activeViewTab === 'classNotes' && styles.segmentBtnActive]}
+            onPress={() => {
+              setActiveViewTab('classNotes');
+              loadClassNotes();
+            }}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="chatbox-ellipses"
+              size={16}
+              color={activeViewTab === 'classNotes' ? '#FFFFFF' : Colors.textSecondary}
+            />
+            <Text
+              style={[styles.segmentBtnText, activeViewTab === 'classNotes' && styles.segmentBtnTextActive]}
+            >
+              Sınıf Görüşü {classNotes.length > 0 ? `(${classNotes.length})` : ''}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       {activeViewTab === 'students' && (
         <>
-      {/* Selection Mode Toolbar (When Active) */}
-      {selectionMode && (
-        <View style={styles.selectionToolbar}>
-          <View style={styles.selectionCountWrap}>
-            <TouchableOpacity onPress={handleSelectAll} style={styles.selectAllBtn}>
-              <Ionicons
-                name={
-                  selectedStudentIds.length === filteredStudents.length && filteredStudents.length > 0
-                    ? 'checkbox'
-                    : 'square-outline'
-                }
-                size={18}
-                color={Colors.primary}
-              />
-              <Text style={styles.selectAllText}>
-                {selectedStudentIds.length === filteredStudents.length ? 'Temizle' : 'Tümü'}
-              </Text>
-            </TouchableOpacity>
-            <Text style={styles.selectionCountText}>
-              <Text style={{ fontWeight: '800', color: Colors.primary }}>
-                {selectedStudentIds.length}
-              </Text>{' '}
-              seçili
-            </Text>
-          </View>
-
-          <View style={styles.selectionActionsRow}>
-            <TouchableOpacity
-              style={[
-                styles.selectionActionBtn,
-                styles.transferBtn,
-                selectedStudentIds.length === 0 && styles.btnDisabled,
-              ]}
-              disabled={selectedStudentIds.length === 0}
-              onPress={handleOpenTransferModal}
-            >
-              <Ionicons name="swap-horizontal" size={14} color="#0369A1" />
-              <Text style={styles.transferBtnText}>Şube Taşı</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.selectionActionBtn,
-                styles.deleteBtn,
-                selectedStudentIds.length === 0 && styles.btnDisabled,
-              ]}
-              disabled={selectedStudentIds.length === 0}
-              onPress={handleBulkDelete}
-            >
-              <Ionicons name="trash-outline" size={14} color="#B91C1C" />
-              <Text style={styles.deleteBtnText}>Sil</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.selectionActionBtn, styles.closeSelectionBtn]}
-              onPress={toggleSelectionMode}
-            >
-              <Ionicons name="close" size={14} color={Colors.textSecondary} />
-              <Text style={styles.closeSelectionBtnText}>Kapat</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* Search Bar & Counter */}
-      <View style={styles.searchWrapper}>
-        <View style={styles.searchRow}>
-          <View style={{ flex: 1 }}>
-            <Input
-              placeholder="Öğrenci adı, soyadı veya no ile ara..."
-              icon="search"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              onClear={() => setSearchQuery('')}
-              style={{ height: 40 }}
-            />
-          </View>
-          <View style={styles.studentCountBadge}>
-            <Text style={styles.studentCountBadgeText}>
-              {filteredStudents.length} / {students.length}
-            </Text>
-          </View>
-        </View>
-      </View>
-
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={Colors.primary} />
@@ -1207,6 +1277,92 @@ export const ClassDetailScreen: React.FC = () => {
           data={filteredStudents}
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <View style={styles.studentListHeaderWrap}>
+              {/* Selection Mode Toolbar (When Active) */}
+              {selectionMode && (
+                <View style={styles.selectionToolbar}>
+                  <View style={styles.selectionCountWrap}>
+                    <TouchableOpacity onPress={handleSelectAll} style={styles.selectAllBtn}>
+                      <Ionicons
+                        name={
+                          selectedStudentIds.length === filteredStudents.length && filteredStudents.length > 0
+                            ? 'checkbox'
+                            : 'square-outline'
+                        }
+                        size={18}
+                        color={Colors.primary}
+                      />
+                      <Text style={styles.selectAllText}>
+                        {selectedStudentIds.length === filteredStudents.length ? 'Temizle' : 'Tümü'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={styles.selectionCountText}>
+                      <Text style={{ fontWeight: '800', color: Colors.primary }}>
+                        {selectedStudentIds.length}
+                      </Text>{' '}
+                      seçili
+                    </Text>
+                  </View>
+
+                  <View style={styles.selectionActionsRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.selectionActionBtn,
+                        styles.transferBtn,
+                        selectedStudentIds.length === 0 && styles.btnDisabled,
+                      ]}
+                      disabled={selectedStudentIds.length === 0}
+                      onPress={handleOpenTransferModal}
+                    >
+                      <Ionicons name="swap-horizontal" size={14} color="#0369A1" />
+                      <Text style={styles.transferBtnText}>Şube Taşı</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.selectionActionBtn,
+                        styles.deleteBtn,
+                        selectedStudentIds.length === 0 && styles.btnDisabled,
+                      ]}
+                      disabled={selectedStudentIds.length === 0}
+                      onPress={handleBulkDelete}
+                    >
+                      <Ionicons name="trash-outline" size={14} color="#B91C1C" />
+                      <Text style={styles.deleteBtnText}>Sil</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.selectionActionBtn, styles.closeSelectionBtn]}
+                      onPress={toggleSelectionMode}
+                    >
+                      <Ionicons name="close" size={14} color={Colors.textSecondary} />
+                      <Text style={styles.closeSelectionBtnText}>Kapat</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* Search Bar & Counter - Scrolls with the list */}
+              <View style={styles.searchRowInHeader}>
+                <View style={{ flex: 1 }}>
+                  <Input
+                    placeholder="Öğrenci adı, soyadı veya no ile ara..."
+                    icon="search"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    onClear={() => setSearchQuery('')}
+                    style={{ height: 40 }}
+                  />
+                </View>
+                <View style={styles.studentCountBadge}>
+                  <Text style={styles.studentCountBadgeText}>
+                    {filteredStudents.length} / {students.length}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          }
           ListEmptyComponent={
             <EmptyState
               icon="people-outline"
@@ -1635,6 +1791,122 @@ export const ClassDetailScreen: React.FC = () => {
                 </ScrollView>
               </View>
             </ScrollView>
+          )}
+        </View>
+      )}
+
+      {/* 3. Class Notes View (Sınıf Görüşü) */}
+      {activeViewTab === 'classNotes' && (
+        <View style={styles.classNotesContainer}>
+          {/* Top Bar: Search + Add Button */}
+          <View style={styles.classNotesHeaderRow}>
+            <View style={{ flex: 1 }}>
+              <Input
+                placeholder="Sınıf görüşlerinde ara..."
+                icon="search"
+                value={classNoteSearchQuery}
+                onChangeText={setClassNoteSearchQuery}
+                onClear={() => setClassNoteSearchQuery('')}
+                style={{ height: 40 }}
+              />
+            </View>
+            <TouchableOpacity
+              style={styles.addClassNoteTopBtn}
+              onPress={handleOpenAddClassNote}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add-circle" size={18} color="#FFFFFF" />
+              <Text style={styles.addClassNoteTopBtnText}>Görüş Ekle</Text>
+            </TouchableOpacity>
+          </View>
+
+          {loadingClassNotes ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.loadingText}>Görüşler yükleniyor...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={filteredClassNotes}
+              keyExtractor={(item) => item.id.toString()}
+              contentContainerStyle={styles.classNotesListContent}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <EmptyState
+                  icon="chatbox-ellipses-outline"
+                  title={
+                    classNoteSearchQuery
+                      ? 'Aramayla Eşleşen Görüş Bulunamadı'
+                      : 'Bu Şubeye Ait Henüz Görüş Yok'
+                  }
+                  description={
+                    classNoteSearchQuery
+                      ? 'Farklı bir kelime ile aramayı deneyebilirsiniz.'
+                      : `${className} şubesi genelindeki ders disiplini, sınıf dinamikleri veya gözlemlerinizi ekleyebilirsiniz.`
+                  }
+                  actionTitle={classNoteSearchQuery ? undefined : 'Yeni Görüş Ekle'}
+                  onAction={classNoteSearchQuery ? undefined : handleOpenAddClassNote}
+                />
+              }
+              renderItem={({ item }) => (
+                <Card style={styles.classNoteCard}>
+                  {/* Top: Date, Lesson Info & Action Buttons */}
+                  <View style={styles.classNoteCardHeader}>
+                    <View style={styles.classNoteMetaWrap}>
+                      <View style={styles.classNoteDateBadge}>
+                        <Ionicons name="calendar-outline" size={12} color={Colors.primary} />
+                        <Text style={styles.classNoteDateText}>
+                          {formatDateToTR(item.note_date)}
+                        </Text>
+                      </View>
+
+                      {item.lesson_info ? (
+                        <View style={styles.classNoteLessonBadge}>
+                          <Ionicons name="time-outline" size={11} color={Colors.primaryDark} />
+                          <Text style={styles.classNoteLessonText} numberOfLines={1}>
+                            {item.lesson_info}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    {/* Actions: Copy, Edit, Delete */}
+                    <View style={styles.classNoteCardActions}>
+                      <TouchableOpacity
+                        style={styles.classNoteActionIconBtn}
+                        onPress={() => handleCopyClassNote(item.note)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Ionicons name="copy-outline" size={15} color={Colors.textSecondary} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.classNoteActionIconBtn}
+                        onPress={() => handleOpenEditClassNote(item)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Ionicons name="pencil" size={15} color={Colors.primary} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.classNoteActionIconBtn}
+                        onPress={() => handleDeleteClassNote(item)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Ionicons name="trash-outline" size={15} color={Colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Body: Note text */}
+                  <View style={styles.classNoteBodyWrap}>
+                    <Text style={styles.classNoteText} selectable={true}>
+                      {item.note}
+                    </Text>
+                  </View>
+                </Card>
+              )}
+            />
           )}
         </View>
       )}
@@ -3137,6 +3409,130 @@ export const ClassDetailScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* ADD / EDIT CLASS NOTE MODAL */}
+      <Modal
+        visible={classNoteModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setClassNoteModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>
+                  {editingClassNote ? 'Sınıf Görüşünü Düzenle' : 'Yeni Sınıf Görüşü Ekle'}
+                </Text>
+                <Text style={styles.modalSubtitle}>{className} Şubesi Genel Görüşü</Text>
+              </View>
+              <TouchableOpacity onPress={() => setClassNoteModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ marginVertical: 8 }}>
+              {/* Tarih & Saat */}
+              <View style={{ marginBottom: 12 }}>
+                <Input
+                  label="Tarih & Saat"
+                  value={classNoteDateInput}
+                  onChangeText={setClassNoteDateInput}
+                  placeholder="YYYY-MM-DD HH:mm"
+                  icon="calendar"
+                  style={{ height: 40 }}
+                />
+              </View>
+
+              {/* Ders Bilgisi (İsteğe Bağlı) */}
+              <View style={{ marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={styles.classNoteInputLabel}>Ders Bilgisi (İsteğe Bağlı)</Text>
+                  {currentActiveLesson && (
+                    <TouchableOpacity
+                      onPress={() => setClassNoteLessonInput(`${currentActiveLesson.fullText} (${currentActiveLesson.startTime} - ${currentActiveLesson.endTime})`)}
+                    >
+                      <Text style={{ fontSize: 11, color: Colors.primary, fontWeight: '700' }}>
+                        Şu Anki Dersi Ekle
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Input
+                  value={classNoteLessonInput}
+                  onChangeText={setClassNoteLessonInput}
+                  placeholder="Örn: Pazartesi, 3. Ders • Fizik"
+                  icon="time"
+                  style={{ height: 40 }}
+                />
+              </View>
+
+              {/* Görüş / Not Metni */}
+              <View style={{ marginBottom: 12 }}>
+                <Text style={styles.classNoteInputLabel}>Şube Hakkındaki Görüşünüz *</Text>
+                <TextInput
+                  style={styles.classNoteTextArea}
+                  value={classNoteInput}
+                  onChangeText={setClassNoteInput}
+                  placeholder="Örn: Yaramaz öğrenci sayısı fazla olduğu için derste otorite kurmak zor oluyor. Tahta kullanımı ve birebir soru çözümü daha etkili..."
+                  placeholderTextColor={Colors.textMuted}
+                  multiline={true}
+                  numberOfLines={5}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Hızlı Şablon Cümleler (Öneri Hapları) */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={[styles.classNoteInputLabel, { marginBottom: 6 }]}>Hızlı Görüş Şablonları:</Text>
+                <View style={styles.quickTemplateWrap}>
+                  {[
+                    'Yaramaz öğrenci sayısı fazla olduğu için derste otorite kurmak zor oluyor.',
+                    'Sınıfın derse ilgisi ve katılım düzeyi oldukça yüksek.',
+                    'Ödev hazırlığı ve materyal getirme oranı çok başarılı.',
+                    'Derste odaklanma ve gürültü problemi yaşanıyor.',
+                    'Grup çalışmalarında öğrenciler uyumlu ve verimli çalıştı.',
+                    'Konu kavrama ve soru çözüm performansları gayet iyi.',
+                  ].map((templateText, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={styles.quickTemplateChip}
+                      onPress={() => {
+                        if (!classNoteInput.trim()) {
+                          setClassNoteInput(templateText);
+                        } else {
+                          setClassNoteInput((prev) => `${prev} ${templateText}`);
+                        }
+                      }}
+                    >
+                      <Text style={styles.quickTemplateChipText} numberOfLines={1}>
+                        + {templateText}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Actions */}
+            <View style={styles.modalActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                onPress={() => setClassNoteModalVisible(false)}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title={savingClassNote ? 'Kaydediliyor...' : editingClassNote ? 'Güncelle' : 'Kaydet'}
+                onPress={handleSaveClassNote}
+                loading={savingClassNote}
+                style={{ flex: 1 }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -4183,21 +4579,24 @@ const styles = StyleSheet.create({
   },
 
   // Segment Switch
-  segmentSwitchWrap: {
-    flexDirection: 'row',
+  segmentSwitchOuter: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+  },
+  segmentSwitchContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     gap: 8,
   },
   segmentBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     borderRadius: 10,
     backgroundColor: Colors.cardSubtle,
     gap: 6,
@@ -4206,13 +4605,168 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   segmentBtnText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: Colors.textSecondary,
   },
   segmentBtnTextActive: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+
+  // Student list header & in-list search
+  studentListHeaderWrap: {
+    marginBottom: 6,
+  },
+  searchRowInHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
+
+  // Class Notes View Styles
+  classNotesContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  classNotesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 6,
+    gap: 10,
+  },
+  addClassNoteTopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 8,
+    gap: 4,
+    ...Shadows.small,
+  },
+  addClassNoteTopBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  classNotesListContent: {
+    padding: 16,
+    paddingTop: 6,
+    paddingBottom: 40,
+  },
+  classNoteCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+    ...Shadows.small,
+  },
+  classNoteCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  classNoteMetaWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  classNoteDateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  classNoteDateText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primaryDark,
+  },
+  classNoteLessonBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    maxWidth: 160,
+  },
+  classNoteLessonText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  classNoteCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  classNoteActionIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  classNoteBodyWrap: {
+    marginTop: 2,
+  },
+  classNoteText: {
+    fontSize: 13.5,
+    color: Colors.textPrimary,
+    lineHeight: 19.5,
+    fontWeight: '500',
+  },
+  classNoteTextArea: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 13.5,
+    color: Colors.textPrimary,
+    minHeight: 100,
+  },
+  classNoteInputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  quickTemplateWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  quickTemplateChip: {
+    backgroundColor: Colors.primaryLight,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  quickTemplateChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.primaryDark,
   },
 
   // Gradebook Container & Control Bar

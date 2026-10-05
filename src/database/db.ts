@@ -116,6 +116,16 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS class_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER NOT NULL,
+      note TEXT NOT NULL,
+      note_date TEXT NOT NULL,
+      lesson_info TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS courses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
@@ -280,6 +290,23 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     await db.runAsync('ALTER TABLE student_notes ADD COLUMN lesson_info TEXT;');
   } catch {
     // Column already exists
+  }
+
+  // Migrate: ensure class_notes table exists
+  try {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS class_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        class_id INTEGER NOT NULL,
+        note TEXT NOT NULL,
+        note_date TEXT NOT NULL,
+        lesson_info TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+      );
+    `);
+  } catch {
+    // Table already exists
   }
 
   // Seed default courses if table is empty

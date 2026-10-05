@@ -73,6 +73,16 @@ export interface StudentNote {
   created_at?: string;
 }
 
+export interface ClassNote {
+  id: number;
+  class_id: number;
+  class_name?: string;
+  note: string;
+  note_date: string; // YYYY-MM-DD HH:mm
+  lesson_info?: string | null;
+  created_at?: string;
+}
+
 export interface CourseName {
   id: number;
   name: string; // e.g. "Fizik", "Astronomi", "Matematik"
