@@ -259,14 +259,15 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
-  const loadData = async () => {
+  const loadData = async (dayToLoad?: number) => {
     try {
       setCurrentTime(getCurrentTimeString());
       const savedSetting = await getShowAllSchoolsSetting();
       setShowAllSchoolsSchedule(savedSetting);
+      const targetDay = dayToLoad !== undefined ? dayToLoad : selectedDay;
       const info = await getActiveAndTodayLessons(savedSetting ? 'all' : undefined);
       setLessonInfo(info);
-      await loadDaySchedule(selectedDay, savedSetting);
+      await loadDaySchedule(targetDay, savedSetting);
 
       const classes = await getClasses();
       const totalStudents = classes.reduce((sum, c) => sum + (c.student_count || 0), 0);
@@ -285,7 +286,10 @@ export const HomeScreen: React.FC = () => {
 
   useFocusEffect(
     useCallback(() => {
-      loadData();
+      const currentDay = getDayOfWeekIndex();
+      setSelectedDay(currentDay);
+      setHeroNavIndex(null);
+      loadData(currentDay);
       const interval = setInterval(() => {
         setCurrentTime(getCurrentTimeString());
         getActiveAndTodayLessons(showAllSchoolsSchedule ? 'all' : undefined).then(async (info) => {
@@ -298,8 +302,10 @@ export const HomeScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    const currentDay = getDayOfWeekIndex();
+    setSelectedDay(currentDay);
     setHeroNavIndex(null);
-    await loadData();
+    await loadData(currentDay);
     setRefreshing(false);
   };
 
@@ -317,6 +323,20 @@ export const HomeScreen: React.FC = () => {
 
   const handleJumpToToday = () => {
     setSelectedDay(todayIndex);
+    setHeroNavIndex(null);
+  };
+
+  const handleJumpToCurrentDayAndLesson = async () => {
+    const currentDay = getDayOfWeekIndex();
+    setSelectedDay(currentDay);
+    setHeroNavIndex(null);
+    await loadDaySchedule(currentDay);
+    try {
+      const info = await getActiveAndTodayLessons(showAllSchoolsSchedule ? 'all' : undefined);
+      setLessonInfo(info);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleOpenTopicModal = async (item: ScheduleItem) => {
@@ -670,7 +690,7 @@ export const HomeScreen: React.FC = () => {
     <View style={{ flex: 1, backgroundColor: schoolBgTint }}>
       <ScrollView
         style={[styles.container, { backgroundColor: schoolBgTint }]}
-        contentContainerStyle={[styles.contentContainer, { paddingTop: topInset + 8 }]}
+        contentContainerStyle={[styles.contentContainer, { paddingTop: topInset + 2 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
@@ -748,19 +768,19 @@ export const HomeScreen: React.FC = () => {
             {/* 1. ÜST ROZETLER VE MİNİK SAĞ-SOL GEZİNME OKLARI */}
             <View style={styles.activeBadgeRow}>
               <View style={styles.activeStatusWrap}>
-                {isCurrentLesson ? (
+                {isCurrentLesson && isViewingToday ? (
                   <View style={styles.liveIndicator}>
                     <View style={styles.pulsingDot} />
                     <Text style={styles.liveText}>ŞU ANDAKİ DERS</Text>
                   </View>
-                ) : isNextLesson ? (
+                ) : isNextLesson && isViewingToday ? (
                   <View style={styles.nextIndicator}>
                     <View style={[styles.pulsingDot, { backgroundColor: Colors.primary }]} />
                     <Text style={styles.nextText}>SIRADAKİ DERS</Text>
                   </View>
                 ) : (
                   <View style={styles.otherIndicator}>
-                    <Ionicons name="time-outline" size={12} color={Colors.textSecondary} />
+                    <Ionicons name="time-outline" size={11} color={Colors.textSecondary} />
                     <Text style={styles.otherText}>
                       {effectiveHeroLesson.slot_name || `${effectiveHeroIndex + 1}. Ders`}
                     </Text>
@@ -769,66 +789,83 @@ export const HomeScreen: React.FC = () => {
 
                 <Badge
                   label={`${effectiveHeroLesson.start_time || ''} - ${effectiveHeroLesson.end_time || ''}`}
-                  status={isCurrentLesson ? 'yapildi' : isNextLesson ? 'bekliyor' : 'varsayilan'}
+                  status={isCurrentLesson && isViewingToday ? 'yapildi' : isNextLesson && isViewingToday ? 'bekliyor' : 'varsayilan'}
                   size="sm"
                 />
-
-                {lessonInfo.currentLesson && !isCurrentLesson && (
-                  <TouchableOpacity
-                    style={styles.returnCurrentBtn}
-                    onPress={handleResetHeroNav}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="return-down-back" size={11} color={Colors.primary} />
-                    <Text style={styles.returnCurrentBtnText}>Şu An</Text>
-                  </TouchableOpacity>
-                )}
               </View>
 
-              {/* SAĞ-SOL GEZİNME OKLARI (MİNİK SAĞ SOL OKLARI) */}
-              {todayLessons.length > 1 && (
-                <View style={styles.heroNavContainer}>
-                  <TouchableOpacity
+              {/* SAĞ TARAF: AKTİF GÜN/SAAT BUTONU VE SAĞ-SOL GEZİNME OKLARI */}
+              <View style={styles.heroRightControlsRow}>
+                {/* Kaydırma oklarının solunda minik buton: Aktif gün ve ders saatine otomatik gelir */}
+                <TouchableOpacity
+                  style={[
+                    styles.heroCurrentJumpBtn,
+                    isCurrentLesson && isViewingToday ? styles.heroCurrentJumpBtnActive : null,
+                  ]}
+                  onPress={handleJumpToCurrentDayAndLesson}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name="locate"
+                    size={12}
+                    color={isCurrentLesson && isViewingToday ? Colors.success : Colors.primary}
+                  />
+                  <Text
                     style={[
-                      styles.heroNavArrowBtn,
-                      effectiveHeroIndex <= 0 && styles.heroNavArrowDisabled,
+                      styles.heroCurrentJumpBtnText,
+                      isCurrentLesson && isViewingToday ? { color: Colors.successDark } : null,
                     ]}
-                    onPress={handlePrevHeroLesson}
-                    disabled={effectiveHeroIndex <= 0}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Ionicons
-                      name="chevron-back"
-                      size={15}
-                      color={effectiveHeroIndex <= 0 ? Colors.textMuted : Colors.primary}
-                    />
-                  </TouchableOpacity>
-
-                  <Text style={styles.heroNavCounter}>
-                    {effectiveHeroIndex + 1}/{todayLessons.length}
+                    Şu An
                   </Text>
+                </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.heroNavArrowBtn,
-                      effectiveHeroIndex >= todayLessons.length - 1 && styles.heroNavArrowDisabled,
-                    ]}
-                    onPress={handleNextHeroLesson}
-                    disabled={effectiveHeroIndex >= todayLessons.length - 1}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons
-                      name="chevron-forward"
-                      size={15}
-                      color={
-                        effectiveHeroIndex >= todayLessons.length - 1
-                          ? Colors.textMuted
-                          : Colors.primary
-                      }
-                    />
-                  </TouchableOpacity>
-                </View>
-              )}
+                {/* SAĞ-SOL GEZİNME OKLARI (MİNİK SAĞ SOL OKLARI) */}
+                {todayLessons.length > 1 && (
+                  <View style={styles.heroNavContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.heroNavArrowBtn,
+                        effectiveHeroIndex <= 0 && styles.heroNavArrowDisabled,
+                      ]}
+                      onPress={handlePrevHeroLesson}
+                      disabled={effectiveHeroIndex <= 0}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name="chevron-back"
+                        size={14}
+                        color={effectiveHeroIndex <= 0 ? Colors.textMuted : Colors.primary}
+                      />
+                    </TouchableOpacity>
+
+                    <Text style={styles.heroNavCounter}>
+                      {effectiveHeroIndex + 1}/{todayLessons.length}
+                    </Text>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.heroNavArrowBtn,
+                        effectiveHeroIndex >= todayLessons.length - 1 && styles.heroNavArrowDisabled,
+                      ]}
+                      onPress={handleNextHeroLesson}
+                      disabled={effectiveHeroIndex >= todayLessons.length - 1}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name="chevron-forward"
+                        size={14}
+                        color={
+                          effectiveHeroIndex >= todayLessons.length - 1
+                            ? Colors.textMuted
+                            : Colors.primary
+                        }
+                      />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
             </View>
 
             {/* 2. SINIF BİLGİSİ, DERS ADI VE DERS NUMARASI - AYNI SATIRDA */}
@@ -2299,14 +2336,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   contentContainer: {
-    padding: 16,
+    padding: 12,
     paddingBottom: 40,
   },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 6,
   },
   topBarLeft: {
     flexDirection: 'row',
@@ -2369,107 +2406,120 @@ const styles = StyleSheet.create({
     borderColor: '#FECACA',
   },
   heroCardContainer: {
-    marginBottom: 16,
+    marginTop: 0,
+    marginBottom: 6,
   },
   activeCard: {
     backgroundColor: '#FFFFFF',
     borderColor: Colors.primaryLight,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 0,
   },
   activeBadgeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
-    gap: 8,
+    marginBottom: 4,
+    gap: 4,
   },
   activeStatusWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 4,
     flex: 1,
   },
   liveIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: '#DCFCE7',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
   pulsingDot: {
-    width: 7,
-    height: 7,
+    width: 6.5,
+    height: 6.5,
     borderRadius: 3.5,
     backgroundColor: Colors.success,
   },
   liveText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
     color: Colors.successDark,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   nextIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
   nextText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
     color: Colors.primaryDark,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   otherIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     backgroundColor: '#F1F5F9',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
   otherText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
     color: Colors.textSecondary,
   },
-  returnCurrentBtn: {
+  heroRightControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  heroCurrentJumpBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
     backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: 'rgba(37, 99, 235, 0.25)',
+    paddingHorizontal: 5,
+    paddingVertical: 2.5,
+    borderRadius: 6,
   },
-  returnCurrentBtnText: {
-    fontSize: 10,
-    fontWeight: '700',
+  heroCurrentJumpBtnActive: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  heroCurrentJumpBtnText: {
+    fontSize: 9.5,
+    fontWeight: '800',
     color: Colors.primary,
   },
   heroNavContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F1F5F9',
-    borderRadius: 8,
-    paddingHorizontal: 3,
-    paddingVertical: 2,
-    gap: 2,
+    borderRadius: 6,
+    paddingHorizontal: 2,
+    paddingVertical: 1,
+    gap: 1,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   heroNavArrowBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 5,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
@@ -2479,41 +2529,41 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   heroNavCounter: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     color: Colors.textSecondary,
-    minWidth: 26,
+    minWidth: 24,
     textAlign: 'center',
     paddingHorizontal: 2,
   },
   heroCompactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    gap: 6,
+    marginBottom: 5,
+    gap: 4,
   },
   heroClassBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     backgroundColor: Colors.primaryLight,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
   heroClassBadgeText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: Colors.primaryDark,
   },
   heroCourseNameText: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: Colors.textPrimary,
   },
   heroDotSeparator: {
-    fontSize: 13,
+    fontSize: 12,
     color: Colors.textMuted,
     fontWeight: '600',
   },
@@ -2521,51 +2571,52 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: Colors.border,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
   heroSlotBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.textSecondary,
   },
   heroClassroomText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: Colors.textSecondary,
   },
   expandedTopicCard: {
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderLeftWidth: 4,
+    borderLeftWidth: 3.5,
     borderLeftColor: Colors.primary,
-    padding: 12,
-    marginBottom: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 6,
   },
   expandedTopicHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   topicHeaderTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
   },
   topicBookIconBg: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: Colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
   },
   expandedTopicLabel: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '800',
     color: Colors.primaryDark,
     letterSpacing: 0.3,
@@ -2574,25 +2625,25 @@ const styles = StyleSheet.create({
   topicHeaderBadges: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
   },
   topicWeekBadge: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   topicWeekBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
     color: Colors.primaryDark,
   },
   topicCopyIconBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 5,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2600,42 +2651,44 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   expandedTopicText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: Colors.textPrimary,
-    lineHeight: 21,
+    lineHeight: 18.5,
   },
   expandedOutcomeText: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textSecondary,
-    marginTop: 6,
-    lineHeight: 17,
+    marginTop: 3,
+    lineHeight: 15,
   },
   topicLoadingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
+    gap: 6,
+    paddingVertical: 4,
   },
   topicLoadingText: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textSecondary,
   },
   topicEmptyContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
+    gap: 5,
+    paddingVertical: 4,
   },
   topicEmptyText: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.textSecondary,
     fontStyle: 'italic',
   },
   cardActionsRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 6,
+    marginTop: 0,
+    marginBottom: 0,
   },
   cardActionBtn: {
     flex: 1,
@@ -2643,12 +2696,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.primaryLight,
-    paddingVertical: 10,
-    borderRadius: 8,
-    gap: 6,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 4,
   },
   cardActionText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.primary,
   },
