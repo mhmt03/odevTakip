@@ -25,7 +25,6 @@ import {
   getSlotsForDay,
   getCustomDaysWithOverrides,
   saveDaySlotTime,
-  loadOfficialWeeklySchedule,
   clearEntireSchedule,
   getSchedulePhotoUri,
   setSchedulePhotoUri,
@@ -38,6 +37,7 @@ import { pickSchedulePhoto } from '../utils/photoService';
 
 import { getActiveSchool, School } from '../database/operations/schoolOperations';
 
+import { ensureGradesAndClassesDefined } from '../utils/setupChecks';
 export const ScheduleScreen: React.FC = () => {
   const navigation = useNavigation<any>();
 
@@ -164,39 +164,6 @@ export const ScheduleScreen: React.FC = () => {
     }
   };
 
-  const handleLoadOfficialSchedule = () => {
-    Alert.alert(
-      'Okul Programını Otomatik Yükle',
-      'Kamil Miras Anadolu Lisesi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
-        '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
-        '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
-        '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
-        '⚠️ Kural: Önceden tanımladığınız özel ders saatleriniz (başlangıç/bitiş zamanları) KORUNUR, sadece 27 ders saatinin şube ve ders kodları atanır.\n\n' +
-        'Programı yüklemek istiyor musunuz?',
-      [
-        { text: 'Vazgeç', style: 'cancel' },
-        {
-          text: 'Evet, Programı Yükle',
-          onPress: async () => {
-            try {
-              const res = await loadOfficialWeeklySchedule();
-              await loadData();
-              Alert.alert(
-                'Başarıyla Yüklendi 🎉',
-                `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
-                  `• Dersler: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
-                  `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
-                  `Ders saatleriniz korunmuştur.`
-              );
-            } catch (err: any) {
-              Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
-            }
-          },
-        },
-      ]
-    );
-  };
-
   const handleClearEntireSchedule = () => {
     Alert.alert(
       'Haftalık Ders Programını Temizle',
@@ -236,27 +203,7 @@ export const ScheduleScreen: React.FC = () => {
 
       Alert.alert(
         'Ders Programı Fotoğrafı Kaydedildi 📸',
-        'Fotoğraf başarıyla yüklendi ve referans olarak saklandı.\n\n' +
-          'Kamil Miras AL 27 saatlik resmi okul ders programını (11-A..C, 12-C..E, S.FZK ve HDTE2) bu fotoğrafa göre otomatik yüklemek ister misiniz?\n\n' +
-          '💡 Özel ders saatleriniz korunur.',
-        [
-          { text: 'Yalnızca Fotoğrafı Sakla', style: 'cancel' },
-          {
-            text: 'Programı Otomatik Yükle',
-            onPress: async () => {
-              try {
-                const res = await loadOfficialWeeklySchedule();
-                await loadData();
-                Alert.alert(
-                  'Başarıyla Yüklendi 🎉',
-                  `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\nFotoğrafı dilediğiniz an "Fotoğrafı İncele" butonuyla açabilirsiniz.`
-                );
-              } catch (err: any) {
-                Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
-              }
-            },
-          },
-        ]
+        'Fotoğraf başarıyla yüklendi. Dilediğiniz an "Fotoğrafı İncele" butonuyla ders programı fotoğrafınızı görüntüleyebilirsiniz.'
       );
     } catch (err: any) {
       setLoadingPhoto(false);
@@ -432,13 +379,7 @@ export const ScheduleScreen: React.FC = () => {
                 size="sm"
                 onPress={() => navigation.navigate('ScheduleManage', { initialTab: 'slots' })}
               />
-              <Button
-                title="Okul Programını Yükle (27 Saat)"
-                variant="outline"
-                size="sm"
-                icon="cloud-download-outline"
-                onPress={handleLoadOfficialSchedule}
-              />
+              
             </View>
           </Card>
         ) : (
@@ -733,31 +674,7 @@ export const ScheduleScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
 
-              {/* Option 3: Resmi Okul Programını Doğrudan Yükle */}
-              <TouchableOpacity
-                style={styles.photoOptionCard}
-                onPress={() => {
-                  setPhotoMenuVisible(false);
-                  setTimeout(() => handleLoadOfficialSchedule(), 200);
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#DCFCE7' }]}>
-                  <Ionicons name="cloud-download" size={24} color="#16A34A" />
-                </View>
-                <View style={styles.photoOptionTextWrap}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={styles.photoOptionTitle}>Hazır Okul Programını Yükle</Text>
-                    <View style={styles.autoLoadBadge}>
-                      <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.photoOptionDesc}>
-                    Kamil Miras AL Seçmeli Fizik (24 saat) ve HDTE2 (3 saat) dağılımını aktarır.
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-              </TouchableOpacity>
+              
 
               {/* Option 4: Eğer Kayıtlı Fotoğraf Varsa */}
               {schedulePhotoUri ? (

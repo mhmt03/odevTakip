@@ -52,7 +52,13 @@ import {
   getCurrentTimeString,
   getTodayDateString,
 } from '../utils/dateUtils';
-import { YearlyPlanItem, ScheduleItem } from '../types';
+import { YearlyPlanItem, ScheduleItem, AgendaItem } from '../types';
+import {
+  getTodayAgendaItems,
+  getTodayAlertItems,
+  toggleAgendaItemCompleted,
+  getPendingAgendaCountToday,
+} from '../database/operations/agendaOperations';
 
 import { School, getSchools, getActiveSchool, setActiveSchool, createSchool, SCHOOL_COLORS } from '../database/operations/schoolOperations';
 import { useSchoolTheme } from '../context/SchoolThemeContext';
@@ -216,6 +222,24 @@ export const HomeScreen: React.FC = () => {
     pendingAssignments: 0,
   });
 
+  // --- AGENDA & REMINDERS STATE ---
+  const [todayAgendaItems, setTodayAgendaItems] = useState<AgendaItem[]>([]);
+  const [todayAlertItems, setTodayAlertItems] = useState<AgendaItem[]>([]);
+  const [pendingAgendaCount, setPendingAgendaCount] = useState<number>(0);
+
+  const loadAgendaData = async () => {
+    try {
+      const todayItems = await getTodayAgendaItems();
+      setTodayAgendaItems(todayItems);
+      const alerts = await getTodayAlertItems();
+      setTodayAlertItems(alerts);
+      const pendingCount = await getPendingAgendaCountToday();
+      setPendingAgendaCount(pendingCount);
+    } catch (e) {
+      console.warn('Error loading agenda data in HomeScreen:', e);
+    }
+  };
+
   // --- TOPIC (DEFTERE YAZILACAK METİN) MODAL STATE ---
   const [topicModalVisible, setTopicModalVisible] = useState(false);
   const [topicLoading, setTopicLoading] = useState(false);
@@ -323,6 +347,8 @@ export const HomeScreen: React.FC = () => {
         studentCount: totalStudents,
         pendingAssignments: pendingCount,
       });
+
+      await loadAgendaData();
     } catch (error) {
       console.error('Error loading home data:', error);
     }
@@ -960,6 +986,23 @@ export const HomeScreen: React.FC = () => {
 
         <View style={{ alignItems: 'flex-end', gap: 6 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {/* Ajanda Kısayol Butonu + Rozet */}
+            <TouchableOpacity
+              style={styles.settingsHeaderBtn}
+              onPress={() => navigation.navigate('Agenda')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="calendar-outline" size={17} color={activeSchool?.color || Colors.primary} />
+              {pendingAgendaCount > 0 && (
+                <View style={styles.headerAgendaBadge}>
+                  <Text style={styles.headerAgendaBadgeText}>
+                    {pendingAgendaCount > 9 ? '9+' : pendingAgendaCount}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.settingsHeaderBtn}
               onPress={() => navigation.navigate('Operations')}
@@ -983,6 +1026,82 @@ export const HomeScreen: React.FC = () => {
           </View>
         </View>
       </View>
+
+      {/* 🚨 TÜM GÜN EKRANDA UYARI KARTI (Günün Kritik Ajanda / Hatırlatma Notları) */}
+      {todayAlertItems.length > 0 && (
+        <View style={styles.alertBannerContainer}>
+          {todayAlertItems.map((alertItem) => (
+            <TouchableOpacity
+              key={alertItem.id}
+              style={[
+                styles.alertBannerCard,
+                alertItem.priority === 'acil' ? styles.alertBannerCardUrgent : null,
+              ]}
+              onPress={() => navigation.navigate('Agenda')}
+              activeOpacity={0.85}
+            >
+              <View style={styles.alertBannerLeft}>
+                <View
+                  style={[
+                    styles.alertIconWrap,
+                    alertItem.priority === 'acil' ? { backgroundColor: '#FEE2E2' } : null,
+                  ]}
+                >
+                  <Ionicons
+                    name={alertItem.priority === 'acil' ? 'flame' : 'alert-circle'}
+                    size={20}
+                    color={alertItem.priority === 'acil' ? '#DC2626' : '#D97706'}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.alertHeaderRow}>
+                    <Text
+                      style={[
+                        styles.alertBadgeText,
+                        alertItem.priority === 'acil' ? { color: '#DC2626' } : null,
+                      ]}
+                    >
+                      {alertItem.priority === 'acil' ? '🚨 ACİL DİKKAT' : '🔔 GÜNÜN UYARISI'}
+                    </Text>
+                    {alertItem.has_time === 1 && alertItem.time ? (
+                      <View style={styles.alertTimePill}>
+                        <Ionicons name="time" size={10} color="#78350F" />
+                        <Text style={styles.alertTimeText}>{alertItem.time}</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.alertTimePill}>
+                        <Ionicons name="sunny" size={10} color="#78350F" />
+                        <Text style={styles.alertTimeText}>Tüm Gün</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.alertTitleText} numberOfLines={2}>
+                    {alertItem.title}
+                  </Text>
+                  {alertItem.description ? (
+                    <Text style={styles.alertDescText} numberOfLines={1}>
+                      {alertItem.description}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.alertQuickCheckBtn}
+                onPress={async () => {
+                  await toggleAgendaItemCompleted(alertItem.id, true);
+                  await loadAgendaData();
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="checkmark" size={15} color="#047857" />
+                <Text style={styles.alertQuickCheckText}>Tamamla</Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* ACTIVE / NAVIGATED LESSON HERO CARD */}
       <View style={styles.heroCardContainer}>
@@ -1598,6 +1717,154 @@ export const HomeScreen: React.FC = () => {
         })
       )}
 
+      {/* 📅 BUGÜNÜN AJANDASI & YAPILACAKLAR BÖLÜMÜ */}
+      <View style={styles.todayAgendaSection}>
+        <View style={styles.todayAgendaHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+            <View
+              style={[
+                styles.agendaSectionIconWrap,
+                { backgroundColor: `${activeSchool?.color || Colors.primary}18` },
+              ]}
+            >
+              <Ionicons name="calendar" size={17} color={activeSchool?.color || Colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.todayAgendaTitle}>Bugünün Ajandası</Text>
+                {todayAgendaItems.length > 0 && (
+                  <View style={[styles.agendaCountBadge, { backgroundColor: `${activeSchool?.color || Colors.primary}18` }]}>
+                    <Text style={[styles.agendaCountBadgeText, { color: activeSchool?.color || Colors.primary }]}>
+                      {todayAgendaItems.filter((i) => i.is_completed === 1).length}/{todayAgendaItems.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.todayAgendaSubtitle}>
+                {todayAgendaItems.length > 0
+                  ? `${todayAgendaItems.filter((i) => i.is_completed === 0).length} bekleyen işiniz var`
+                  : 'Günün planları, görevleri ve hatırlatıcıları'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              style={[styles.agendaQuickAddBtn, { borderColor: activeSchool?.color || Colors.primary }]}
+              onPress={() => navigation.navigate('Agenda')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add" size={14} color={activeSchool?.color || Colors.primary} />
+              <Text style={[styles.agendaQuickAddText, { color: activeSchool?.color || Colors.primary }]}>Ekle</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.agendaViewAllBtn}
+              onPress={() => navigation.navigate('Agenda')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.agendaViewAllText}>Tümü</Text>
+              <Ionicons name="chevron-forward" size={13} color={Colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {todayAgendaItems.length === 0 ? (
+          <TouchableOpacity
+            style={styles.agendaEmptyBanner}
+            onPress={() => navigation.navigate('Agenda')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.agendaEmptyIconWrap}>
+              <Ionicons name="sparkles" size={18} color={activeSchool?.color || Colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.agendaEmptyTitle}>Bugün için kayıtlı işiniz yok</Text>
+              <Text style={styles.agendaEmptyText}>
+                Günün görevlerini veya hatırlatıcılarını eklemek için dokunun.
+              </Text>
+            </View>
+            <Ionicons name="add-circle" size={20} color={activeSchool?.color || Colors.primary} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.agendaItemsList}>
+            {todayAgendaItems.map((item) => {
+              const isCompleted = item.is_completed === 1;
+              return (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.agendaItemRow,
+                    item.is_all_day_alert === 1 && !isCompleted ? styles.agendaItemRowAlert : null,
+                    isCompleted ? styles.agendaItemRowCompleted : null,
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={[
+                      styles.agendaCheckbox,
+                      isCompleted ? styles.agendaCheckboxDone : styles.agendaCheckboxPending,
+                    ]}
+                    onPress={async () => {
+                      await toggleAgendaItemCompleted(item.id, !isCompleted);
+                      await loadAgendaData();
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    {isCompleted && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{ flex: 1 }}
+                    onPress={() => navigation.navigate('Agenda')}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text
+                        style={[
+                          styles.agendaItemTitle,
+                          isCompleted ? styles.agendaItemTitleDone : null,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.title}
+                      </Text>
+                      {item.is_all_day_alert === 1 && !isCompleted && (
+                        <View style={styles.agendaMiniAlertPill}>
+                          <Ionicons name="alert-circle" size={10} color={Colors.danger} />
+                          <Text style={styles.agendaMiniAlertText}>Uyarı</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                      {item.has_time === 1 && item.time ? (
+                        <View style={styles.agendaTimeMini}>
+                          <Ionicons name="time-outline" size={10} color={Colors.textSecondary} />
+                          <Text style={styles.agendaTimeMiniText}>{item.time}</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.agendaTimeMini}>
+                          <Ionicons name="sunny-outline" size={10} color={Colors.textMuted} />
+                          <Text style={styles.agendaTimeMiniText}>Tüm Gün</Text>
+                        </View>
+                      )}
+
+                      <Text style={styles.agendaCategoryMiniText}>
+                        {item.category === 'gorev' ? '📝 Görev' :
+                         item.category === 'toplanti' ? '👥 Toplantı' :
+                         item.category === 'sinav' ? '📋 Sınav / Not' :
+                         item.category === 'nobet' ? '🛡️ Nöbet' :
+                         item.category === 'hatirlatma' ? '🔔 Hatırlatma' : '📌 Diğer'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
       {/* QUICK ACTION BUTTONS */}
       <Text style={styles.sectionHeader}>Hızlı İşlemler</Text>
       <View style={styles.quickGrid}>
@@ -1689,6 +1956,24 @@ export const HomeScreen: React.FC = () => {
               <Text style={styles.quickSub}>Yedekleme & Ayarlar</Text>
             </View>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => navigation.navigate('Agenda')}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.quickIconWrap, { backgroundColor: '#E0F2FE' }]}>
+              <Ionicons name="calendar" size={22} color="#0284C7" />
+            </View>
+            <View style={styles.quickTextWrap}>
+              <Text style={styles.quickTitle}>Ajanda & Hatırlatıcı</Text>
+              <Text style={styles.quickSub}>Görevler & Uyarılar</Text>
+            </View>
+          </TouchableOpacity>
+
+          <View style={{ flex: 1 }} />
         </View>
 
         {/* CANLI SAAT VE ZAMAN KARTI */}
@@ -3862,5 +4147,288 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textSecondary,
     lineHeight: 16,
+  },
+  headerAgendaBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    backgroundColor: Colors.danger,
+    borderRadius: 8,
+    minWidth: 15,
+    height: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  headerAgendaBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  alertBannerContainer: {
+    marginBottom: 10,
+    gap: 8,
+  },
+  alertBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    borderRadius: 14,
+    padding: 12,
+    borderLeftWidth: 5,
+    borderLeftColor: '#F59E0B',
+    ...Shadows.small,
+  },
+  alertBannerCardUrgent: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderLeftColor: '#EF4444',
+  },
+  alertBannerLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingRight: 8,
+  },
+  alertIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  alertBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.3,
+  },
+  alertTimePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FDE68A',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  alertTimeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: '#78350F',
+  },
+  alertTitleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    lineHeight: 18,
+  },
+  alertDescText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  alertQuickCheckBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  alertQuickCheckText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  todayAgendaSection: {
+    marginTop: 10,
+    marginBottom: 12,
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.small,
+  },
+  todayAgendaHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+    marginBottom: 8,
+  },
+  agendaSectionIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  todayAgendaTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  agendaCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  agendaCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  todayAgendaSubtitle: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  agendaQuickAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  agendaQuickAddText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  agendaViewAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  agendaViewAllText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  agendaEmptyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+  },
+  agendaEmptyIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: Colors.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  agendaEmptyTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  agendaEmptyText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  agendaItemsList: {
+    gap: 6,
+  },
+  agendaItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  agendaItemRowAlert: {
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.danger,
+    backgroundColor: '#FFFDFD',
+  },
+  agendaItemRowCompleted: {
+    opacity: 0.6,
+    backgroundColor: '#F1F5F9',
+  },
+  agendaCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  agendaCheckboxPending: {
+    borderColor: Colors.divider,
+    backgroundColor: '#FFFFFF',
+  },
+  agendaCheckboxDone: {
+    borderColor: Colors.success,
+    backgroundColor: Colors.success,
+  },
+  agendaItemTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    flex: 1,
+  },
+  agendaItemTitleDone: {
+    textDecorationLine: 'line-through',
+    color: Colors.textMuted,
+  },
+  agendaMiniAlertPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: Colors.dangerLight,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  agendaMiniAlertText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: Colors.danger,
+  },
+  agendaTimeMini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  agendaTimeMiniText: {
+    fontSize: 10.5,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  agendaCategoryMiniText: {
+    fontSize: 10.5,
+    color: Colors.textSecondary,
+    fontWeight: '600',
   },
 });

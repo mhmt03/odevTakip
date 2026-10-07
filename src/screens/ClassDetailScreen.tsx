@@ -34,6 +34,8 @@ import {
   clearStudentPhotosByClass,
   clearAllStudentPhotos,
   bulkDeleteStudents,
+  deleteAllStudentsByClass,
+  deleteAllStudentsGlobally,
   bulkTransferStudents,
 } from '../database/operations/studentOperations';
 import { getClasses } from '../database/operations/classOperations';
@@ -819,6 +821,56 @@ export const ClassDetailScreen: React.FC = () => {
               Alert.alert('Başarılı', 'Sistemdeki tüm öğrenci fotoğrafları başarıyla temizlendi.');
             } catch (e) {
               Alert.alert('Hata', 'Fotoğraflar silinirken bir hata oluştu.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAllClassStudents = () => {
+    if (students.length === 0) {
+      Alert.alert('Bilgi', `"${className}" sınıfında silinecek öğrenci bulunmuyor.`);
+      return;
+    }
+    Alert.alert(
+      'Sınıfın Tüm Öğrencilerini Sil',
+      `"${className}" sınıfındaki ${students.length} öğrencinin tamamını silmek istediğinize emin misiniz? Bu işlem geri alınamaz ve öğrencilere ait ödev/not verileri de silinecektir.`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Tüm Öğrencileri Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAllStudentsByClass(classId);
+              await loadStudents();
+              Alert.alert('Başarılı', `"${className}" sınıfındaki tüm öğrenciler silindi.`);
+            } catch (e) {
+              Alert.alert('Hata', 'Öğrenciler silinirken bir hata oluştu.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAllSystemStudents = () => {
+    Alert.alert(
+      'Sistemdeki TÜM Öğrencileri Sil',
+      'DİKKAT! Tüm sınıflardaki TÜM öğrencileri ve bu öğrencilere ait tüm ödev/not verilerini kalıcı olarak silmek üzeresiniz. Bu işlem GERİ ALINAMAZ!',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'EVET, TÜM SİSTEMİ SİL',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAllStudentsGlobally();
+              await loadStudents();
+              Alert.alert('Başarılı', 'Sistemdeki tüm öğrenciler ve verileri silindi.');
+            } catch (e) {
+              Alert.alert('Hata', 'Tüm öğrenciler silinirken bir hata oluştu.');
             }
           },
         },
@@ -2122,6 +2174,48 @@ export const ClassDetailScreen: React.FC = () => {
                   <Text style={styles.actionSheetItemTitle}>Çoklu Seçim Modu</Text>
                   <Text style={styles.actionSheetItemDesc}>
                     Birden fazla öğrenciyi seçerek toplu şube transferi yapın veya silin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 7. Seçili Sınıfın Tüm Öğrencilerini Sil */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleDeleteAllClassStudents(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="people" size={22} color="#DC2626" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={[styles.actionSheetItemTitle, { color: '#DC2626' }]}>Bu Sınıfın Tüm Öğrencilerini Sil</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    "{className}" şubesindeki tüm öğrencileri ve verilerini siler.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* 8. Sistemdeki Tüm Öğrencileri Sil */}
+              <TouchableOpacity
+                style={styles.actionSheetItem}
+                onPress={() => {
+                  setActionMenuVisible(false);
+                  setTimeout(() => handleDeleteAllSystemStudents(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.actionSheetIconWrap, { backgroundColor: '#450A0A' }]}>
+                  <Ionicons name="skull" size={22} color="#FFFFFF" />
+                </View>
+                <View style={styles.actionSheetItemTextWrap}>
+                  <Text style={[styles.actionSheetItemTitle, { color: '#7F1D1D' }]}>Sistemdeki TÜM Öğrencileri Sil</Text>
+                  <Text style={styles.actionSheetItemDesc}>
+                    Tüm sınıflardaki öğrencileri ve ilişkili tüm verileri kalıcı olarak sıfırlayın.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />

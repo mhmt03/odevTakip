@@ -27,16 +27,9 @@ import {
   deleteClass,
 } from '../database/operations/classOperations';
 import {
-  bulkCreateStudentsMultipleClasses,
   getAllStudentsWithClass,
   StudentWithClass,
 } from '../database/operations/studentOperations';
-import {
-  pickAndParseStudentsExcel,
-  generateStudentTemplateExcel,
-  validateBulkStudentImport,
-  BulkImportValidation,
-} from '../utils/excelService';
 import { ClassItem } from '../types';
 import { getActiveSchool, School } from '../database/operations/schoolOperations';
 
@@ -51,11 +44,6 @@ export const ClassesScreen: React.FC = () => {
   const [editingClass, setEditingClass] = useState<ClassItem | null>(null);
   const [classNameInput, setClassNameInput] = useState('');
   const [classDescInput, setClassDescInput] = useState('');
-
-  // Bulk Excel import modal & state
-  const [bulkModalVisible, setBulkModalVisible] = useState(false);
-  const [validationResult, setValidationResult] = useState<BulkImportValidation | null>(null);
-  const [loadingBulk, setLoadingBulk] = useState(false);
 
   // Global student search
   const [searchModalVisible, setSearchModalVisible] = useState(false);
@@ -180,75 +168,6 @@ export const ClassesScreen: React.FC = () => {
     );
   };
 
-  // Bulk Import Handlers
-  const handleDownloadTemplate = async () => {
-    try {
-      setLoadingBulk(true);
-      await generateStudentTemplateExcel();
-    } catch (e: any) {
-      Alert.alert('Hata', 'Şablon dosyası oluşturulamadı: ' + (e?.message || e));
-    } finally {
-      setLoadingBulk(false);
-    }
-  };
-
-  const handlePickBulkExcel = async () => {
-    try {
-      setLoadingBulk(true);
-      const parsed = await pickAndParseStudentsExcel();
-      if (parsed.length === 0) {
-        setLoadingBulk(false);
-        return;
-      }
-
-      const currentClasses = await getClasses();
-      if (currentClasses.length === 0) {
-        setLoadingBulk(false);
-        Alert.alert(
-          'Kayıtlı Şube Yok',
-          'Sistemde henüz kayıtlı şube bulunmamaktadır. Öğrencileri yükleyebilmek için lütfen önce "Şube Ekle" butonu ile şubelerinizi oluşturunuz.'
-        );
-        return;
-      }
-
-      const valResult = validateBulkStudentImport(parsed, currentClasses);
-      setValidationResult(valResult);
-      setBulkModalVisible(true);
-    } catch (error: any) {
-      Alert.alert('Hata', error?.message || 'Excel dosyası okunamadı.');
-    } finally {
-      setLoadingBulk(false);
-    }
-  };
-
-  const handleConfirmBulkImport = async () => {
-    if (!validationResult || validationResult.validPayloads.length === 0) {
-      Alert.alert('Hata', 'İçe aktarılacak geçerli şube ve öğrenci bulunmuyor.');
-      return;
-    }
-
-    try {
-      setLoadingBulk(true);
-      const res = await bulkCreateStudentsMultipleClasses(validationResult.validPayloads);
-      setBulkModalVisible(false);
-      setValidationResult(null);
-      await loadClasses();
-
-      const breakdown = res.details
-        .map((d) => `• ${d.className}: ${d.added} öğrenci`)
-        .join('\n');
-
-      Alert.alert(
-        'Toplu Yükleme Başarılı',
-        `Toplam ${res.totalAdded} öğrenci şubelerine başarıyla eklendi!\n\n${breakdown}`
-      );
-    } catch (e: any) {
-      Alert.alert('Hata', 'Toplu öğrenci yüklenirken bir sorun oluştu: ' + (e?.message || e));
-    } finally {
-      setLoadingBulk(false);
-    }
-  };
-
   const totalStudents = classes.reduce((sum, c) => sum + (c.student_count || 0), 0);
 
   const schoolBgTint = activeSchool?.color ? `${activeSchool.color}0E` : Colors.background;
@@ -276,30 +195,6 @@ export const ClassesScreen: React.FC = () => {
             onPress={handleOpenAdd}
           />
         </View>
-      </View>
-
-      {/* Bulk Excel Action Strip */}
-      <View style={styles.actionStrip}>
-        <TouchableOpacity
-          style={styles.actionStripBtn}
-          onPress={() => {
-            setValidationResult(null);
-            setBulkModalVisible(true);
-          }}
-          disabled={loadingBulk}
-        >
-          <Ionicons name="cloud-upload-outline" size={17} color={Colors.primary} />
-          <Text style={styles.actionStripBtnText}>Toplu Öğrenci Yükle (Excel)</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionStripSecondaryBtn}
-          onPress={handleDownloadTemplate}
-          disabled={loadingBulk}
-        >
-          <Ionicons name="document-text-outline" size={16} color={Colors.textSecondary} />
-          <Text style={styles.actionStripSecondaryBtnText}>Şablon İndir</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Class List */}
@@ -404,155 +299,6 @@ export const ClassesScreen: React.FC = () => {
                 style={{ flex: 1 }}
                 onPress={handleSaveClass}
               />
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* BULK EXCEL IMPORT MODAL */}
-      <Modal visible={bulkModalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Tüm Şubelere Toplu Öğrenci Yükle</Text>
-                <Text style={styles.modalSub}>Excel ile tüm sınıfların listesini tek seferde aktarın</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => {
-                  setBulkModalVisible(false);
-                  setValidationResult(null);
-                }}
-              >
-                <Ionicons name="close" size={24} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {loadingBulk ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={Colors.primary} />
-                  <Text style={styles.loadingText}>İşleniyor, lütfen bekleyiniz...</Text>
-                </View>
-              ) : !validationResult ? (
-                /* Step 1 & 2: Instructions and File Selector */
-                <View>
-                  <View style={styles.guideCard}>
-                    <Text style={styles.guideStepTitle}>Adım 1: Hazır Şablonu İndirin</Text>
-                    <Text style={styles.guideStepDesc}>
-                      Şablon dosyasının 2. sayfasında sisteminizde kayıtlı şubeler yer alır. Hatalı sınıf girmemek için şube isimlerini oradan kontrol edebilirsiniz.
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.templateDownloadBtn}
-                      onPress={handleDownloadTemplate}
-                    >
-                      <Ionicons name="download-outline" size={16} color={Colors.primary} />
-                      <Text style={styles.templateDownloadBtnText}>Excel Şablonunu İndir (.xlsx)</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={[styles.guideCard, { marginTop: 12 }]}>
-                    <Text style={styles.guideStepTitle}>Adım 2: Excel Dosyasını Yükleyin</Text>
-                    <Text style={styles.guideStepDesc}>
-                      Öğrenci numarası, adı, soyadı ve şubesi doldurulmuş Excel dosyanızı seçin.
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.pickExcelBtn}
-                      onPress={handlePickBulkExcel}
-                    >
-                      <Ionicons name="folder-open-outline" size={20} color="#fff" />
-                      <Text style={styles.pickExcelBtnText}>Excel Dosyası Seç</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                /* Validation Preview Summary */
-                <View>
-                  <View style={styles.summaryHeader}>
-                    <Text style={styles.summaryTitle}>Yükleme Önizlemesi</Text>
-                    <Text style={styles.summarySub}>
-                      Dosyadan tespit edilen toplam {validationResult.totalStudents} öğrenci
-                    </Text>
-                  </View>
-
-                  {/* Valid matched classes */}
-                  {validationResult.validPayloads.length > 0 && (
-                    <View style={styles.previewSection}>
-                      <Text style={styles.previewSectionTitle}>
-                        ✅ Eşleşen Şubeler ({validationResult.validCount} Öğrenci):
-                      </Text>
-                      {validationResult.validPayloads.map((p) => (
-                        <View key={p.classId} style={styles.matchedClassRow}>
-                          <View style={styles.matchedClassBadge}>
-                            <Text style={styles.matchedClassName}>{p.className}</Text>
-                          </View>
-                          <Text style={styles.matchedCountText}>
-                            {p.students.length} öğrenci aktarılacak
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {/* Unmatched classes warning */}
-                  {validationResult.unmatchedClasses.length > 0 && (
-                    <View style={styles.warningBox}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <Ionicons name="warning-outline" size={18} color="#B45309" />
-                        <Text style={styles.warningTitle}>Sistemde Bulunamayan Şubeler:</Text>
-                      </View>
-                      <Text style={styles.warningDesc}>
-                        Aşağıdaki şubeler sistemde kayıtlı olmadığı için bu öğrencileri aktaramayız. Şablondaki &apos;Kayıtlı Şubeler&apos; sayfasındaki isimleri kullanınız:
-                      </Text>
-                      {validationResult.unmatchedClasses.map((u, i) => (
-                        <Text key={i} style={styles.unmatchedItemText}>
-                          • &quot;{u.rawClassName}&quot;: {u.count} öğrenci (Atlanacak)
-                        </Text>
-                      ))}
-                    </View>
-                  )}
-
-                  {/* Missing class name warning */}
-                  {validationResult.missingClassStudents.length > 0 && (
-                    <View style={[styles.warningBox, { marginTop: 8 }]}>
-                      <Text style={styles.warningDesc}>
-                        ⚠️ {validationResult.missingClassStudents.length} öğrencinin şube sütunu boş olduğu için aktarılmayacaktır.
-                      </Text>
-                    </View>
-                  )}
-
-                  {validationResult.validCount === 0 && (
-                    <View style={styles.errorBox}>
-                      <Text style={styles.errorBoxText}>
-                        Hiçbir öğrencinin şubesi sistemdeki şubelerle eşleşmedi. Lütfen şablonun 2. sayfasındaki şube adlarını kullanarak Excel dosyanızı kontrol ediniz.
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </ScrollView>
-
-            <View style={styles.modalActions}>
-              <Button
-                title={validationResult ? 'Geri' : 'Kapat'}
-                variant="outline"
-                style={{ flex: 1 }}
-                onPress={() => {
-                  if (validationResult) {
-                    setValidationResult(null);
-                  } else {
-                    setBulkModalVisible(false);
-                  }
-                }}
-              />
-              {validationResult && validationResult.validCount > 0 && (
-                <Button
-                  title={`Onayla ve Yükle (${validationResult.validCount})`}
-                  style={{ flex: 2 }}
-                  onPress={handleConfirmBulkImport}
-                  loading={loadingBulk}
-                />
-              )}
             </View>
           </View>
         </View>

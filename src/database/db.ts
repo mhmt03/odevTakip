@@ -288,6 +288,22 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS agenda_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      school_id INTEGER,
+      title TEXT NOT NULL,
+      description TEXT,
+      date TEXT NOT NULL,
+      has_time INTEGER DEFAULT 0,
+      time TEXT,
+      is_all_day_alert INTEGER DEFAULT 0,
+      category TEXT DEFAULT 'gorev',
+      priority TEXT DEFAULT 'normal',
+      is_completed INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE SET NULL
+    );
   `);
 
   // Migrate: ensure school_id column exists in classes table
@@ -351,6 +367,29 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
         lesson_info TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+      );
+    `);
+  } catch {
+    // Table already exists
+  }
+
+  // Migrate: ensure agenda_items table exists
+  try {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS agenda_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        school_id INTEGER,
+        title TEXT NOT NULL,
+        description TEXT,
+        date TEXT NOT NULL,
+        has_time INTEGER DEFAULT 0,
+        time TEXT,
+        is_all_day_alert INTEGER DEFAULT 0,
+        category TEXT DEFAULT 'gorev',
+        priority TEXT DEFAULT 'normal',
+        is_completed INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE SET NULL
       );
     `);
   } catch {

@@ -165,6 +165,16 @@ export const bulkDeleteStudents = async (studentIds: number[]): Promise<void> =>
   await db.runAsync(`DELETE FROM students WHERE id IN (${placeholders})`, ...studentIds);
 };
 
+export const deleteAllStudentsByClass = async (classId: number): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync('DELETE FROM students WHERE class_id = ?', classId);
+};
+
+export const deleteAllStudentsGlobally = async (): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync('DELETE FROM students');
+};
+
 export const bulkTransferStudents = async (
   studentIds: number[],
   targetClassId: number

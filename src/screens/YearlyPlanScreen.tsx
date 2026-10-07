@@ -46,6 +46,7 @@ import { getTodayDateString, formatDateToTR } from '../utils/dateUtils';
 import { getGradeLevels } from '../database/operations/gradeLevelOperations';
 import { YearlyPlanItem, CourseName, ClassItem, GradeLevelItem } from '../types';
 
+import { ensureGradesAndClassesDefined } from '../utils/setupChecks';
 export const YearlyPlanScreen: React.FC = () => {
   const navigation = useNavigation<any>();
 
@@ -263,6 +264,7 @@ export const YearlyPlanScreen: React.FC = () => {
       Alert.alert('Uyarı', 'Lütfen önce bir ders seçiniz.');
       return;
     }
+    if (!(await ensureGradesAndClassesDefined('Yıllık plan ekleme'))) return;
     try {
       setLoadingPdf(true);
       const res = await pickAndSaveYearlyPlanPdf(selectedCourseId, selectedGradeLevel);
@@ -304,7 +306,8 @@ export const YearlyPlanScreen: React.FC = () => {
   };
 
   // Bulk Excel Handlers
-  const handleOpenBulkModal = () => {
+  const handleOpenBulkModal = async () => {
+    if (!(await ensureGradesAndClassesDefined('Yıllık plan ekleme'))) return;
     if (!scheduleInfo?.hasSchedule) {
       Alert.alert(
         'Ders Programı Bulunamadı',

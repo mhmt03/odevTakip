@@ -25,6 +25,7 @@ import { ScheduleManageScreen } from './src/screens/ScheduleManageScreen';
 import { YearlyPlanScreen } from './src/screens/YearlyPlanScreen';
 import { ReportsScreen } from './src/screens/ReportsScreen';
 import { OperationsScreen } from './src/screens/OperationsScreen';
+import { AgendaScreen } from './src/screens/AgendaScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -211,6 +212,7 @@ export default function App() {
             <Stack.Screen name="ScheduleManage" component={ScheduleManageScreen} />
             <Stack.Screen name="YearlyPlan" component={YearlyPlanScreen} />
             <Stack.Screen name="Operations" component={OperationsScreen} />
+            <Stack.Screen name="Agenda" component={AgendaScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SchoolThemeProvider>

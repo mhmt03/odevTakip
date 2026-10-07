@@ -207,3 +207,21 @@ export interface GradeLevelItem {
   level: number;
   label: string;
 }
+
+export type AgendaCategory = 'gorev' | 'toplanti' | 'sinav' | 'nobet' | 'hatirlatma' | 'diger';
+export type AgendaPriority = 'normal' | 'onemli' | 'acil';
+
+export interface AgendaItem {
+  id: number;
+  school_id?: number | null;
+  title: string;
+  description?: string | null;
+  date: string; // YYYY-MM-DD
+  has_time: number; // 0 or 1
+  time?: string | null; // HH:mm
+  is_all_day_alert: number; // 0 or 1 (Gerektiğinde tüm gün ekranda uyarı olsun)
+  category: AgendaCategory;
+  priority: AgendaPriority;
+  is_completed: number; // 0 or 1
+  created_at?: string;
+}

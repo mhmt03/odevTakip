@@ -519,6 +519,20 @@ export const OperationsScreen: React.FC = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
+              style={[styles.backupBtn, { backgroundColor: '#0284C7' }]}
+              onPress={() => navigation.navigate('Agenda')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#0369A1' }]}>
+                <Ionicons name="calendar" size={20} color="#FFFFFF" />
+              </View>
+              <View style={styles.actionBtnTextWrap}>
+                <Text style={styles.actionBtnTitle}>Ajanda & Hatırlatıcılar</Text>
+                <Text style={styles.actionBtnSub}>Günün görevleri, alarmlar ve yapılacaklar listesi</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={styles.clearScheduleBtn}
               onPress={handleClearSchedulePrompt}
               activeOpacity={0.8}

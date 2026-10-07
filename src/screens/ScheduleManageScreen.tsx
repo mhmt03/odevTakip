@@ -32,19 +32,18 @@ import {
   saveDaySlotTime,
   copyStandardSlotsToDay,
   resetDaySlotTimes,
-  loadOfficialWeeklySchedule,
 } from '../database/operations/scheduleOperations';
 import {
   getGradeLevels,
   addGradeLevel,
   updateGradeLevel,
   deleteGradeLevel,
-  setGradeLevelsPreset,
 } from '../database/operations/gradeLevelOperations';
 import { CourseName, LessonSlot, DaySlotInfo, GradeLevelItem } from '../types';
 import { EmptyState } from '../components/EmptyState';
 import { DAYS_OF_WEEK } from '../utils/dateUtils';
 
+import { ensureGradesAndClassesDefined } from '../utils/setupChecks';
 export const ScheduleManageScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -187,27 +186,6 @@ export const ScheduleManageScreen: React.FC = () => {
     );
   };
 
-  const handleApplyPreset = (preset: 'high' | 'middle' | 'primary' | 'all', name: string) => {
-    Alert.alert(
-      'Şablon Uygula',
-      `Sınıf düzeyleri "${name}" olarak güncellensin mi?`,
-      [
-        { text: 'Vazgeç', style: 'cancel' },
-        {
-          text: 'Uygula',
-          onPress: async () => {
-            try {
-              const updated = await setGradeLevelsPreset(preset);
-              setGradeLevels(updated);
-            } catch (e) {
-              Alert.alert('Hata', 'Şablon uygulanamadı.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
   // Course handlers
   const handleOpenAddCourse = () => {
     setEditingCourse(null);
@@ -257,39 +235,6 @@ export const ScheduleManageScreen: React.FC = () => {
         },
       },
     ]);
-  };
-
-  const handleAutoLoadOfficialSchedule = () => {
-    Alert.alert(
-      'Okul Programını Otomatik Yükle',
-      'Kamil Miras Anadolu Lisesi resmi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
-        '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
-        '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
-        '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
-        '⚠️ Kural: Önceden tanımladığınız veya düzenlediğiniz ders saatleri (başlangıç/bitiş dakikaları) KORUNACAKTIR, sadece derslerin şube ve kod dağılımı aktarılacaktır.\n\n' +
-        'Programı yüklemek istiyor musunuz?',
-      [
-        { text: 'Vazgeç', style: 'cancel' },
-        {
-          text: 'Evet, Programı Yükle',
-          onPress: async () => {
-            try {
-              const res = await loadOfficialWeeklySchedule();
-              await loadData();
-              Alert.alert(
-                'Başarıyla Yüklendi 🎉',
-                `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
-                  `• Ders Kodları: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
-                  `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
-                  `Ders saatleriniz korunmuştur.`
-              );
-            } catch (err: any) {
-              Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
-            }
-          },
-        },
-      ]
-    );
   };
 
   // Standard Slot handlers
@@ -556,30 +501,7 @@ export const ScheduleManageScreen: React.FC = () => {
             data={courses}
             keyExtractor={(item) => item.id.toString()}
             contentContainerStyle={styles.listPadding}
-            ListHeaderComponent={
-              <Card style={styles.autoLoadCard}>
-                <View style={styles.autoLoadHeader}>
-                  <View style={styles.autoLoadIconWrap}>
-                    <Ionicons name="sparkles" size={18} color={Colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.autoLoadTitle}>Kamil Miras AL Programını Yükle</Text>
-                    <Text style={styles.autoLoadSub}>
-                      Resimdeki 27 saatlik ders programını, S.FZK ve HDTE2 ders kodlarıyla şubelere otomatik aktarın.
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={styles.autoLoadBtn}
-                  onPress={handleAutoLoadOfficialSchedule}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="cloud-download-outline" size={16} color="#fff" />
-                  <Text style={styles.autoLoadBtnText}>Programı ve Kodları Otomatik Yükle (27 Saat)</Text>
-                </TouchableOpacity>
-              </Card>
-            }
-            renderItem={({ item }) => (
+                        renderItem={({ item }) => (
               <Card style={styles.itemCard}>
                 <View style={styles.itemRow}>
                   <View style={[styles.codeBadge, { backgroundColor: item.color || Colors.primaryLight }]}>
@@ -1009,44 +931,6 @@ export const ScheduleManageScreen: React.FC = () => {
             <Button title="Yeni Düzey" icon="add" size="sm" onPress={handleOpenAddGrade} />
           </View>
 
-          {/* Quick Presets */}
-          <View style={styles.presetSection}>
-            <Text style={styles.presetTitle}>Hızlı Kademe Şablonları:</Text>
-            <View style={styles.presetButtonsRow}>
-              <TouchableOpacity
-                style={styles.presetChip}
-                onPress={() => handleApplyPreset('high', 'Lise (9, 10, 11, 12)')}
-              >
-                <Ionicons name="school" size={13} color={Colors.primary} />
-                <Text style={styles.presetChipText}>Lise (9-12)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.presetChip}
-                onPress={() => handleApplyPreset('middle', 'Ortaokul (5, 6, 7, 8)')}
-              >
-                <Ionicons name="book" size={13} color={Colors.secondary} />
-                <Text style={styles.presetChipText}>Ortaokul (5-8)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.presetChip}
-                onPress={() => handleApplyPreset('primary', 'İlkokul (1, 2, 3, 4)')}
-              >
-                <Ionicons name="pencil" size={13} color="#059669" />
-                <Text style={styles.presetChipText}>İlkokul (1-4)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.presetChip}
-                onPress={() => handleApplyPreset('all', 'Tüm Kademeler (1-12)')}
-              >
-                <Ionicons name="layers-outline" size={13} color="#7C3AED" />
-                <Text style={styles.presetChipText}>Tümü (1-12)</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
           <FlatList
             data={gradeLevels}
             keyExtractor={(item) => item.level.toString()}
@@ -1084,9 +968,7 @@ export const ScheduleManageScreen: React.FC = () => {
               <EmptyState
                 icon="school-outline"
                 title="Sınıf Düzeyi Bulunamadı"
-                description="Henüz hiçbir sınıf düzeyi tanımlanmamış. Yukarıdaki şablonlardan seçebilir veya 'Yeni Düzey' butonuyla ekleyebilirsiniz."
-                actionTitle="Lise Şablonunu Yükle"
-                onAction={() => handleApplyPreset('high', 'Lise (9, 10, 11, 12)')}
+                description="Henüz hiçbir sınıf düzeyi tanımlanmamış. 'Yeni Düzey' butonuyla düzeyleri kendiniz ekleyebilirsiniz."
               />
             }
           />
