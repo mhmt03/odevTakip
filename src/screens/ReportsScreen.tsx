@@ -9,18 +9,25 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
+  Image,
   Platform,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../theme/colors';
 import { Card } from '../components/Card';
+import { Button } from '../components/Button';
+import { Input } from '../components/Input';
 import { getClasses } from '../database/operations/classOperations';
 import {
   getAllStudentsWithClass,
   StudentWithClass,
   bulkCreateStudentsMultipleClasses,
+  createStudent,
+  updateStudentPhoto,
 } from '../database/operations/studentOperations';
+import { getGradeLevels } from '../database/operations/gradeLevelOperations';
 import { getAssignments } from '../database/operations/assignmentOperations';
 import { getAllNotes } from '../database/operations/noteOperations';
 import { getFullClassGradebook } from '../database/operations/gradeOperations';
@@ -35,7 +42,12 @@ import {
   exportCustomGradebookReport,
   exportCustomAssignmentsReport,
 } from '../utils/excelService';
-import { ClassItem, StudentNote, Assignment } from '../types';
+import { savePhotoPermanently } from '../utils/photoService';
+import {
+  extractPhotosFromPdf,
+  PdfExtractedStudentPhoto,
+} from '../utils/pdfPhotoExtractor';
+import { ClassItem, StudentNote, Assignment, GradeLevelItem, Student } from '../types';
 import { formatDateToTR } from '../utils/dateUtils';
 import { useSchoolTheme } from '../context/SchoolThemeContext';
 
@@ -44,12 +56,14 @@ type ReportType = 'students' | 'gradebook' | 'notes' | 'assignments';
 export const ReportsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const { bgTint } = useSchoolTheme();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
 
   // Database Data
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [allStudents, setAllStudents] = useState<StudentWithClass[]>([]);
+  const [systemGradeLevels, setSystemGradeLevels] = useState<GradeLevelItem[]>([]);
 
   // Filter Modal State
   const [filterModalVisible, setFilterModalVisible] = useState(false);
@@ -61,15 +75,32 @@ export const ReportsScreen: React.FC = () => {
   const [selectedStudentIds, setSelectedStudentIds] = useState<number[]>([]);
   const [studentSearchText, setStudentSearchText] = useState('');
 
+  // Manual Student Add Modal State
+  const [manualStudentModalVisible, setManualStudentModalVisible] = useState(false);
+  const [manualClassId, setManualClassId] = useState<number | null>(null);
+  const [manualStudentNo, setManualStudentNo] = useState('');
+  const [manualFirstName, setManualFirstName] = useState('');
+  const [manualLastName, setManualLastName] = useState('');
+  const [manualNotes, setManualNotes] = useState('');
+  const [savingManualStudent, setSavingManualStudent] = useState(false);
+
+  // PDF Photo Extraction Modal State
+  const [pdfPhotoModalVisible, setPdfPhotoModalVisible] = useState(false);
+  const [pdfExtractItems, setPdfExtractItems] = useState<PdfExtractedStudentPhoto[]>([]);
+  const [pdfExtracting, setPdfExtracting] = useState(false);
+  const [savingPdfPhotos, setSavingPdfPhotos] = useState(false);
+
   // Load Data
   const loadData = async () => {
     try {
-      const [fetchedClasses, fetchedStudents] = await Promise.all([
+      const [fetchedClasses, fetchedStudents, fetchedGradeLevels] = await Promise.all([
         getClasses(),
         getAllStudentsWithClass(),
+        getGradeLevels(),
       ]);
       setClasses(fetchedClasses);
       setAllStudents(fetchedStudents);
+      setSystemGradeLevels(fetchedGradeLevels);
     } catch (e) {
       console.warn('Error loading reporting data:', e);
     }
@@ -81,22 +112,39 @@ export const ReportsScreen: React.FC = () => {
     }, [])
   );
 
-  // Extract distinct grade levels (e.g. 9, 10, 11, 12)
+  // Extract distinct grade levels (from settings, classes and students)
   const gradeLevels = useMemo(() => {
     const levels = new Set<string>();
+    systemGradeLevels.forEach((g) => levels.add(String(g.level)));
     classes.forEach((c) => {
-      const match = c.name.match(/^(\d{1,2})/);
-      if (match) {
-        levels.add(match[1]);
+      if (c.grade_level) {
+        levels.add(String(c.grade_level));
+      } else {
+        const match = c.name.match(/^(\d{1,2})/);
+        if (match) {
+          levels.add(match[1]);
+        }
+      }
+    });
+    allStudents.forEach((s) => {
+      if (s.grade_level) {
+        levels.add(String(s.grade_level));
       }
     });
     return Array.from(levels).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-  }, [classes]);
+  }, [systemGradeLevels, classes, allStudents]);
 
   // Filter classes by grade level
   const displayedClasses = useMemo(() => {
     if (selectedGradeLevel === 'all') return classes;
-    return classes.filter((c) => c.name.startsWith(selectedGradeLevel));
+    const targetLvl = parseInt(selectedGradeLevel, 10);
+    return classes.filter(
+      (c) =>
+        c.grade_level === targetLvl ||
+        c.name.startsWith(selectedGradeLevel) ||
+        c.name.startsWith(`${selectedGradeLevel}-`) ||
+        c.name.startsWith(`${selectedGradeLevel}/`)
+    );
   }, [classes, selectedGradeLevel]);
 
   // Filter candidate students according to class and grade level selections
@@ -105,8 +153,14 @@ export const ReportsScreen: React.FC = () => {
     if (selectedClassId !== 'all') {
       list = list.filter((s) => s.class_id === selectedClassId);
     } else if (selectedGradeLevel !== 'all') {
+      const targetLvl = parseInt(selectedGradeLevel, 10);
       list = list.filter(
-        (s) => s.class_name && s.class_name.startsWith(selectedGradeLevel)
+        (s) =>
+          s.grade_level === targetLvl ||
+          (s.class_name &&
+            (s.class_name.startsWith(selectedGradeLevel) ||
+              s.class_name.startsWith(`${selectedGradeLevel}-`) ||
+              s.class_name.startsWith(`${selectedGradeLevel}/`)))
       );
     }
 
@@ -169,7 +223,14 @@ export const ReportsScreen: React.FC = () => {
       if (selectedClassId !== 'all') {
         targetClasses = classes.filter((c) => c.id === selectedClassId);
       } else if (selectedGradeLevel !== 'all') {
-        targetClasses = classes.filter((c) => c.name.startsWith(selectedGradeLevel));
+        const targetLvl = parseInt(selectedGradeLevel, 10);
+        targetClasses = classes.filter(
+          (c) =>
+            c.grade_level === targetLvl ||
+            c.name.startsWith(selectedGradeLevel) ||
+            c.name.startsWith(`${selectedGradeLevel}-`) ||
+            c.name.startsWith(`${selectedGradeLevel}/`)
+        );
       }
 
       if (targetClasses.length === 0) {
@@ -203,8 +264,8 @@ export const ReportsScreen: React.FC = () => {
           selectedClassId !== 'all'
             ? `${targetClasses[0].name} Şubesi Öğrenci Listesi`
             : selectedGradeLevel !== 'all'
-            ? `${selectedGradeLevel}. Sınıflar Öğrenci Listesi`
-            : 'Tüm Şubeler Öğrenci Listesi';
+              ? `${selectedGradeLevel}. Sınıflar Öğrenci Listesi`
+              : 'Tüm Şubeler Öğrenci Listesi';
 
         await exportCustomStudentsReport(reportTitle, payload);
         setFilterModalVisible(false);
@@ -418,6 +479,143 @@ export const ReportsScreen: React.FC = () => {
       setLoading(false);
       Alert.alert('Hata', e?.message || 'Excel dosyası okunamadı.');
     }
+  };
+
+  // Manual Student Add Handlers
+  const handleOpenManualAddStudent = () => {
+    if (classes.length === 0) {
+      Alert.alert(
+        'Kayıtlı Şube Yok',
+        'Öğrenci eklemek için önce Şubeler ekranından en az bir şube tanımlamanız gerekmektedir.'
+      );
+      return;
+    }
+    setManualClassId(classes[0].id);
+    setManualStudentNo('');
+    setManualFirstName('');
+    setManualLastName('');
+    setManualNotes('');
+    setManualStudentModalVisible(true);
+  };
+
+  const handleSaveManualStudent = async () => {
+    if (!manualClassId) {
+      Alert.alert('Uyarı', 'Lütfen bir şube seçiniz.');
+      return;
+    }
+    if (!manualStudentNo.trim()) {
+      Alert.alert('Uyarı', 'Lütfen okul numarasını giriniz.');
+      return;
+    }
+    if (!manualFirstName.trim()) {
+      Alert.alert('Uyarı', 'Lütfen öğrenci adını giriniz.');
+      return;
+    }
+
+    try {
+      setSavingManualStudent(true);
+      await createStudent(
+        manualClassId,
+        manualStudentNo,
+        manualFirstName,
+        manualLastName,
+        manualNotes
+      );
+      setManualStudentModalVisible(false);
+      setManualStudentNo('');
+      setManualFirstName('');
+      setManualLastName('');
+      setManualNotes('');
+      await loadData();
+      Alert.alert('Başarılı', `${manualFirstName.trim()} ${manualLastName.trim()} başarıyla kaydedildi.`);
+    } catch (e: any) {
+      Alert.alert('Hata', 'Öğrenci kaydedilirken bir hata oluştu: ' + (e?.message || e));
+    } finally {
+      setSavingManualStudent(false);
+    }
+  };
+
+  // PDF Photo Handlers
+  const handleStartPdfPhoto = () => {
+    if (allStudents.length === 0) {
+      Alert.alert('Bilgi', 'Sistemde kayıtlı öğrenci bulunmuyor. Önce öğrencileri sisteme yükleyiniz.');
+      return;
+    }
+
+    Alert.alert(
+      'PDF\'ten Fotoğraf Aktar',
+      'e-Okul sınıf listesi PDF\'inden vesikalık fotoğraflar taranacak ve okul numarasına göre öğrencilerle eşleştirilecektir.\n\nİşlem kapsamını seçiniz:',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Tüm Okul Öğrencileri',
+          onPress: () => runPdfExtraction(allStudents as any),
+        },
+      ]
+    );
+  };
+
+  const runPdfExtraction = async (targetStudents: Student[]) => {
+    try {
+      setPdfExtracting(true);
+      const res = await extractPhotosFromPdf(targetStudents);
+      if (!res.success) {
+        if (res.error && res.error !== 'Dosya seçilmedi.') {
+          Alert.alert('Hata', res.error);
+        }
+        return;
+      }
+      if (res.extractedPhotos.length === 0) {
+        Alert.alert('Bilgi', 'PDF içinde uygun vesikalık fotoğraf bulunamadı.');
+        return;
+      }
+      setPdfExtractItems(res.extractedPhotos);
+      setPdfPhotoModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Hata', e?.message || 'PDF işlenemedi.');
+    } finally {
+      setPdfExtracting(false);
+    }
+  };
+
+  const handleConfirmSavePdfPhotos = async () => {
+    const toSave = pdfExtractItems.filter((item) => item.matchedStudent !== null);
+    if (toSave.length === 0) {
+      Alert.alert('Uyarı', 'Eşleşen öğrenci bulunamadı.');
+      return;
+    }
+    setSavingPdfPhotos(true);
+    try {
+      let savedCount = 0;
+      for (const item of toSave) {
+        if (!item.matchedStudent) continue;
+        const permanentUri = await savePhotoPermanently(
+          item.tempUri,
+          item.matchedStudent.student_number || item.matchedStudent.id
+        );
+        await updateStudentPhoto(item.matchedStudent.id, permanentUri);
+        savedCount++;
+      }
+      setPdfPhotoModalVisible(false);
+      setPdfExtractItems([]);
+      await loadData();
+      Alert.alert(
+        'Başarılı 🎉',
+        `PDF'ten toplam ${savedCount} öğrenci fotoğrafı başarıyla yüklendi ve öğrencilere atandı!`
+      );
+    } catch (e: any) {
+      Alert.alert('Hata', 'Fotoğraflar kaydedilirken bir hata oluştu: ' + (e?.message || e));
+    } finally {
+      setSavingPdfPhotos(false);
+    }
+  };
+
+  const handleUpdatePdfMatchStudent = (index: number, student: Student | null) => {
+    setPdfExtractItems((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], matchedStudent: student };
+      return copy;
+    });
   };
 
   // Helper for Report Details in Modal
@@ -635,25 +833,53 @@ export const ReportsScreen: React.FC = () => {
           </Card>
         </TouchableOpacity>
 
-        {/* 6. İÇE AKTARMA & ŞABLON BÖLÜMÜ */}
+        {/* 6. ŞUBE & ÖĞRENCİ İŞLEMLERİ */}
         <View style={styles.templateSection}>
-          <Text style={styles.sectionHeader}>Excel Araçları & Şablonlar</Text>
+          <Text style={styles.sectionHeader}>Şube & Öğrenci İşlemleri</Text>
 
-          {/* Bulk Import */}
+          {/* 1. Manuel Öğrenci Ekle */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleOpenManualAddStudent}
+            disabled={loading}
+          >
+            <Card style={[styles.reportCard, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0', borderWidth: 1 }]}>
+              <View style={styles.cardRow}>
+                <View style={[styles.iconWrap, { backgroundColor: '#EEF2FF' }]}>
+                  <Ionicons name="person-add" size={24} color={Colors.primary} />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <Text style={[styles.reportTitle, { color: Colors.primary }]}>Manuel Öğrenci Ekle</Text>
+                  <Text style={styles.reportDesc}>
+                    Numara, ad soyad ve şube seçerek tek tek öğrenci kaydı oluşturun.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
+              </View>
+            </Card>
+          </TouchableOpacity>
+
+          {/* 2. Excel'den Öğrenci Yükle */}
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleBulkImportStudents}
             disabled={loading}
+            style={{ marginTop: 10 }}
           >
             <Card style={[styles.reportCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0', borderWidth: 1 }]}>
               <View style={styles.cardRow}>
                 <View style={[styles.iconWrap, { backgroundColor: '#DCFCE7' }]}>
-                  <Ionicons name="cloud-upload" size={26} color="#16A34A" />
+                  <Ionicons name="document-text" size={24} color="#16A34A" />
                 </View>
                 <View style={styles.cardTextWrap}>
-                  <Text style={[styles.reportTitle, { color: '#15803D' }]}>Toplu Öğrenci Yükle</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={[styles.reportTitle, { color: '#15803D' }]}>Excel'den Öğrenci Yükle</Text>
+                    <View style={styles.subActionBadgeSuccess}>
+                      <Text style={styles.subActionBadgeSuccessText}>Toplu Ekle</Text>
+                    </View>
+                  </View>
                   <Text style={styles.reportDesc}>
-                    Excel dosyasındaki şube bilgisine göre tüm öğrencileri tek seferde sisteme aktarın.
+                    e-Okul veya hazır Excel listesindeki öğrencileri topluca şubelere aktarın.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#16A34A" />
@@ -661,7 +887,7 @@ export const ReportsScreen: React.FC = () => {
             </Card>
           </TouchableOpacity>
 
-          {/* Sample Template */}
+          {/* 3. Örnek Excel Şablonu İndir */}
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleDownloadTemplate}
@@ -671,15 +897,47 @@ export const ReportsScreen: React.FC = () => {
             <Card style={[styles.reportCard, styles.templateCard]}>
               <View style={styles.cardRow}>
                 <View style={[styles.iconWrap, { backgroundColor: '#EDE9FE' }]}>
-                  <Ionicons name="document-attach" size={26} color="#7C3AED" />
+                  <Ionicons name="download-outline" size={24} color="#7C3AED" />
                 </View>
                 <View style={styles.cardTextWrap}>
-                  <Text style={styles.reportTitle}>Örnek Öğrenci Excel Şablonu İndir</Text>
+                  <Text style={styles.reportTitle}>Örnek Excel Şablonu İndir</Text>
                   <Text style={styles.reportDesc}>
-                    Kayıtlı şubelerinizi de içeren 2 sayfalı resmi aktarım şablonunu indirin.
+                    Öğrenci yüklemesi için sınıf düzeyi ve şube sütunları hazırlanmış örnek şablonu indirin.
                   </Text>
                 </View>
                 <Ionicons name="share-social-outline" size={22} color="#7C3AED" />
+              </View>
+            </Card>
+          </TouchableOpacity>
+
+          {/* 4. PDF'ten Fotoğraf Aktar */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleStartPdfPhoto}
+            disabled={loading || pdfExtracting}
+            style={{ marginTop: 10 }}
+          >
+            <Card style={[styles.reportCard, { backgroundColor: '#FEF2F2', borderColor: '#FECACA', borderWidth: 1 }]}>
+              <View style={styles.cardRow}>
+                <View style={[styles.iconWrap, { backgroundColor: '#FEE2E2' }]}>
+                  {pdfExtracting ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <Ionicons name="camera" size={24} color="#DC2626" />
+                  )}
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={[styles.reportTitle, { color: '#B91C1C' }]}>PDF'ten Fotoğraf Aktar</Text>
+                    <View style={styles.subActionBadgeRed}>
+                      <Text style={styles.subActionBadgeRedText}>Akıllı OCR</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.reportDesc}>
+                    e-Okul fotoğraflı sınıf listesi PDF'inden resimleri otomatik kesip öğrencilere ata.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#DC2626" />
               </View>
             </Card>
           </TouchableOpacity>
@@ -986,6 +1244,229 @@ export const ReportsScreen: React.FC = () => {
                   </>
                 )}
               </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 2. MANUEL ÖĞRENCİ EKLEME MODALI */}
+      <Modal visible={manualStudentModalVisible} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.manualModalCard}>
+            <View style={styles.manualModalHeader}>
+              <Text style={styles.manualModalTitle}>Manuel Öğrenci Ekle</Text>
+              <TouchableOpacity onPress={() => setManualStudentModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.manualClassPickerLabel}>Şube Seçiniz *</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.manualClassChipRow}>
+              {classes.map((cls) => {
+                const isSelected = manualClassId === cls.id;
+                return (
+                  <TouchableOpacity
+                    key={cls.id}
+                    style={[styles.manualClassChip, isSelected && styles.manualClassChipActive]}
+                    onPress={() => setManualClassId(cls.id)}
+                  >
+                    <Text style={[styles.manualClassChipText, isSelected && styles.manualClassChipTextActive]}>
+                      {cls.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <Input
+              label="Okul / Öğrenci No *"
+              placeholder="Örn: 105"
+              value={manualStudentNo}
+              onChangeText={setManualStudentNo}
+              keyboardType="numeric"
+            />
+
+            <Input
+              label="Öğrenci Adı *"
+              placeholder="Örn: Ahmet"
+              value={manualFirstName}
+              onChangeText={setManualFirstName}
+            />
+
+            <Input
+              label="Öğrenci Soyadı"
+              placeholder="Örn: Yılmaz"
+              value={manualLastName}
+              onChangeText={setManualLastName}
+            />
+
+            <Input
+              label="Öğrenci Hakkında Not / Açıklama"
+              placeholder="İsteğe bağlı not..."
+              value={manualNotes}
+              onChangeText={setManualNotes}
+            />
+
+            <View style={styles.manualModalActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setManualStudentModalVisible(false)}
+              />
+              <Button
+                title="Kaydet"
+                style={{ flex: 1 }}
+                loading={savingManualStudent}
+                onPress={handleSaveManualStudent}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 3. PDF'TEN FOTOĞRAF AKTARMA MODALI */}
+      <Modal
+        visible={pdfPhotoModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPdfPhotoModalVisible(false)}
+      >
+        <View
+          style={[
+            styles.modalOverlay,
+            {
+              justifyContent: 'flex-start',
+              paddingTop: 0,
+              paddingBottom: 0,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.pdfModalContent,
+              {
+                paddingTop: Math.max(16, insets.top + 8),
+                paddingBottom: Math.max(16, insets.bottom + 12),
+              },
+            ]}
+          >
+            <View style={styles.pdfModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pdfModalTitle}>PDF'ten Fotoğraf Yükle</Text>
+                <Text style={styles.pdfModalSubTitle}>
+                  {pdfExtractItems.length} vesikalık fotoğraf bulundu •{' '}
+                  {pdfExtractItems.filter((i) => i.matchedStudent !== null).length} eşleşti
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPdfPhotoModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pdfBannerBox}>
+              <Ionicons name="information-circle" size={18} color="#0369A1" />
+              <Text style={styles.pdfBannerText}>
+                Fotoğraflar PDF'teki okul numarası sırasına göre öğrencilerle eşleştirildi. Kontrol edip onaylayınız.
+              </Text>
+            </View>
+
+            <ScrollView style={styles.pdfMatchScroll} showsVerticalScrollIndicator={true}>
+              {pdfExtractItems.map((item, idx) => {
+                const matched = item.matchedStudent;
+                const pdfDetectedStr = item.detectedNumber
+                  ? `PDF No: ${item.detectedNumber}`
+                  : item.detectedName
+                  ? `PDF Metin: ${item.detectedName}`
+                  : 'PDF\'ten numara okunamadı';
+
+                return (
+                  <View key={idx} style={styles.pdfMatchRow}>
+                    <Image source={{ uri: item.tempUri }} style={styles.pdfMatchThumb} />
+                    <View style={styles.pdfMatchInfo}>
+                      <View style={styles.pdfMatchBadgeRow}>
+                        <Text style={styles.pdfOrderText}>
+                          #{idx + 1}. Fotoğraf {item.pageNumber ? `(Sayfa ${item.pageNumber})` : ''}
+                        </Text>
+                        {matched ? (
+                          <View style={styles.matchedBadgeSuccess}>
+                            <Ionicons name="checkmark-circle" size={12} color="#047857" />
+                            <Text style={styles.matchedBadgeSuccessText}>Eşleşti</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.matchedBadgeWarning}>
+                            <Text style={styles.matchedBadgeWarningText}>Eşleşmedi</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.primary, marginTop: 2 }}>
+                        {pdfDetectedStr}
+                      </Text>
+
+                      {matched ? (
+                        <View style={{ marginTop: 2 }}>
+                          <Text style={styles.pdfMatchedStudentName}>
+                            Sistem: {matched.first_name} {matched.last_name}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 1 }}>
+                            Öğrenci No: {matched.student_number || '-'} • Şube: {(matched as any).class_name || '-'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.pdfUnmatchedText}>
+                          Sistemde bu numarayla öğrenci bulunamadı
+                        </Text>
+                      )}
+
+                      {matched ? (
+                        <TouchableOpacity
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            backgroundColor: '#FEE2E2',
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                            alignSelf: 'flex-start',
+                            marginTop: 6,
+                          }}
+                          onPress={() => handleUpdatePdfMatchStudent(idx, null)}
+                        >
+                          <Ionicons name="close-circle-outline" size={13} color="#DC2626" />
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#DC2626' }}>
+                            Hatalı / Eşleşmeyi Kaldır
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.pdfModalFooterActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setPdfPhotoModalVisible(false)}
+              />
+              <Button
+                title={`Fotoğrafları Kaydet (${pdfExtractItems.filter((i) => i.matchedStudent !== null).length})`}
+                icon="checkmark"
+                loading={savingPdfPhotos}
+                disabled={
+                  pdfExtractItems.filter((i) => i.matchedStudent !== null).length === 0 ||
+                  savingPdfPhotos
+                }
+                style={{ flex: 1.5 }}
+                onPress={handleConfirmSavePdfPhotos}
+              />
             </View>
           </View>
         </View>
@@ -1379,11 +1860,212 @@ const styles = StyleSheet.create({
     backgroundColor: '#16A34A', // Excel Green
     paddingVertical: 12,
     borderRadius: 12,
+    marginBottom: 50,
     ...Shadows.small,
   },
   modalSubmitBtnText: {
     fontSize: 14,
     fontWeight: '700',
     color: '#FFF',
+  },
+  subActionBadgeSuccess: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  subActionBadgeSuccessText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  subActionBadgeRed: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  subActionBadgeRedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  // Manual Student Modal Styles
+  manualModalCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '90%',
+    maxWidth: 420,
+    ...Shadows.large,
+  },
+  manualModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  manualModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  manualClassPickerLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: 6,
+  },
+  manualClassChipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingBottom: 10,
+  },
+  manualClassChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  manualClassChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  manualClassChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  manualClassChipTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  manualModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  // PDF Photo Modal Styles
+  pdfModalContent: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 16,
+  },
+  pdfModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  pdfModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  pdfModalSubTitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  pdfBannerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 8,
+    padding: 10,
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 10,
+  },
+  pdfBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#0369A1',
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  pdfMatchScroll: {
+    flex: 1,
+    marginBottom: 12,
+  },
+  pdfMatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
+    gap: 12,
+  },
+  pdfMatchThumb: {
+    width: 48,
+    height: 60,
+    borderRadius: 6,
+    backgroundColor: Colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  pdfMatchInfo: {
+    flex: 1,
+  },
+  pdfMatchBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  pdfOrderText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  matchedBadgeSuccess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 4,
+  },
+  matchedBadgeSuccessText: {
+    fontSize: 10,
+    color: '#047857',
+    fontWeight: '700',
+  },
+  matchedBadgeWarning: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  matchedBadgeWarningText: {
+    fontSize: 10,
+    color: '#B45309',
+    fontWeight: '700',
+  },
+  pdfMatchedStudentName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  pdfUnmatchedText: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    fontStyle: 'italic',
+  },
+  pdfModalFooterActions: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: '#FFF',
   },
 });

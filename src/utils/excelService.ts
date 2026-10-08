@@ -156,6 +156,7 @@ export const pickAndParseStudentsExcel = async (): Promise<StudentImportItem[]> 
 
   // Find header row index
   let headerIndex = -1;
+  let colGrade = -1;
   let colClass = -1;
   let colNumber = -1;
   let colFirstName = -1;
@@ -170,15 +171,29 @@ export const pickAndParseStudentsExcel = async (): Promise<StudentImportItem[]> 
     for (let c = 0; c < row.length; c++) {
       const cell = String(row[c] || '').trim().toLowerCase();
       if (
+        cell === 'sınıf düzeyi' ||
+        cell === 'sinif duzeyi' ||
+        cell === 'düzey' ||
+        cell === 'duzey' ||
+        cell === 'kademe' ||
+        cell === 'grade level' ||
+        cell === 'grade'
+      ) {
+        colGrade = c;
+      } else if (
         cell === 'şube' ||
         cell === 'sube' ||
-        cell === 'sınıf' ||
-        cell === 'sinif' ||
         cell.includes('şube adı') ||
         cell.includes('sube adi') ||
-        cell === 'class'
+        cell === 'branch'
       ) {
         colClass = c;
+      } else if (cell === 'sınıf' || cell === 'sinif' || cell === 'class') {
+        if (colClass === -1) {
+          colClass = c;
+        } else if (colGrade === -1) {
+          colGrade = c;
+        }
       } else if (
         cell.includes('numara') ||
         cell.includes('öğrenci no') ||
@@ -225,7 +240,7 @@ export const pickAndParseStudentsExcel = async (): Promise<StudentImportItem[]> 
       }
     }
 
-    if (colNumber !== -1 || colFirstName !== -1 || colFullName !== -1 || colClass !== -1) {
+    if (colNumber !== -1 || colFirstName !== -1 || colFullName !== -1 || colClass !== -1 || colGrade !== -1) {
       headerIndex = r;
       break;
     }
@@ -238,6 +253,7 @@ export const pickAndParseStudentsExcel = async (): Promise<StudentImportItem[]> 
     const row = rawRows[r];
     if (!Array.isArray(row) || row.length === 0) continue;
 
+    let gradeLevel: number | undefined = undefined;
     let className = '';
     let num = '';
     let fName = '';
@@ -245,6 +261,13 @@ export const pickAndParseStudentsExcel = async (): Promise<StudentImportItem[]> 
     let notes = '';
 
     if (headerIndex !== -1) {
+      if (colGrade !== -1 && row[colGrade] !== undefined) {
+        const gradeRaw = String(row[colGrade]).trim();
+        const m = gradeRaw.match(/\d{1,2}/);
+        if (m) {
+          gradeLevel = parseInt(m[0], 10);
+        }
+      }
       if (colClass !== -1 && row[colClass] !== undefined) {
         className = String(row[colClass]).trim();
       }
@@ -278,10 +301,19 @@ export const pickAndParseStudentsExcel = async (): Promise<StudentImportItem[]> 
       lName = String(row[2] || '').trim();
     }
 
+    // Auto extract gradeLevel from className if not specified in a separate column
+    if (gradeLevel === undefined && className) {
+      const matchGrade = className.match(/^(\d{1,2})/);
+      if (matchGrade) {
+        gradeLevel = parseInt(matchGrade[1], 10);
+      }
+    }
+
     // Filter out completely blank rows or title rows
     if (fName || num) {
       parsedStudents.push({
         className: className || undefined,
+        gradeLevel,
         studentNumber: num,
         firstName: fName,
         lastName: lName,
@@ -322,7 +354,20 @@ export const validateBulkStudentImport = (
       continue;
     }
 
-    const matched = classMap.get(rawClass.toLowerCase());
+    let matched = classMap.get(rawClass.toLowerCase());
+    // Smart matching if gradeLevel is provided (e.g. branch is "A" and grade is 9 -> matches "9-A")
+    if (!matched && s.gradeLevel) {
+      matched =
+        classMap.get(`${s.gradeLevel}-${rawClass}`.toLowerCase()) ||
+        classMap.get(`${s.gradeLevel}/${rawClass}`.toLowerCase()) ||
+        classMap.get(`${s.gradeLevel} ${rawClass}`.toLowerCase()) ||
+        existingClasses.find(
+          (c) =>
+            (c.grade_level === s.gradeLevel || c.name.startsWith(String(s.gradeLevel))) &&
+            c.name.toLowerCase().endsWith(rawClass.toLowerCase())
+        );
+    }
+
     if (matched) {
       if (!grouped.has(matched.id)) {
         grouped.set(matched.id, { classItem: matched, students: [] });
@@ -365,19 +410,22 @@ export const generateStudentTemplateExcel = async (): Promise<boolean> => {
   const workbook = XLSX.utils.book_new();
 
   // SHEET 1: Öğrenci Listesi
-  const sampleClass1 = existingClasses.length > 0 ? existingClasses[0].name : '12-A';
+  const sampleClass1 = existingClasses.length > 0 ? existingClasses[0].name : '9-A';
   const sampleClass2 = existingClasses.length > 1 ? existingClasses[1].name : (existingClasses.length > 0 ? existingClasses[0].name : '10-B');
+  const sampleGrade1 = existingClasses.length > 0 && existingClasses[0].grade_level ? existingClasses[0].grade_level : (sampleClass1.match(/^(\d{1,2})/)?.[1] ? parseInt(sampleClass1.match(/^(\d{1,2})/)![1], 10) : 9);
+  const sampleGrade2 = existingClasses.length > 1 && existingClasses[1].grade_level ? existingClasses[1].grade_level : (sampleClass2.match(/^(\d{1,2})/)?.[1] ? parseInt(sampleClass2.match(/^(\d{1,2})/)![1], 10) : 10);
 
   const templateData = [
-    ['Şube', 'Okul No', 'Ad', 'Soyad', 'Notlar'],
-    [sampleClass1, '101', 'Ahmet', 'Yılmaz', ''],
-    [sampleClass1, '102', 'Ayşe', 'Kaya', ''],
-    [sampleClass2, '201', 'Mehmet', 'Demir', ''],
-    [sampleClass2, '202', 'Zeynep', 'Çelik', ''],
+    ['Sınıf Düzeyi', 'Şube', 'Okul No', 'Ad', 'Soyad', 'Notlar'],
+    [sampleGrade1, sampleClass1, '101', 'Ahmet', 'Yılmaz', ''],
+    [sampleGrade1, sampleClass1, '102', 'Ayşe', 'Kaya', ''],
+    [sampleGrade2, sampleClass2, '201', 'Mehmet', 'Demir', ''],
+    [sampleGrade2, sampleClass2, '202', 'Zeynep', 'Çelik', ''],
   ];
 
   const worksheet = XLSX.utils.aoa_to_sheet(templateData);
   worksheet['!cols'] = [
+    { wch: 14 },
     { wch: 14 },
     { wch: 12 },
     { wch: 18 },
@@ -388,18 +436,20 @@ export const generateStudentTemplateExcel = async (): Promise<boolean> => {
 
   // SHEET 2: Kayıtlı Şubeler (Kullanıcının hatalı sınıf girmesini önleyen rehber liste)
   const classesSheetData: (string | number)[][] = [
-    ['SİSTEMDE KAYITLI ŞUBELER'],
-    ['ÖNEMLİ: 1. sayfadaki "Şube" sütununa yalnızca aşağıda listelenen şube adlarını birebir aynı şekilde yazınız.'],
+    ['SİSTEMDE KAYITLI ŞUBELER VE SINIF DÜZEYLERİ'],
+    ['ÖNEMLİ: 1. sayfadaki "Sınıf Düzeyi" ve "Şube" sütunlarına aşağıda tanımlı bilgileri yazınız.'],
     [],
-    ['Şube Adı', 'Şube Açıklaması', 'Mevcut Öğrenci Sayısı'],
+    ['Sınıf Düzeyi', 'Şube Adı', 'Şube Açıklaması', 'Mevcut Öğrenci Sayısı'],
   ];
 
   if (existingClasses.length > 0) {
     existingClasses.forEach((c) => {
-      classesSheetData.push([c.name, c.description || '-', c.student_count || 0]);
+      const gLvl = c.grade_level || (c.name.match(/^(\d{1,2})/)?.[1] ? parseInt(c.name.match(/^(\d{1,2})/)![1], 10) : '-');
+      classesSheetData.push([gLvl, c.name, c.description || '-', c.student_count || 0]);
     });
   } else {
     classesSheetData.push([
+      '-',
       'Henüz kayıtlı şube yok',
       'Lütfen önce uygulamadan "Yeni Şube" ekleyiniz.',
       0,
@@ -408,6 +458,7 @@ export const generateStudentTemplateExcel = async (): Promise<boolean> => {
 
   const classesWorksheet = XLSX.utils.aoa_to_sheet(classesSheetData);
   classesWorksheet['!cols'] = [
+    { wch: 14 },
     { wch: 18 },
     { wch: 30 },
     { wch: 22 },

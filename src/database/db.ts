@@ -396,6 +396,40 @@ const runSchema = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     // Table already exists
   }
 
+  // Migrate: ensure grade_level column exists in classes table
+  try {
+    await db.runAsync('ALTER TABLE classes ADD COLUMN grade_level INTEGER;');
+  } catch {
+    // Column already exists
+  }
+
+  // Migrate: ensure grade_level column exists in students table
+  try {
+    await db.runAsync('ALTER TABLE students ADD COLUMN grade_level INTEGER;');
+  } catch {
+    // Column already exists
+  }
+
+  // Backfill grade_level for classes and students if unpopulated
+  try {
+    const unassignedClasses = await db.getAllAsync<{ id: number; name: string }>(
+      'SELECT id, name FROM classes WHERE grade_level IS NULL'
+    );
+    for (const cls of unassignedClasses) {
+      const match = cls.name.match(/^(\d{1,2})/);
+      if (match) {
+        await db.runAsync('UPDATE classes SET grade_level = ? WHERE id = ?', parseInt(match[1], 10), cls.id);
+      }
+    }
+    await db.runAsync(`
+      UPDATE students 
+      SET grade_level = (SELECT grade_level FROM classes WHERE classes.id = students.class_id)
+      WHERE grade_level IS NULL
+    `);
+  } catch (e) {
+    // Ignore migration backfill error
+  }
+
   // Seed default courses if table is empty
   const courseCountRow = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM courses');
   if (courseCountRow && courseCountRow.count === 0) {

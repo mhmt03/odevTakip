@@ -11,6 +11,7 @@ export interface ClassItem {
   id: number;
   school_id?: number;
   name: string; // e.g. "12-A", "10-B", "9-C"
+  grade_level?: number;
   description?: string;
   created_at?: string;
   student_count?: number;
@@ -23,6 +24,7 @@ export interface Student {
   first_name: string;
   last_name: string;
   full_name?: string;
+  grade_level?: number;
   notes?: string;
   photo_uri?: string | null;
   created_at?: string;

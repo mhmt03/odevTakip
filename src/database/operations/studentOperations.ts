@@ -11,8 +11,9 @@ export const getStudentsByClass = async (classId: number): Promise<Student[]> =>
       first_name, 
       last_name, 
       (first_name || ' ' || last_name) as full_name,
+      grade_level,
       notes, 
-      photo_uri,
+      photo_uri, 
       created_at 
     FROM students 
     WHERE class_id = ?
@@ -23,6 +24,7 @@ export const getStudentsByClass = async (classId: number): Promise<Student[]> =>
 
 export interface StudentWithClass extends Student {
   class_name?: string;
+  grade_level?: number;
 }
 
 export const getAllStudentsWithClass = async (): Promise<StudentWithClass[]> => {
@@ -37,7 +39,8 @@ export const getAllStudentsWithClass = async (): Promise<StudentWithClass[]> => 
       s.student_number, 
       s.first_name, 
       s.last_name, 
-      (s.first_name || ' ' || s.last_name) as full_name,
+      (s.first_name || ' ' || last_name) as full_name,
+      COALESCE(s.grade_level, c.grade_level) as grade_level,
       s.notes, 
       s.photo_uri,
       s.created_at,
@@ -60,6 +63,7 @@ export const getStudentById = async (studentId: number): Promise<Student | null>
       first_name, 
       last_name, 
       (first_name || ' ' || last_name) as full_name,
+      grade_level,
       notes, 
       photo_uri,
       created_at 
@@ -75,17 +79,31 @@ export const createStudent = async (
   firstName: string,
   lastName: string,
   notes?: string,
-  photoUri?: string | null
+  photoUri?: string | null,
+  gradeLevel?: number
 ): Promise<number> => {
   const db = await getDB();
+
+  let finalGradeLevel = gradeLevel;
+  if (finalGradeLevel === undefined) {
+    const cls = await db.getFirstAsync<{ grade_level: number; name: string }>(
+      'SELECT grade_level, name FROM classes WHERE id = ?',
+      classId
+    );
+    if (cls) {
+      finalGradeLevel = cls.grade_level ?? (cls.name.match(/^(\d{1,2})/)?.[1] ? parseInt(cls.name.match(/^(\d{1,2})/)![1], 10) : undefined);
+    }
+  }
+
   const result = await db.runAsync(
-    'INSERT INTO students (class_id, student_number, first_name, last_name, notes, photo_uri) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO students (class_id, student_number, first_name, last_name, notes, photo_uri, grade_level) VALUES (?, ?, ?, ?, ?, ?, ?)',
     classId,
     studentNumber.trim(),
     firstName.trim(),
     lastName.trim(),
     notes?.trim() || '',
-    photoUri || null
+    photoUri || null,
+    finalGradeLevel ?? null
   );
   return result.lastInsertRowId;
 };
@@ -195,6 +213,7 @@ export interface StudentImportItem {
   lastName: string;
   notes?: string;
   className?: string;
+  gradeLevel?: number;
 }
 
 export const bulkCreateStudents = async (
@@ -205,19 +224,27 @@ export const bulkCreateStudents = async (
   let added = 0;
   let skipped = 0;
 
+  const cls = await db.getFirstAsync<{ grade_level: number; name: string }>(
+    'SELECT grade_level, name FROM classes WHERE id = ?',
+    classId
+  );
+  const defaultGrade = cls?.grade_level ?? (cls?.name.match(/^(\d{1,2})/)?.[1] ? parseInt(cls.name.match(/^(\d{1,2})/)![1], 10) : undefined);
+
   await db.withTransactionAsync(async () => {
     for (const s of students) {
       if (!s.firstName && !s.studentNumber) {
         skipped++;
         continue;
       }
+      const studentGrade = s.gradeLevel ?? defaultGrade ?? null;
       await db.runAsync(
-        'INSERT INTO students (class_id, student_number, first_name, last_name, notes) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO students (class_id, student_number, first_name, last_name, notes, grade_level) VALUES (?, ?, ?, ?, ?, ?)',
         classId,
         (s.studentNumber || '').trim(),
         (s.firstName || '').trim(),
         (s.lastName || '').trim(),
-        (s.notes || '').trim()
+        (s.notes || '').trim(),
+        studentGrade
       );
       added++;
     }
@@ -242,15 +269,23 @@ export const bulkCreateStudentsMultipleClasses = async (
   await db.withTransactionAsync(async () => {
     for (const group of payloads) {
       let classAdded = 0;
+      const cls = await db.getFirstAsync<{ grade_level: number; name: string }>(
+        'SELECT grade_level, name FROM classes WHERE id = ?',
+        group.classId
+      );
+      const defaultGrade = cls?.grade_level ?? (cls?.name.match(/^(\d{1,2})/)?.[1] ? parseInt(cls.name.match(/^(\d{1,2})/)![1], 10) : undefined);
+
       for (const s of group.students) {
         if (!s.firstName && !s.studentNumber) continue;
+        const studentGrade = s.gradeLevel ?? defaultGrade ?? null;
         await db.runAsync(
-          'INSERT INTO students (class_id, student_number, first_name, last_name, notes) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO students (class_id, student_number, first_name, last_name, notes, grade_level) VALUES (?, ?, ?, ?, ?, ?)',
           group.classId,
           (s.studentNumber || '').trim(),
           (s.firstName || '').trim(),
           (s.lastName || '').trim(),
-          (s.notes || '').trim()
+          (s.notes || '').trim(),
+          studentGrade
         );
         classAdded++;
         totalAdded++;
