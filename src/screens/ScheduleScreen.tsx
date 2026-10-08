@@ -26,6 +26,7 @@ import {
   getCustomDaysWithOverrides,
   saveDaySlotTime,
   loadOfficialWeeklySchedule,
+  checkOfficialSchedulePrerequisites,
   clearEntireSchedule,
   getSchedulePhotoUri,
   setSchedulePhotoUri,
@@ -165,37 +166,82 @@ export const ScheduleScreen: React.FC = () => {
     }
   };
 
-  const handleLoadOfficialSchedule = () => {
-    Alert.alert(
-      'Okul Programını Otomatik Yükle',
-      'Kamil Miras Anadolu Lisesi resmi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
-        '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
-        '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
-        '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
-        '⚠️ Kural: Önceden tanımladığınız özel ders saatleriniz (başlangıç/bitiş zamanları) KORUNUR, sadece 27 ders saatinin şube ve ders kodları atanır.\n\n' +
-        'Programı yüklemek istiyor musunuz?',
-      [
-        { text: 'Vazgeç', style: 'cancel' },
-        {
-          text: 'Evet, Programı Yükle',
-          onPress: async () => {
-            try {
-              const res = await loadOfficialWeeklySchedule();
-              await loadData();
-              Alert.alert(
-                'Başarıyla Yüklendi 🎉',
-                `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
-                  `• Dersler: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
-                  `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
-                  `Ders saatleriniz korunmuştur.`
-              );
-            } catch (err: any) {
-              Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
-            }
+  const handleLoadOfficialSchedule = async () => {
+    try {
+      const check = await checkOfficialSchedulePrerequisites();
+
+      if (!check.isValid) {
+        let alertMessage =
+          'Ders programını resimden yükleyebilmek için programda yer alan ders kısa isimleri ve şubelerin sistemde tanımlı olması gerekmektedir:\n\n';
+
+        if (check.missingCourseCodes.length > 0) {
+          alertMessage += '❌ Sistemde Tanımlı Olmayan Ders Kısa İsimleri:\n';
+          check.missingCourseCodes.forEach((c) => {
+            alertMessage += `• ${c.code} (${c.defaultName})\n`;
+          });
+          alertMessage +=
+            '👉 Lütfen "Programı Düzenle > Dersler" menüsünden bu dersleri ve kısa adlarını sisteme ekleyiniz.\n\n';
+        }
+
+        if (check.missingClasses.length > 0) {
+          alertMessage += '❌ Sistemde Kayıtlı Olmayan Şubeler:\n';
+          check.missingClasses.forEach((cls) => {
+            alertMessage += `• ${cls}\n`;
+          });
+          alertMessage += '👉 Lütfen "Şubeler" bölümünden bu şubeleri sisteme ekleyiniz.\n';
+        }
+
+        const buttons: any[] = [{ text: 'Tamam', style: 'cancel' }];
+        if (check.missingCourseCodes.length > 0) {
+          buttons.push({
+            text: 'Dersleri Ekle',
+            onPress: () => navigation.navigate('ScheduleManage', { initialTab: 'courses' }),
+          });
+        }
+        if (check.missingClasses.length > 0) {
+          buttons.push({
+            text: 'Şubeleri Ekle',
+            onPress: () => navigation.navigate('Main', { screen: 'ClassesTab' }),
+          });
+        }
+
+        Alert.alert('⚠️ Eksik Tanımlama Uyarısı', alertMessage.trim(), buttons);
+        return;
+      }
+
+      Alert.alert(
+        'Resimdeki Programı Otomatik Yükle',
+        'Kamil Miras Anadolu Lisesi resmi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
+          '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
+          '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
+          '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
+          '⚠️ Kural: Önceden tanımladığınız özel ders saatleriniz (başlangıç/bitiş zamanları) KORUNUR, sadece 27 ders saatinin şube ve ders kodları atanır.\n\n' +
+          'Programı yüklemek istiyor musunuz?',
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'Evet, Programı Yükle',
+            onPress: async () => {
+              try {
+                const res = await loadOfficialWeeklySchedule();
+                await loadData();
+                Alert.alert(
+                  'Başarıyla Yüklendi 🎉',
+                  `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
+                    `• Dersler: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
+                    `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
+                    `Ders saatleriniz korunmuştur.`
+                );
+              } catch (err: any) {
+                Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
+              }
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('Hata', err?.message || 'Ön kontroller yapılırken bir sorun oluştu.');
+    }
   };
 
   const handleClearEntireSchedule = () => {
@@ -722,13 +768,13 @@ export const ScheduleScreen: React.FC = () => {
                 </View>
                 <View style={styles.photoOptionTextWrap}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={styles.photoOptionTitle}>Hazır Okul Programını Yükle</Text>
+                    <Text style={styles.photoOptionTitle}>Resimdeki Okul Programını Yükle</Text>
                     <View style={styles.autoLoadBadge}>
                       <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
                     </View>
                   </View>
                   <Text style={styles.photoOptionDesc}>
-                    Kamil Miras AL Seçmeli Fizik (24 saat) ve HDTE2 (3 saat) dağılımını aktarır.
+                    Fotoğraftaki Kamil Miras AL haftalık ders dağılımını (S.FZK ve HDTE2) programa aktarır.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />

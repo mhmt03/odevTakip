@@ -481,96 +481,128 @@ export interface LoadScheduleResult {
   message: string;
 }
 
+export interface SchedulePrerequisitesCheck {
+  isValid: boolean;
+  missingCourseCodes: Array<{ code: string; defaultName: string }>;
+  missingClasses: string[];
+  matchedCourses: { [code: string]: number };
+  matchedClasses: { [norm: string]: number };
+  ensuredClassNames: string[];
+}
+
+/**
+ * Resimdeki resmi haftalık ders programının yüklenebilmesi için
+ * ders kısa isimlerinin (S.FZK, HDTE2) ve şube isimlerinin (11-A, 11-B, 11-C, 12-C, 12-D, 12-E)
+ * sistemde tanımlı olup olmadığını denetler.
+ */
+export const checkOfficialSchedulePrerequisites = async (): Promise<SchedulePrerequisitesCheck> => {
+  const db = await getDB();
+
+  // 1. DERSLERİ KONTROL ET (Kısa isimler: S.FZK, HDTE2)
+  const allCourses = await db.getAllAsync<{ id: number; name: string; code?: string }>(
+    'SELECT id, name, code FROM courses'
+  );
+
+  const normalizeCode = (s?: string) => (s || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+  const requiredCourses = [
+    { code: 'S.FZK', norm: 'SFZK', defaultName: 'Seçmeli Fizik' },
+    { code: 'HDTE2', norm: 'HDTE2', defaultName: 'Hedef Temelli Destek Eğitimi 2' },
+  ];
+
+  const missingCourseCodes: Array<{ code: string; defaultName: string }> = [];
+  const matchedCourses: { [code: string]: number } = {};
+
+  for (const req of requiredCourses) {
+    const match = allCourses.find((c) => {
+      const cCode = (c.code || '').trim();
+      if (!cCode) return false;
+      const cUpper = cCode.toUpperCase();
+      const cNorm = normalizeCode(cCode);
+      return cUpper === req.code || cNorm === req.norm;
+    });
+
+    if (match) {
+      matchedCourses[req.code] = match.id;
+    } else {
+      missingCourseCodes.push({ code: req.code, defaultName: req.defaultName });
+    }
+  }
+
+  // 2. ŞUBELERİ KONTROL ET (11-A, 11-B, 11-C, 12-C, 12-D, 12-E)
+  const normalizeClass = (s: string) => (s || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const existingClasses = await db.getAllAsync<{ id: number; name: string }>(
+    'SELECT id, name FROM classes'
+  );
+
+  const requiredClasses = [
+    { defaultName: '11-A', norm: '11A' },
+    { defaultName: '11-B', norm: '11B' },
+    { defaultName: '11-C', norm: '11C' },
+    { defaultName: '12-C', norm: '12C' },
+    { defaultName: '12-D', norm: '12D' },
+    { defaultName: '12-E', norm: '12E' },
+  ];
+
+  const missingClasses: string[] = [];
+  const matchedClasses: { [norm: string]: number } = {};
+  const ensuredClassNames: string[] = [];
+
+  for (const req of requiredClasses) {
+    const match = existingClasses.find((c) => normalizeClass(c.name) === req.norm);
+    if (match) {
+      matchedClasses[req.norm] = match.id;
+      ensuredClassNames.push(match.name);
+    } else {
+      missingClasses.push(req.defaultName);
+    }
+  }
+
+  const isValid = missingCourseCodes.length === 0 && missingClasses.length === 0;
+
+  return {
+    isValid,
+    missingCourseCodes,
+    missingClasses,
+    matchedCourses,
+    matchedClasses,
+    ensuredClassNames,
+  };
+};
+
 /**
  * Kamil Miras Anadolu Lisesi (Mehmet Gündöner) resmi haftalık ders programını (27 Saat)
- * otomatik olarak veritabanına yükler.
+ * veritabanına yükler.
  * 
- * ÖNEMLİ KURAL: Kullanıcının tanımladığı veya değiştirdiği ders saatleri (başlangıç/bitiş zamanları)
- * kesinlikle silinmez veya ezilmez. Sadece slot numaralarına (1..8) göre ders atamaları yapılır.
+ * ÖNEMLİ KURAL:
+ * 1. Ders kısa isimleri veya şubeler eksikse yükleme yapmaz, hata fırlatır.
+ * 2. Kullanıcının tanımladığı veya değiştirdiği ders saatleri (başlangıç/bitiş zamanları)
+ *    kesinlikle silinmez veya ezilmez. Sadece slot numaralarına (1..8) göre ders atamaları yapılır.
  */
 export const loadOfficialWeeklySchedule = async (): Promise<LoadScheduleResult> => {
   const db = await getDB();
 
-  // 1. DERSLERİ HAZIRLA: S.FZK ve HDTE2
-  let courseIdFzk: number;
-  const existingFzkByCode = await db.getFirstAsync<{ id: number; name: string }>(
-    "SELECT id, name FROM courses WHERE UPPER(TRIM(code)) = 'S.FZK'"
-  );
-  if (existingFzkByCode) {
-    courseIdFzk = existingFzkByCode.id;
-  } else {
-    const existingFzkByName = await db.getFirstAsync<{ id: number; name: string }>(
-      "SELECT id, name FROM courses WHERE UPPER(name) LIKE '%FİZİK%' OR UPPER(name) LIKE '%FIZIK%'"
-    );
-    if (existingFzkByName) {
-      await db.runAsync("UPDATE courses SET code = 'S.FZK' WHERE id = ?", existingFzkByName.id);
-      courseIdFzk = existingFzkByName.id;
-    } else {
-      const res = await db.runAsync(
-        "INSERT INTO courses (name, code, color) VALUES (?, ?, ?)",
-        'Seçmeli Fizik',
-        'S.FZK',
-        '#4F46E5'
+  // 1. ÖN KOŞUL KONTROLÜ
+  const check = await checkOfficialSchedulePrerequisites();
+  if (!check.isValid) {
+    const errList: string[] = [];
+    if (check.missingCourseCodes.length > 0) {
+      errList.push(
+        `Eksik ders kısa isimleri: ${check.missingCourseCodes.map((c) => c.code).join(', ')}`
       );
-      courseIdFzk = res.lastInsertRowId;
     }
+    if (check.missingClasses.length > 0) {
+      errList.push(
+        `Sistemde kayıtlı olmayan şubeler: ${check.missingClasses.join(', ')}`
+      );
+    }
+    throw new Error(errList.join('\n'));
   }
 
-  let courseIdHdte: number;
-  const existingHdteByCode = await db.getFirstAsync<{ id: number; name: string }>(
-    "SELECT id, name FROM courses WHERE UPPER(TRIM(code)) = 'HDTE2'"
-  );
-  if (existingHdteByCode) {
-    courseIdHdte = existingHdteByCode.id;
-  } else {
-    const existingHdteByName = await db.getFirstAsync<{ id: number; name: string }>(
-      "SELECT id, name FROM courses WHERE UPPER(name) LIKE '%DESTEK%' OR UPPER(name) LIKE '%HDTE%'"
-    );
-    if (existingHdteByName) {
-      await db.runAsync("UPDATE courses SET code = 'HDTE2' WHERE id = ?", existingHdteByName.id);
-      courseIdHdte = existingHdteByName.id;
-    } else {
-      const res = await db.runAsync(
-        "INSERT INTO courses (name, code, color) VALUES (?, ?, ?)",
-        'Hedef Temelli Destek Eğitimi 2',
-        'HDTE2',
-        '#0EA5E9'
-      );
-      courseIdHdte = res.lastInsertRowId;
-    }
-  }
-
-  // 2. ŞUBELERİ HAZIRLA: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E
-  const targetClasses = [
-    { norm: '11A', defaultName: '11-A' },
-    { norm: '11B', defaultName: '11-B' },
-    { norm: '11C', defaultName: '11-C' },
-    { norm: '12C', defaultName: '12-C' },
-    { norm: '12D', defaultName: '12-D' },
-    { norm: '12E', defaultName: '12-E' },
-  ];
-
-  const existingClasses = await db.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM classes');
-  const normalize = (s: string) => s.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-
-  const classMap: Record<string, number> = {};
-  const ensuredClassNames: string[] = [];
-
-  for (const target of targetClasses) {
-    const match = existingClasses.find((c) => normalize(c.name) === target.norm);
-    if (match) {
-      classMap[target.norm] = match.id;
-      ensuredClassNames.push(match.name);
-    } else {
-      const res = await db.runAsync(
-        'INSERT INTO classes (name, description) VALUES (?, ?)',
-        target.defaultName,
-        'Kamil Miras AL'
-      );
-      classMap[target.norm] = res.lastInsertRowId;
-      ensuredClassNames.push(target.defaultName);
-    }
-  }
+  const courseIdFzk = check.matchedCourses['S.FZK'];
+  const courseIdHdte = check.matchedCourses['HDTE2'];
+  const classMap = check.matchedClasses;
+  const ensuredClassNames = check.ensuredClassNames;
 
   // 3. DERS SAATLERİ: 1..8 (KULLANICININ ÖZEL SAATLERİ KORUNUR)
   const existingSlots = await db.getAllAsync<{ id: number; slot_number: number }>(
