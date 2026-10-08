@@ -37,7 +37,6 @@ import {
   resetDefaultQuickNotes,
   QuickNoteItem,
 } from '../database/operations/noteOperations';
-import { clearEntireSchedule } from '../database/operations/scheduleOperations';
 import {
   School,
   getSchools,
@@ -232,37 +231,6 @@ export const OperationsScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleClearSchedulePrompt = () => {
-    Alert.alert(
-      'Haftalık Ders Programını Sıfırla',
-      'Haftalık ders programındaki tüm gün ve saatlere ait şube ve ders eşleştirmeleri tamamen silinecektir.\n\nBu işlemi onaylıyor musunuz?',
-      [
-        { text: 'Vazgeç', style: 'cancel' },
-        {
-          text: 'Evet, Programı Sil',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              setLoadingMessage('Haftalık ders programı temizleniyor...');
-              await clearEntireSchedule();
-              await loadData();
-              Alert.alert('Başarılı', 'Haftalık ders programı başarıyla sıfırlandı.');
-            } catch (e: any) {
-              Alert.alert('Hata', e?.message || 'Program silinirken bir hata oluştu.');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleNavigateToSchedule = () => {
-    navigation.navigate('ScheduleTab');
   };
 
   // --- QUICK NOTES HANDLERS ---
@@ -505,20 +473,6 @@ export const OperationsScreen: React.FC = () => {
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.backupBtn, { backgroundColor: Colors.primary }]}
-              onPress={handleNavigateToSchedule}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.actionIconCircle, { backgroundColor: '#312E81' }]}>
-                <Ionicons name="calendar-outline" size={20} color="#FFFFFF" />
-              </View>
-              <View style={styles.actionBtnTextWrap}>
-                <Text style={styles.actionBtnTitle}>Haftalık Ders Programı Yükle & Düzenle</Text>
-                <Text style={styles.actionBtnSub}>Ders saatleri, şube ve haftalık plan yönetimi</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
               style={[styles.backupBtn, { backgroundColor: '#0284C7' }]}
               onPress={() => navigation.navigate('Agenda')}
               activeOpacity={0.8}
@@ -529,20 +483,6 @@ export const OperationsScreen: React.FC = () => {
               <View style={styles.actionBtnTextWrap}>
                 <Text style={styles.actionBtnTitle}>Ajanda & Hatırlatıcılar</Text>
                 <Text style={styles.actionBtnSub}>Günün görevleri, alarmlar ve yapılacaklar listesi</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.clearScheduleBtn}
-              onPress={handleClearSchedulePrompt}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.actionIconCircle, { backgroundColor: '#B45309' }]}>
-                <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
-              </View>
-              <View style={styles.actionBtnTextWrap}>
-                <Text style={styles.actionBtnTitle}>Haftalık Ders Programını Sıfırla</Text>
-                <Text style={styles.actionBtnSub}>Tüm günlerdeki şube & ders programını temizler</Text>
               </View>
             </TouchableOpacity>
           </View>

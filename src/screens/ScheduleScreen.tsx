@@ -25,6 +25,7 @@ import {
   getSlotsForDay,
   getCustomDaysWithOverrides,
   saveDaySlotTime,
+  loadOfficialWeeklySchedule,
   clearEntireSchedule,
   getSchedulePhotoUri,
   setSchedulePhotoUri,
@@ -162,6 +163,39 @@ export const ScheduleScreen: React.FC = () => {
     } catch (e) {
       Alert.alert('Hata', 'Excel programı oluşturulamadı.');
     }
+  };
+
+  const handleLoadOfficialSchedule = () => {
+    Alert.alert(
+      'Okul Programını Otomatik Yükle',
+      'Kamil Miras Anadolu Lisesi resmi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
+        '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
+        '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
+        '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
+        '⚠️ Kural: Önceden tanımladığınız özel ders saatleriniz (başlangıç/bitiş zamanları) KORUNUR, sadece 27 ders saatinin şube ve ders kodları atanır.\n\n' +
+        'Programı yüklemek istiyor musunuz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Evet, Programı Yükle',
+          onPress: async () => {
+            try {
+              const res = await loadOfficialWeeklySchedule();
+              await loadData();
+              Alert.alert(
+                'Başarıyla Yüklendi 🎉',
+                `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
+                  `• Dersler: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
+                  `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
+                  `Ders saatleriniz korunmuştur.`
+              );
+            } catch (err: any) {
+              Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleClearEntireSchedule = () => {
@@ -624,9 +658,9 @@ export const ScheduleScreen: React.FC = () => {
 
             <View style={styles.photoModalHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.photoModalTitle}>Ders Programını Fotoğraftan Yükle</Text>
+                <Text style={styles.photoModalTitle}>Ders Programı Yükleme & Yönetim</Text>
                 <Text style={styles.photoModalSub}>
-                  Kağıt veya ekran fotoğrafından ders programınızı kaydedin ve aktarın
+                  Fotoğraftan kaydedin, hazır okul programını aktarın veya düzenleyin
                 </Text>
               </View>
               <TouchableOpacity
@@ -674,9 +708,54 @@ export const ScheduleScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
 
-              
+              {/* Option 3: Hazır Okul Programını Yükle (27 Saat) */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => {
+                  setPhotoMenuVisible(false);
+                  setTimeout(() => handleLoadOfficialSchedule(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                  <Ionicons name="cloud-download" size={24} color="#16A34A" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.photoOptionTitle}>Hazır Okul Programını Yükle</Text>
+                    <View style={styles.autoLoadBadge}>
+                      <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.photoOptionDesc}>
+                    Kamil Miras AL Seçmeli Fizik (24 saat) ve HDTE2 (3 saat) dağılımını aktarır.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
 
-              {/* Option 4: Eğer Kayıtlı Fotoğraf Varsa */}
+              {/* Option 4: Ders Programını Düzenle & Saatleri Yönet */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => {
+                  setPhotoMenuVisible(false);
+                  navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay });
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: Colors.primaryLight }]}>
+                  <Ionicons name="create-outline" size={24} color={Colors.primary} />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <Text style={styles.photoOptionTitle}>Ders Programını Düzenle & Saatleri Yönet</Text>
+                  <Text style={styles.photoOptionDesc}>
+                    Şubeler, ders saatleri ve haftalık ders programını manuel olarak düzenleyin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 5: Eğer Kayıtlı Fotoğraf Varsa */}
               {schedulePhotoUri ? (
                 <TouchableOpacity
                   style={[styles.photoOptionCard, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}
@@ -698,6 +777,27 @@ export const ScheduleScreen: React.FC = () => {
                   <Ionicons name="chevron-forward" size={18} color="#059669" />
                 </TouchableOpacity>
               ) : null}
+
+              {/* Option 6: Ders Programını Sıfırla */}
+              <TouchableOpacity
+                style={[styles.photoOptionCard, { borderColor: '#FECACA' }]}
+                onPress={() => {
+                  setPhotoMenuVisible(false);
+                  setTimeout(() => handleClearEntireSchedule(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="trash-outline" size={24} color={Colors.danger} />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <Text style={[styles.photoOptionTitle, { color: Colors.danger }]}>Haftalık Ders Programını Sıfırla</Text>
+                  <Text style={styles.photoOptionDesc}>
+                    Tüm günlerdeki şube ve ders atamalarını temizler.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
             </View>
           </View>
         </TouchableOpacity>
