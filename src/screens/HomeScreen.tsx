@@ -51,10 +51,13 @@ import {
   formatDateToTR,
   getCurrentTimeString,
   getTodayDateString,
+  getDateForDayOfWeek,
+  formatDateShortTR,
 } from '../utils/dateUtils';
 import { YearlyPlanItem, ScheduleItem, AgendaItem } from '../types';
 import {
   getTodayAgendaItems,
+  getAgendaItemsByDate,
   getTodayAlertItems,
   toggleAgendaItemCompleted,
   getPendingAgendaCountToday,
@@ -223,17 +226,18 @@ export const HomeScreen: React.FC = () => {
   });
 
   // --- AGENDA & REMINDERS STATE ---
-  const [todayAgendaItems, setTodayAgendaItems] = useState<AgendaItem[]>([]);
+  const [selectedDayAgendaItems, setSelectedDayAgendaItems] = useState<AgendaItem[]>([]);
   const [todayAlertItems, setTodayAlertItems] = useState<AgendaItem[]>([]);
   const [pendingAgendaCount, setPendingAgendaCount] = useState<number>(0);
 
-  const loadAgendaData = async () => {
+  const loadAgendaData = async (targetDate?: string) => {
     try {
-      const todayItems = await getTodayAgendaItems();
-      setTodayAgendaItems(todayItems);
-      const alerts = await getTodayAlertItems();
+      const dateToLoad = targetDate || getDateForDayOfWeek(selectedDay);
+      const items = await getAgendaItemsByDate(dateToLoad, activeSchool?.id);
+      setSelectedDayAgendaItems(items);
+      const alerts = await getTodayAlertItems(activeSchool?.id);
       setTodayAlertItems(alerts);
-      const pendingCount = await getPendingAgendaCountToday();
+      const pendingCount = await getPendingAgendaCountToday(activeSchool?.id);
       setPendingAgendaCount(pendingCount);
     } catch (e) {
       console.warn('Error loading agenda data in HomeScreen:', e);
@@ -381,6 +385,8 @@ export const HomeScreen: React.FC = () => {
 
   useEffect(() => {
     loadDaySchedule(selectedDay);
+    const dateStr = getDateForDayOfWeek(selectedDay);
+    loadAgendaData(dateStr);
   }, [selectedDay]);
 
   const handlePrevDay = () => {
@@ -933,6 +939,9 @@ export const HomeScreen: React.FC = () => {
 
   const isViewingToday = selectedDay === todayIndex;
   const selectedDayObj = DAYS_OF_WEEK.find((d) => d.id === selectedDay);
+  const selectedDateString = useMemo(() => {
+    return getDateForDayOfWeek(selectedDay);
+  }, [selectedDay]);
   const todayName = DAYS_OF_WEEK.find((d) => d.id === todayIndex)?.name || 'Bugün';
 
   const insets = useSafeAreaInsets();
@@ -1717,7 +1726,7 @@ export const HomeScreen: React.FC = () => {
         })
       )}
 
-      {/* 📅 BUGÜNÜN AJANDASI & YAPILACAKLAR BÖLÜMÜ */}
+      {/* 📅 AJANDA & YAPILACAKLAR BÖLÜMÜ (SEÇİLİ GÜNE ENTEGRE) */}
       <View style={styles.todayAgendaSection}>
         <View style={styles.todayAgendaHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
@@ -1730,20 +1739,29 @@ export const HomeScreen: React.FC = () => {
               <Ionicons name="calendar" size={17} color={activeSchool?.color || Colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.todayAgendaTitle}>Bugünün Ajandası</Text>
-                {todayAgendaItems.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <Text style={styles.todayAgendaTitle}>
+                  {isViewingToday ? 'Bugünün Ajandası' : `${selectedDayObj?.name} Günü Ajandası`}
+                </Text>
+                <View style={styles.agendaDateBadge}>
+                  <Text style={styles.agendaDateBadgeText}>
+                    {formatDateShortTR(selectedDateString)}
+                  </Text>
+                </View>
+                {selectedDayAgendaItems.length > 0 && (
                   <View style={[styles.agendaCountBadge, { backgroundColor: `${activeSchool?.color || Colors.primary}18` }]}>
                     <Text style={[styles.agendaCountBadgeText, { color: activeSchool?.color || Colors.primary }]}>
-                      {todayAgendaItems.filter((i) => i.is_completed === 1).length}/{todayAgendaItems.length}
+                      {selectedDayAgendaItems.filter((i) => i.is_completed === 1).length}/{selectedDayAgendaItems.length}
                     </Text>
                   </View>
                 )}
               </View>
               <Text style={styles.todayAgendaSubtitle}>
-                {todayAgendaItems.length > 0
-                  ? `${todayAgendaItems.filter((i) => i.is_completed === 0).length} bekleyen işiniz var`
-                  : 'Günün planları, görevleri ve hatırlatıcıları'}
+                {selectedDayAgendaItems.length > 0
+                  ? `${selectedDayAgendaItems.filter((i) => i.is_completed === 0).length} bekleyen iş / randevu`
+                  : isViewingToday
+                  ? 'Günün planları, görevleri ve hatırlatıcıları'
+                  : `${selectedDayObj?.name} için kayıtlı randevu veya görev bulunmuyor`}
               </Text>
             </View>
           </View>
@@ -1751,7 +1769,7 @@ export const HomeScreen: React.FC = () => {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <TouchableOpacity
               style={[styles.agendaQuickAddBtn, { borderColor: activeSchool?.color || Colors.primary }]}
-              onPress={() => navigation.navigate('Agenda')}
+              onPress={() => navigation.navigate('Agenda', { initialDate: selectedDateString })}
               activeOpacity={0.7}
             >
               <Ionicons name="add" size={14} color={activeSchool?.color || Colors.primary} />
@@ -1760,7 +1778,7 @@ export const HomeScreen: React.FC = () => {
 
             <TouchableOpacity
               style={styles.agendaViewAllBtn}
-              onPress={() => navigation.navigate('Agenda')}
+              onPress={() => navigation.navigate('Agenda', { initialDate: selectedDateString })}
               activeOpacity={0.7}
             >
               <Text style={styles.agendaViewAllText}>Tümü</Text>
@@ -1769,26 +1787,32 @@ export const HomeScreen: React.FC = () => {
           </View>
         </View>
 
-        {todayAgendaItems.length === 0 ? (
+        {selectedDayAgendaItems.length === 0 ? (
           <TouchableOpacity
             style={styles.agendaEmptyBanner}
-            onPress={() => navigation.navigate('Agenda')}
+            onPress={() => navigation.navigate('Agenda', { initialDate: selectedDateString })}
             activeOpacity={0.7}
           >
             <View style={styles.agendaEmptyIconWrap}>
               <Ionicons name="sparkles" size={18} color={activeSchool?.color || Colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.agendaEmptyTitle}>Bugün için kayıtlı işiniz yok</Text>
+              <Text style={styles.agendaEmptyTitle}>
+                {isViewingToday
+                  ? 'Bugün için kayıtlı işiniz yok'
+                  : `${selectedDayObj?.name} (${formatDateShortTR(selectedDateString)}) için kayıtlı randevu veya iş yok`}
+              </Text>
               <Text style={styles.agendaEmptyText}>
-                Günün görevlerini veya hatırlatıcılarını eklemek için dokunun.
+                {isViewingToday
+                  ? 'Günün görevlerini veya hatırlatıcılarını eklemek için dokunun.'
+                  : `${selectedDayObj?.name} gününe görev veya randevu eklemek için dokunun.`}
               </Text>
             </View>
             <Ionicons name="add-circle" size={20} color={activeSchool?.color || Colors.primary} />
           </TouchableOpacity>
         ) : (
           <View style={styles.agendaItemsList}>
-            {todayAgendaItems.map((item) => {
+            {selectedDayAgendaItems.map((item) => {
               const isCompleted = item.is_completed === 1;
               return (
                 <View
@@ -1806,7 +1830,7 @@ export const HomeScreen: React.FC = () => {
                     ]}
                     onPress={async () => {
                       await toggleAgendaItemCompleted(item.id, !isCompleted);
-                      await loadAgendaData();
+                      await loadAgendaData(selectedDateString);
                     }}
                     activeOpacity={0.7}
                   >
@@ -1815,7 +1839,7 @@ export const HomeScreen: React.FC = () => {
 
                   <TouchableOpacity
                     style={{ flex: 1 }}
-                    onPress={() => navigation.navigate('Agenda')}
+                    onPress={() => navigation.navigate('Agenda', { initialDate: selectedDateString })}
                     activeOpacity={0.7}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -4430,5 +4454,18 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: Colors.textSecondary,
     fontWeight: '600',
+  },
+  agendaDateBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  agendaDateBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
   },
 });

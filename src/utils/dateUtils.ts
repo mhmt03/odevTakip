@@ -91,3 +91,43 @@ export const isTimeBetween = (current: string, start: string, end: string): bool
     return false;
   }
 };
+
+/**
+ * Verilen gün indeksine (1..7: Pazartesi..Pazar) ait tarihi YYYY-MM-DD olarak hesaplar.
+ * Referans haftanın (varsayılan: bu hafta) ilgili gününü bulur.
+ */
+export const getDateForDayOfWeek = (targetDayIndex: number, referenceDate: Date = new Date()): string => {
+  const currentDayIndex = getDayOfWeekIndex(referenceDate);
+  const diffDays = targetDayIndex - currentDayIndex;
+  const targetDate = new Date(referenceDate);
+  targetDate.setDate(targetDate.getDate() + diffDays);
+
+  const year = targetDate.getFullYear();
+  const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+  const day = String(targetDate.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+/**
+ * YYYY-MM-DD formatındaki tarihi '8 Ekim' gibi kısa ve samimi bir Türkçe formatta döner.
+ */
+export const formatDateShortTR = (dateString?: string): string => {
+  if (!dateString) return '';
+  try {
+    const parts = dateString.split('T')[0].split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const months = [
+        'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+        'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+      ];
+      return `${day} ${months[month]}`;
+    }
+    return dateString;
+  } catch {
+    return dateString || '';
+  }
+};
+

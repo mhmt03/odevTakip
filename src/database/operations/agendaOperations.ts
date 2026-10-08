@@ -85,6 +85,10 @@ export const getTodayAgendaItems = async (schoolId?: number | null): Promise<Age
   return await getAgendaItems({ date: today, schoolId });
 };
 
+export const getAgendaItemsByDate = async (date: string, schoolId?: number | null): Promise<AgendaItem[]> => {
+  return await getAgendaItems({ date, schoolId });
+};
+
 /**
  * Ana ekranda gösterilecek dikkat çekici tüm gün / acil uyarılar:
  * Bugün tarihli, tamamlanmamış ve (is_all_day_alert = 1 VEYA priority = 'acil') olan kayıtlar.

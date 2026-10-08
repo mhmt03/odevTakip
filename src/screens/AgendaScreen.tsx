@@ -13,7 +13,7 @@ import {
   RefreshControl,
   FlatList,
 } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Colors, Shadows } from '../theme/colors';
@@ -74,6 +74,7 @@ type FilterType = 'all' | 'today' | 'upcoming' | 'urgent' | 'completed';
 
 export const AgendaScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const { themeColor, bgTint } = useSchoolTheme();
 
   const [items, setItems] = useState<AgendaItem[]>([]);
@@ -83,7 +84,14 @@ export const AgendaScreen: React.FC = () => {
 
   // Interactive Date Strip State
   const todayStr = getTodayDateString();
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const initialDateParam = route.params?.initialDate;
+  const [selectedDate, setSelectedDate] = useState<string>(initialDateParam || todayStr);
+
+  useEffect(() => {
+    if (route.params?.initialDate) {
+      setSelectedDate(route.params.initialDate);
+    }
+  }, [route.params?.initialDate]);
   const [currentMonthAnchor, setCurrentMonthAnchor] = useState<Date>(new Date());
   const [daysWithItemsMap, setDaysWithItemsMap] = useState<Record<string, { count: number; has_alert: boolean }>>({});
 
