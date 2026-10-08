@@ -636,8 +636,8 @@ export const ScheduleManageScreen: React.FC = () => {
               icon="people-outline"
               title="Kayıtlı Şube Yok"
               description="Henüz hiçbir şube eklenmemiş. 'Yeni Şube' butonuna tıklayarak şube ekleyebilirsiniz."
-              buttonTitle="Yeni Şube Ekle"
-              onButtonPress={handleOpenAddClass}
+              actionTitle="Yeni Şube Ekle"
+              onAction={handleOpenAddClass}
             />
           ) : (
             <FlatList
@@ -1307,8 +1307,8 @@ export const ScheduleManageScreen: React.FC = () => {
       {/* CLASS ADD / EDIT MODAL */}
       <Modal visible={classModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
               <Text style={styles.modalTitle}>
                 {editingClass ? 'Şubeyi Düzenle' : 'Yeni Şube Ekle'}
               </Text>
