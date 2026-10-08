@@ -201,7 +201,7 @@ export const ScheduleScreen: React.FC = () => {
         if (check.missingClasses.length > 0) {
           buttons.push({
             text: 'Şubeleri Ekle',
-            onPress: () => navigation.navigate('Main', { screen: 'ClassesTab' }),
+            onPress: () => navigation.navigate('ScheduleManage', { initialTab: 'classes' }),
           });
         }
 

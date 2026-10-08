@@ -39,7 +39,13 @@ import {
   updateGradeLevel,
   deleteGradeLevel,
 } from '../database/operations/gradeLevelOperations';
-import { CourseName, LessonSlot, DaySlotInfo, GradeLevelItem } from '../types';
+import {
+  getClasses,
+  createClass,
+  updateClass,
+  deleteClass,
+} from '../database/operations/classOperations';
+import { CourseName, LessonSlot, DaySlotInfo, GradeLevelItem, ClassItem } from '../types';
 import { EmptyState } from '../components/EmptyState';
 import { DAYS_OF_WEEK } from '../utils/dateUtils';
 
@@ -51,9 +57,16 @@ export const ScheduleManageScreen: React.FC = () => {
   const initialTab = route.params?.initialTab || 'courses';
   const initialDay = route.params?.initialDay !== undefined ? route.params.initialDay : 0;
 
-  const [activeTab, setActiveTab] = useState<'courses' | 'slots' | 'grades'>(
-    initialTab === 'grades' ? 'grades' : initialTab === 'slots' ? 'slots' : 'courses'
+  const [activeTab, setActiveTab] = useState<'courses' | 'classes' | 'slots' | 'grades'>(
+    initialTab === 'grades' ? 'grades' : initialTab === 'slots' ? 'slots' : initialTab === 'classes' ? 'classes' : 'courses'
   );
+
+  // Classes state
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [classModal, setClassModal] = useState(false);
+  const [editingClass, setEditingClass] = useState<ClassItem | null>(null);
+  const [classNameInput, setClassNameInput] = useState('');
+  const [classDescInput, setClassDescInput] = useState('');
 
   // Grade levels state
   const [gradeLevels, setGradeLevels] = useState<GradeLevelItem[]>([]);
@@ -95,16 +108,18 @@ export const ScheduleManageScreen: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [crs, slt, cDays, gLevels] = await Promise.all([
+      const [crs, slt, cDays, gLevels, clsList] = await Promise.all([
         getCourses(),
         getLessonSlots(),
         getCustomDaysWithOverrides(),
         getGradeLevels(),
+        getClasses(),
       ]);
       setCourses(crs);
       setSlots(slt);
       setCustomDays(cDays);
       setGradeLevels(gLevels);
+      setClasses(clsList);
 
       if (slotDayTab > 0) {
         const dSlt = await getSlotsForDay(slotDayTab);
@@ -235,6 +250,63 @@ export const ScheduleManageScreen: React.FC = () => {
         },
       },
     ]);
+  };
+
+  // Class handlers
+  const handleOpenAddClass = () => {
+    setEditingClass(null);
+    setClassNameInput('');
+    setClassDescInput('');
+    setClassModal(true);
+  };
+
+  const handleOpenEditClass = (c: ClassItem) => {
+    setEditingClass(c);
+    setClassNameInput(c.name);
+    setClassDescInput(c.description || '');
+    setClassModal(true);
+  };
+
+  const handleSaveClass = async () => {
+    if (!classNameInput.trim()) {
+      Alert.alert('Uyarı', 'Lütfen şube adı giriniz (Örn: 11-A, 12-C).');
+      return;
+    }
+    try {
+      if (editingClass) {
+        await updateClass(editingClass.id, classNameInput, classDescInput);
+      } else {
+        await createClass(classNameInput, classDescInput);
+      }
+      setClassModal(false);
+      const updated = await getClasses();
+      setClasses(updated);
+    } catch (e: any) {
+      Alert.alert('Hata', 'Şube kaydedilemedi. Bu isimde bir şube zaten mevcut olabilir.');
+    }
+  };
+
+  const handleDeleteClass = (c: ClassItem) => {
+    Alert.alert(
+      'Şubeyi Sil',
+      `"${c.name}" şubesini ve bu şubeye ait tüm öğrenci ve ilişkili kayıtları silmek istediğinize emin misiniz?`,
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteClass(c.id);
+              const updated = await getClasses();
+              setClasses(updated);
+            } catch (e) {
+              Alert.alert('Hata', 'Şube silinemedi.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Standard Slot handlers
@@ -439,7 +511,7 @@ export const ScheduleManageScreen: React.FC = () => {
     <View style={styles.container}>
       <Header
         title="Tanımlamalar"
-        subtitle="Ders, Saat ve Sınıf Düzeyleri"
+        subtitle="Ders, Şube, Saat ve Sınıf Düzeyleri"
         showBack
         onBack={() => navigation.goBack()}
       />
@@ -452,11 +524,25 @@ export const ScheduleManageScreen: React.FC = () => {
         >
           <Ionicons
             name="book-outline"
-            size={16}
+            size={15}
             color={activeTab === 'courses' ? Colors.primary : Colors.textSecondary}
           />
           <Text style={[styles.tabBtnText, activeTab === 'courses' && styles.tabBtnTextActive]}>
             Dersler ({courses.length})
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'classes' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('classes')}
+        >
+          <Ionicons
+            name="people-outline"
+            size={15}
+            color={activeTab === 'classes' ? Colors.primary : Colors.textSecondary}
+          />
+          <Text style={[styles.tabBtnText, activeTab === 'classes' && styles.tabBtnTextActive]}>
+            Şubeler ({classes.length})
           </Text>
         </TouchableOpacity>
 
@@ -466,7 +552,7 @@ export const ScheduleManageScreen: React.FC = () => {
         >
           <Ionicons
             name="time-outline"
-            size={16}
+            size={15}
             color={activeTab === 'slots' ? Colors.primary : Colors.textSecondary}
           />
           <Text style={[styles.tabBtnText, activeTab === 'slots' && styles.tabBtnTextActive]}>
@@ -480,7 +566,7 @@ export const ScheduleManageScreen: React.FC = () => {
         >
           <Ionicons
             name="school-outline"
-            size={16}
+            size={15}
             color={activeTab === 'grades' ? Colors.primary : Colors.textSecondary}
           />
           <Text style={[styles.tabBtnText, activeTab === 'grades' && styles.tabBtnTextActive]}>
@@ -531,6 +617,72 @@ export const ScheduleManageScreen: React.FC = () => {
               </Card>
             )}
           />
+        </View>
+      )}
+
+      {/* CLASSES TAB */}
+      {activeTab === 'classes' && (
+        <View style={styles.tabContent}>
+          <View style={styles.contentHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Kayıtlı Şubeler ({classes.length})</Text>
+              <Text style={styles.sectionSub}>Ders programı ve sınıf takibi için şube tanımları</Text>
+            </View>
+            <Button title="Yeni Şube" icon="add" size="sm" onPress={handleOpenAddClass} />
+          </View>
+
+          {classes.length === 0 ? (
+            <EmptyState
+              icon="people-outline"
+              title="Kayıtlı Şube Yok"
+              description="Henüz hiçbir şube eklenmemiş. 'Yeni Şube' butonuna tıklayarak şube ekleyebilirsiniz."
+              buttonTitle="Yeni Şube Ekle"
+              onButtonPress={handleOpenAddClass}
+            />
+          ) : (
+            <FlatList
+              data={classes}
+              keyExtractor={(item) => item.id.toString()}
+              contentContainerStyle={styles.listPadding}
+              renderItem={({ item }) => (
+                <Card style={styles.itemCard}>
+                  <View style={styles.itemRow}>
+                    <View style={[styles.codeBadge, { backgroundColor: '#E0E7FF' }]}>
+                      <Text style={[styles.codeText, { color: '#3730A3' }]}>{item.name}</Text>
+                    </View>
+                    <View style={styles.itemInfo}>
+                      <Text style={styles.itemName}>{item.name} Şubesi</Text>
+                      {item.description ? (
+                        <Text style={styles.itemSub}>{item.description}</Text>
+                      ) : null}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Ionicons name="person-outline" size={12} color={Colors.textMuted} />
+                        <Text style={{ fontSize: 11, color: Colors.textMuted, fontWeight: '500' }}>
+                          {item.student_count || 0} Öğrenci Kayıtlı
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.itemActions}>
+                      <TouchableOpacity
+                        style={styles.iconBtn}
+                        onPress={() => handleOpenEditClass(item)}
+                        accessibilityLabel="Düzenle"
+                      >
+                        <Ionicons name="pencil" size={16} color={Colors.textSecondary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.iconBtn}
+                        onPress={() => handleDeleteClass(item)}
+                        accessibilityLabel="Sil"
+                      >
+                        <Ionicons name="trash-outline" size={16} color={Colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </Card>
+              )}
+            />
+          )}
         </View>
       )}
 
@@ -1151,6 +1303,51 @@ export const ScheduleManageScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* CLASS ADD / EDIT MODAL */}
+      <Modal visible={classModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {editingClass ? 'Şubeyi Düzenle' : 'Yeni Şube Ekle'}
+              </Text>
+              <TouchableOpacity onPress={() => setClassModal(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Input
+              label="Şube Adı *"
+              placeholder="Örn: 11-A, 12-C veya 9-B"
+              value={classNameInput}
+              onChangeText={setClassNameInput}
+              autoCapitalize="characters"
+            />
+
+            <Input
+              label="Açıklama (İsteğe Bağlı)"
+              placeholder="Örn: Kamil Miras AL, Sayısal Grubu vb."
+              value={classDescInput}
+              onChangeText={setClassDescInput}
+            />
+
+            <View style={styles.modalActions}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setClassModal(false)}
+              />
+              <Button
+                title={editingClass ? 'Güncelle' : 'Kaydet'}
+                style={{ flex: 1 }}
+                onPress={handleSaveClass}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1206,7 +1403,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 12,
-    gap: 6,
+    gap: 4,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
@@ -1214,7 +1411,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.primary,
   },
   tabBtnText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: Colors.textSecondary,
   },

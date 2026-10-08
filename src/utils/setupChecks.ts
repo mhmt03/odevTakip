@@ -15,7 +15,7 @@ export const ensureGradesAndClassesDefined = async (actionName: string): Promise
       missing.push('• Sınıf düzeyi (Program > Tanımlamalar > Düzeyler)');
     }
     if (classes.length === 0) {
-      missing.push('• Şube (Şubeler sekmesi)');
+      missing.push('• Şube (Program > Tanımlamalar > Şubeler veya Şubeler sekmesi)');
     }
     if (missing.length === 0) return true;
 
