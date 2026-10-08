@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Alert,
   Image,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,7 +36,7 @@ import { getClasses } from '../database/operations/classOperations';
 import { exportScheduleToExcel } from '../utils/excelService';
 import { DAYS_OF_WEEK, getDayOfWeekIndex, isTimeBetween, getCurrentTimeString } from '../utils/dateUtils';
 import { DaySlotInfo, ScheduleItem, CourseName, ClassItem } from '../types';
-import { pickSchedulePhoto } from '../utils/photoService';
+import { pickSchedulePhoto, cropAndRotateSchedulePhoto } from '../utils/photoService';
 
 import { getActiveSchool, School } from '../database/operations/schoolOperations';
 
@@ -59,6 +60,18 @@ export const ScheduleScreen: React.FC = () => {
   const [photoViewModalVisible, setPhotoViewModalVisible] = useState(false);
   const [schedulePhotoUri, setSchedulePhotoUriState] = useState<string | null>(null);
   const [loadingPhoto, setLoadingPhoto] = useState(false);
+
+  // Zoom & Crop State
+  const [zoomScale, setZoomScale] = useState<number>(1);
+  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [cropModalVisible, setCropModalVisible] = useState(false);
+  const [cropMargins, setCropMargins] = useState<{ top: number; bottom: number; left: number; right: number }>({
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  });
+  const [isProcessingCrop, setIsProcessingCrop] = useState(false);
 
   // Slot Edit Modal
   const [modalVisible, setModalVisible] = useState(false);
@@ -100,6 +113,22 @@ export const ScheduleScreen: React.FC = () => {
       loadData();
     }, [selectedDay])
   );
+
+  useEffect(() => {
+    if (schedulePhotoUri) {
+      Image.getSize(
+        schedulePhotoUri,
+        (width, height) => {
+          setImageDimensions({ width, height });
+        },
+        () => {
+          setImageDimensions(null);
+        }
+      );
+    } else {
+      setImageDimensions(null);
+    }
+  }, [schedulePhotoUri]);
 
   const handleOpenSlotModal = (slot: DaySlotInfo) => {
     setActiveSlot(slot);
@@ -267,11 +296,12 @@ export const ScheduleScreen: React.FC = () => {
     );
   };
 
-  const handlePickSchedulePhoto = async (source: 'camera' | 'gallery') => {
+  const handlePickSchedulePhoto = async (source: 'camera' | 'gallery', withCrop: boolean = true) => {
     try {
       setPhotoMenuVisible(false);
+      setCropModalVisible(false);
       setLoadingPhoto(true);
-      const targetPath = await pickSchedulePhoto(source);
+      const targetPath = await pickSchedulePhoto(source, { allowsEditing: withCrop });
       if (!targetPath) {
         setLoadingPhoto(false);
         return;
@@ -279,15 +309,90 @@ export const ScheduleScreen: React.FC = () => {
 
       await setSchedulePhotoUri(targetPath);
       setSchedulePhotoUriState(targetPath);
+      setZoomScale(1);
+      setCropMargins({ top: 0, bottom: 0, left: 0, right: 0 });
       setLoadingPhoto(false);
 
       Alert.alert(
         'Ders Programı Fotoğrafı Kaydedildi 📸',
-        'Fotoğraf başarıyla yüklendi. Dilediğiniz an "Fotoğrafı İncele" butonuyla ders programı fotoğrafınızı görüntüleyebilirsiniz.'
+        'Fotoğraf başarıyla yüklendi. "Fotoğrafı İncele" butonuyla ders programınızı dilediğiniz gibi büyütebilir, inceleyebilir veya kırpabilirsiniz.'
       );
     } catch (err: any) {
       setLoadingPhoto(false);
       Alert.alert('Hata', err?.message || 'Fotoğraf yüklenemedi.');
+    }
+  };
+
+  const handleRotateSchedulePhoto = async (deg: number = 90) => {
+    if (!schedulePhotoUri) return;
+    try {
+      setLoadingPhoto(true);
+      const newUri = await cropAndRotateSchedulePhoto(schedulePhotoUri, { rotate: deg });
+      await setSchedulePhotoUri(newUri);
+      setSchedulePhotoUriState(newUri);
+      setZoomScale(1);
+      setLoadingPhoto(false);
+    } catch (err: any) {
+      setLoadingPhoto(false);
+      Alert.alert('Hata', 'Fotoğraf döndürülemedi: ' + (err?.message || err));
+    }
+  };
+
+  const handleApplyCrop = async () => {
+    if (!schedulePhotoUri) return;
+    try {
+      setIsProcessingCrop(true);
+      let imgWidth = imageDimensions?.width;
+      let imgHeight = imageDimensions?.height;
+
+      if (!imgWidth || !imgHeight) {
+        await new Promise<void>((resolve) => {
+          Image.getSize(
+            schedulePhotoUri,
+            (w, h) => {
+              imgWidth = w;
+              imgHeight = h;
+              resolve();
+            },
+            () => resolve()
+          );
+        });
+      }
+
+      const w = imgWidth || 1000;
+      const h = imgHeight || 1000;
+
+      const originX = Math.round((cropMargins.left / 100) * w);
+      const originY = Math.round((cropMargins.top / 100) * h);
+      const cropW = Math.round(((100 - cropMargins.left - cropMargins.right) / 100) * w);
+      const cropH = Math.round(((100 - cropMargins.top - cropMargins.bottom) / 100) * h);
+
+      if (cropW < 20 || cropH < 20) {
+        setIsProcessingCrop(false);
+        Alert.alert('Uyarı', 'Kırpma alanı çok dar. Lütfen sınırları genişletin.');
+        return;
+      }
+
+      const newUri = await cropAndRotateSchedulePhoto(schedulePhotoUri, {
+        crop: {
+          originX,
+          originY,
+          width: cropW,
+          height: cropH,
+        },
+      });
+
+      await setSchedulePhotoUri(newUri);
+      setSchedulePhotoUriState(newUri);
+      setCropMargins({ top: 0, bottom: 0, left: 0, right: 0 });
+      setZoomScale(1);
+      setIsProcessingCrop(false);
+      setCropModalVisible(false);
+
+      Alert.alert('Başarılı ✂️', 'Ders programı fotoğrafı başarıyla kırpıldı ve kaydedildi. Tablo sınırları netleştirildi.');
+    } catch (err: any) {
+      setIsProcessingCrop(false);
+      Alert.alert('Hata', 'Kırpma işlemi gerçekleştirilemedi: ' + (err?.message || err));
     }
   };
 
@@ -305,6 +410,8 @@ export const ScheduleScreen: React.FC = () => {
             setSchedulePhotoUriState(null);
             setPhotoViewModalVisible(false);
             setPhotoMenuVisible(false);
+            setCropModalVisible(false);
+            setZoomScale(1);
           },
         },
       ]
@@ -721,16 +828,16 @@ export const ScheduleScreen: React.FC = () => {
               {/* Option 1: Kameradan Çek */}
               <TouchableOpacity
                 style={styles.photoOptionCard}
-                onPress={() => handlePickSchedulePhoto('camera')}
+                onPress={() => handlePickSchedulePhoto('camera', true)}
                 activeOpacity={0.7}
               >
                 <View style={[styles.photoOptionIconWrap, { backgroundColor: '#FEE2E2' }]}>
                   <Ionicons name="camera" size={24} color="#DC2626" />
                 </View>
                 <View style={styles.photoOptionTextWrap}>
-                  <Text style={styles.photoOptionTitle}>Kameradan Fotoğraf Çek</Text>
+                  <Text style={styles.photoOptionTitle}>Kameradan Fotoğraf Çek & Kırp</Text>
                   <Text style={styles.photoOptionDesc}>
-                    Masadaki veya panodaki ders programı kağıdının fotoğrafını doğrudan çekin.
+                    Masadaki veya panodaki ders programı kağıdının fotoğrafını çekip tablo sınırlarına göre kırpın.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
@@ -739,16 +846,16 @@ export const ScheduleScreen: React.FC = () => {
               {/* Option 2: Galeriden Seç */}
               <TouchableOpacity
                 style={styles.photoOptionCard}
-                onPress={() => handlePickSchedulePhoto('gallery')}
+                onPress={() => handlePickSchedulePhoto('gallery', true)}
                 activeOpacity={0.7}
               >
                 <View style={[styles.photoOptionIconWrap, { backgroundColor: '#EDE9FE' }]}>
                   <Ionicons name="images" size={24} color="#7C3AED" />
                 </View>
                 <View style={styles.photoOptionTextWrap}>
-                  <Text style={styles.photoOptionTitle}>Galeriden Fotoğraf Seç</Text>
+                  <Text style={styles.photoOptionTitle}>Galeriden Fotoğraf Seç & Kırp</Text>
                   <Text style={styles.photoOptionDesc}>
-                    Cihazınızdaki ders programı fotoğrafını veya ekran görüntüsünü seçin.
+                    Cihazınızdaki ders programı fotoğrafını seçin ve kırparak sisteme ekleyin.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
@@ -815,9 +922,9 @@ export const ScheduleScreen: React.FC = () => {
                     <Ionicons name="eye" size={24} color="#059669" />
                   </View>
                   <View style={styles.photoOptionTextWrap}>
-                    <Text style={[styles.photoOptionTitle, { color: '#065F46' }]}>Kayıtlı Fotoğrafı Görüntüle</Text>
+                    <Text style={[styles.photoOptionTitle, { color: '#065F46' }]}>Kayıtlı Fotoğrafı Görüntüle & Büyüt</Text>
                     <Text style={styles.photoOptionDesc}>
-                      Daha önce yüklediğiniz ders programı fotoğrafını tam boyutta açıp inceleyin.
+                      Ders programı fotoğrafını tam ekranda açın, yakınlaştırıp inceleyin veya kırpın.
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color="#059669" />
@@ -849,39 +956,142 @@ export const ScheduleScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* Schedule Photo Viewer Modal */}
+      {/* Schedule Photo Viewer Modal with Zoom & Pan */}
       <Modal
         visible={photoViewModalVisible}
         animationType="fade"
         transparent={true}
-        onRequestClose={() => setPhotoViewModalVisible(false)}
+        onRequestClose={() => {
+          setPhotoViewModalVisible(false);
+          setZoomScale(1);
+        }}
       >
         <View style={styles.viewerModalOverlay}>
+          {/* Header Bar */}
           <View style={styles.viewerModalHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
               <Ionicons name="image-outline" size={22} color="#FFF" />
               <Text style={styles.viewerModalTitle}>Ders Programı Fotoğrafı</Text>
             </View>
+
+            {/* Current Zoom Pill */}
+            <View style={styles.viewerZoomBadge}>
+              <Ionicons name="search" size={13} color="#34D399" />
+              <Text style={styles.viewerZoomBadgeText}>%{Math.round(zoomScale * 100)}</Text>
+            </View>
+
             <TouchableOpacity
-              onPress={() => setPhotoViewModalVisible(false)}
+              onPress={() => {
+                setPhotoViewModalVisible(false);
+                setZoomScale(1);
+              }}
               style={styles.viewerCloseBtn}
             >
               <Ionicons name="close" size={24} color="#FFF" />
             </TouchableOpacity>
           </View>
 
+          {/* Zoom Toolbar */}
+          <View style={styles.viewerZoomBar}>
+            <View style={styles.viewerZoomControlsRow}>
+              {/* Zoom Out Button */}
+              <TouchableOpacity
+                style={[styles.viewerZoomBtn, zoomScale <= 1 && styles.viewerZoomBtnDisabled]}
+                onPress={() => setZoomScale((s) => Math.max(1, Number((s - 0.5).toFixed(1))))}
+                disabled={zoomScale <= 1}
+              >
+                <Ionicons name="remove" size={18} color={zoomScale <= 1 ? '#64748B' : '#FFF'} />
+              </TouchableOpacity>
+
+              {/* Quick Preset Chips */}
+              <View style={styles.viewerPresetPills}>
+                {[1, 1.5, 2, 3].map((preset) => (
+                  <TouchableOpacity
+                    key={preset}
+                    style={[
+                      styles.viewerPresetPill,
+                      Math.abs(zoomScale - preset) < 0.05 && styles.viewerPresetPillActive,
+                    ]}
+                    onPress={() => setZoomScale(preset)}
+                  >
+                    <Text
+                      style={[
+                        styles.viewerPresetPillText,
+                        Math.abs(zoomScale - preset) < 0.05 && styles.viewerPresetPillTextActive,
+                      ]}
+                    >
+                      {preset}x
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Zoom In Button */}
+              <TouchableOpacity
+                style={[styles.viewerZoomBtn, zoomScale >= 4 && styles.viewerZoomBtnDisabled]}
+                onPress={() => setZoomScale((s) => Math.min(4, Number((s + 0.5).toFixed(1))))}
+                disabled={zoomScale >= 4}
+              >
+                <Ionicons name="add" size={18} color={zoomScale >= 4 ? '#64748B' : '#FFF'} />
+              </TouchableOpacity>
+
+              {/* Reset / Fit Screen */}
+              <TouchableOpacity
+                style={styles.viewerResetFitBtn}
+                onPress={() => setZoomScale(1)}
+              >
+                <Ionicons name="scan-outline" size={14} color="#A7F3D0" />
+                <Text style={styles.viewerResetFitText}>Sığdır</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.viewerZoomHint}>
+              💡 Parmağınızla resmi serbestçe kaydırarak inceleyebilirsiniz. Çift dokunarak da büyütebilirsiniz.
+            </Text>
+          </View>
+
+          {/* Interactive Zoomable / Scrollable Image View */}
           {schedulePhotoUri ? (
             <ScrollView
               style={{ flex: 1 }}
-              contentContainerStyle={styles.viewerScrollContent}
-              maximumZoomScale={4}
+              contentContainerStyle={styles.viewerVerticalScrollContent}
+              showsVerticalScrollIndicator={true}
+              maximumZoomScale={5}
               minimumZoomScale={1}
+              bounces={false}
             >
-              <Image
-                source={{ uri: schedulePhotoUri }}
-                style={styles.viewerImage}
-                resizeMode="contain"
-              />
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={true}
+                contentContainerStyle={styles.viewerHorizontalScrollContent}
+                bounces={false}
+              >
+                <TouchableOpacity
+                  activeOpacity={0.95}
+                  onPress={() => {
+                    setZoomScale((prev) => (prev >= 3 ? 1 : Number((prev + 0.5).toFixed(1))));
+                  }}
+                >
+                  <Image
+                    source={{ uri: schedulePhotoUri }}
+                    style={{
+                      width: Math.max(
+                        Dimensions.get('window').width - 16,
+                        (Dimensions.get('window').width - 16) * zoomScale
+                      ),
+                      height: Math.max(
+                        350,
+                        (Dimensions.get('window').width - 16) *
+                          (imageDimensions && imageDimensions.width > 0
+                            ? imageDimensions.height / imageDimensions.width
+                            : 0.72) *
+                          zoomScale
+                      ),
+                    }}
+                    resizeMode="contain"
+                  />
+                </TouchableOpacity>
+              </ScrollView>
             </ScrollView>
           ) : (
             <View style={styles.viewerEmptyWrap}>
@@ -889,7 +1099,27 @@ export const ScheduleScreen: React.FC = () => {
             </View>
           )}
 
+          {/* Viewer Bottom Bar */}
           <View style={styles.viewerBottomBar}>
+            {/* Kırp & Düzenle */}
+            <TouchableOpacity
+              style={styles.viewerCropBtn}
+              onPress={() => setCropModalVisible(true)}
+            >
+              <Ionicons name="crop-outline" size={17} color="#FFF" />
+              <Text style={styles.viewerCropBtnText}>Kırp / Düzenle</Text>
+            </TouchableOpacity>
+
+            {/* 90° Döndür */}
+            <TouchableOpacity
+              style={styles.viewerRotateBtn}
+              onPress={() => handleRotateSchedulePhoto(90)}
+            >
+              <Ionicons name="reload-outline" size={16} color="#FFF" />
+              <Text style={styles.viewerRotateBtnText}>90° Döndür</Text>
+            </TouchableOpacity>
+
+            {/* Değiştir */}
             <TouchableOpacity
               style={styles.viewerChangeBtn}
               onPress={() => {
@@ -897,17 +1127,388 @@ export const ScheduleScreen: React.FC = () => {
                 setTimeout(() => setPhotoMenuVisible(true), 200);
               }}
             >
-              <Ionicons name="camera-reverse-outline" size={18} color="#FFF" />
-              <Text style={styles.viewerChangeBtnText}>Fotoğrafı Değiştir</Text>
+              <Ionicons name="camera-reverse-outline" size={17} color="#FFF" />
+              <Text style={styles.viewerChangeBtnText}>Değiştir</Text>
             </TouchableOpacity>
 
+            {/* Sil */}
             <TouchableOpacity
               style={styles.viewerDeleteBtn}
               onPress={handleRemoveSchedulePhoto}
             >
               <Ionicons name="trash-outline" size={18} color="#DC2626" />
-              <Text style={styles.viewerDeleteBtnText}>Sil</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Schedule Photo Crop & Optimize Modal */}
+      <Modal
+        visible={cropModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setCropModalVisible(false)}
+      >
+        <View style={styles.cropModalOverlay}>
+          <View style={styles.cropModalCard}>
+            {/* Header */}
+            <View style={styles.cropModalHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="crop" size={20} color={Colors.primary} />
+                  <Text style={styles.cropModalTitle}>Ders Programını Kırp & Düzenle</Text>
+                </View>
+                <Text style={styles.cropModalSub}>
+                  Gereksiz kenarlıkları keserek tablo netliğini ve OCR başarısını artırın
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setCropModalVisible(false)}
+                style={styles.cropCloseBtn}
+              >
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.cropModalScroll}>
+              {/* OCR Pro-Tip Banner */}
+              <View style={styles.cropTipBanner}>
+                <Ionicons name="bulb-outline" size={20} color="#047857" />
+                <Text style={styles.cropTipText}>
+                  <Text style={{ fontWeight: '700' }}>OCR ve Netlik İpucu: </Text>
+                  Sadece ders tablosunun yer aldığı alanı bırakıp masa, çerçeve ve boşlukları kırptığınızda hem tablodaki yazılar çok daha netleşir hem de OCR tanıma başarısı zirveye çıkar.
+                </Text>
+              </View>
+
+              {/* Visual Crop Preview Area */}
+              {schedulePhotoUri ? (
+                <View style={styles.cropPreviewContainer}>
+                  <Image
+                    source={{ uri: schedulePhotoUri }}
+                    style={styles.cropPreviewImage}
+                    resizeMode="contain"
+                  />
+                  {/* Shaded Mask Overlays */}
+                  <View style={[styles.cropMaskTop, { height: `${cropMargins.top}%` }]} />
+                  <View style={[styles.cropMaskBottom, { height: `${cropMargins.bottom}%` }]} />
+                  <View
+                    style={[
+                      styles.cropMaskLeft,
+                      {
+                        top: `${cropMargins.top}%`,
+                        bottom: `${cropMargins.bottom}%`,
+                        width: `${cropMargins.left}%`,
+                      },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.cropMaskRight,
+                      {
+                        top: `${cropMargins.top}%`,
+                        bottom: `${cropMargins.bottom}%`,
+                        width: `${cropMargins.right}%`,
+                      },
+                    ]}
+                  />
+                  {/* Active Cropped Bounding Box */}
+                  <View
+                    style={[
+                      styles.cropActiveFrame,
+                      {
+                        top: `${cropMargins.top}%`,
+                        bottom: `${cropMargins.bottom}%`,
+                        left: `${cropMargins.left}%`,
+                        right: `${cropMargins.right}%`,
+                      },
+                    ]}
+                  >
+                    <View style={styles.cropFrameBadge}>
+                      <Text style={styles.cropFrameBadgeText}>
+                        Aktif Tablo Alanı (%{100 - cropMargins.left - cropMargins.right} x %{100 - cropMargins.top - cropMargins.bottom})
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Presets */}
+              <Text style={styles.cropSectionTitle}>Hızlı Kırpma Şablonları</Text>
+              <View style={styles.cropPresetsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.cropPresetChip,
+                    cropMargins.top === 0 &&
+                      cropMargins.bottom === 0 &&
+                      cropMargins.left === 0 &&
+                      cropMargins.right === 0 &&
+                      styles.cropPresetChipActive,
+                  ]}
+                  onPress={() => setCropMargins({ top: 0, bottom: 0, left: 0, right: 0 })}
+                >
+                  <Text
+                    style={[
+                      styles.cropPresetChipText,
+                      cropMargins.top === 0 &&
+                        cropMargins.bottom === 0 &&
+                        cropMargins.left === 0 &&
+                        cropMargins.right === 0 &&
+                        styles.cropPresetChipTextActive,
+                    ]}
+                  >
+                    Orijinal (%100)
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.cropPresetChip,
+                    cropMargins.top === 8 &&
+                      cropMargins.bottom === 8 &&
+                      styles.cropPresetChipActive,
+                  ]}
+                  onPress={() => setCropMargins({ top: 8, bottom: 8, left: 8, right: 8 })}
+                >
+                  <Text
+                    style={[
+                      styles.cropPresetChipText,
+                      cropMargins.top === 8 &&
+                        cropMargins.bottom === 8 &&
+                        styles.cropPresetChipTextActive,
+                    ]}
+                  >
+                    Tabloyu Kırp (%8)
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.cropPresetChip,
+                    cropMargins.top === 14 &&
+                      cropMargins.bottom === 10 &&
+                      styles.cropPresetChipActive,
+                  ]}
+                  onPress={() => setCropMargins({ top: 14, bottom: 10, left: 4, right: 4 })}
+                >
+                  <Text
+                    style={[
+                      styles.cropPresetChipText,
+                      cropMargins.top === 14 &&
+                        cropMargins.bottom === 10 &&
+                        styles.cropPresetChipTextActive,
+                    ]}
+                  >
+                    Başlıkları Kes
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.cropPresetChip,
+                    cropMargins.left === 12 &&
+                      cropMargins.right === 12 &&
+                      styles.cropPresetChipActive,
+                  ]}
+                  onPress={() => setCropMargins({ top: 4, bottom: 4, left: 12, right: 12 })}
+                >
+                  <Text
+                    style={[
+                      styles.cropPresetChipText,
+                      cropMargins.left === 12 &&
+                        cropMargins.right === 12 &&
+                        styles.cropPresetChipTextActive,
+                    ]}
+                  >
+                    Yanları Kırp
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Stepper Fine-tuning */}
+              <Text style={styles.cropSectionTitle}>Hassas Kenar Ayarları (%)</Text>
+              <View style={styles.cropSteppersGrid}>
+                {/* Üst */}
+                <View style={styles.cropStepperCard}>
+                  <Text style={styles.cropStepperLabel}>Üstten Kırp</Text>
+                  <View style={styles.cropStepperControls}>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          top: Math.max(0, m.top - 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="remove" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.cropStepVal}>%{cropMargins.top}</Text>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          top: Math.min(40, m.top + 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="add" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Alttan */}
+                <View style={styles.cropStepperCard}>
+                  <Text style={styles.cropStepperLabel}>Alttan Kırp</Text>
+                  <View style={styles.cropStepperControls}>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          bottom: Math.max(0, m.bottom - 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="remove" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.cropStepVal}>%{cropMargins.bottom}</Text>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          bottom: Math.min(40, m.bottom + 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="add" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Soldan */}
+                <View style={styles.cropStepperCard}>
+                  <Text style={styles.cropStepperLabel}>Soldan Kırp</Text>
+                  <View style={styles.cropStepperControls}>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          left: Math.max(0, m.left - 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="remove" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.cropStepVal}>%{cropMargins.left}</Text>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          left: Math.min(40, m.left + 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="add" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Sağdan */}
+                <View style={styles.cropStepperCard}>
+                  <Text style={styles.cropStepperLabel}>Sağdan Kırp</Text>
+                  <View style={styles.cropStepperControls}>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          right: Math.max(0, m.right - 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="remove" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={styles.cropStepVal}>%{cropMargins.right}</Text>
+                    <TouchableOpacity
+                      style={styles.cropStepBtn}
+                      onPress={() =>
+                        setCropMargins((m) => ({
+                          ...m,
+                          right: Math.min(40, m.right + 2),
+                        }))
+                      }
+                    >
+                      <Ionicons name="add" size={16} color={Colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+
+              {/* Quick Rotation & Native Tool Actions */}
+              <View style={styles.cropExtraActions}>
+                <TouchableOpacity
+                  style={styles.cropRotateBtn}
+                  onPress={() => handleRotateSchedulePhoto(90)}
+                >
+                  <Ionicons name="reload-outline" size={18} color="#4F46E5" />
+                  <Text style={styles.cropRotateBtnText}>90° Sağa Döndür</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.cropNativeToolBtn}
+                  onPress={() => {
+                    Alert.alert(
+                      'Sistem Kırpma Aracı',
+                      'Hangi kaynaktan çekip kırpmak istersiniz?',
+                      [
+                        { text: 'Vazgeç', style: 'cancel' },
+                        {
+                          text: 'Kamera ile Çek & Kırp',
+                          onPress: () => handlePickSchedulePhoto('camera', true),
+                        },
+                        {
+                          text: 'Galeriden Seç & Kırp',
+                          onPress: () => handlePickSchedulePhoto('gallery', true),
+                        },
+                      ]
+                    );
+                  }}
+                >
+                  <Ionicons name="scan-outline" size={18} color="#059669" />
+                  <Text style={styles.cropNativeToolBtnText}>Sistem Kırpma Aracı</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+
+            {/* Bottom Actions */}
+            <View style={styles.cropModalFooter}>
+              <TouchableOpacity
+                style={styles.cropCancelBtn}
+                onPress={() => setCropModalVisible(false)}
+                disabled={isProcessingCrop}
+              >
+                <Text style={styles.cropCancelBtnText}>Vazgeç</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cropSaveBtn}
+                onPress={handleApplyCrop}
+                disabled={isProcessingCrop}
+              >
+                {isProcessingCrop ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={18} color="#FFF" />
+                    <Text style={styles.cropSaveBtnText}>Kırpmayı Kaydet</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1420,26 +2021,120 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 50,
-    paddingBottom: 14,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingBottom: 10,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   viewerModalTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#FFF',
   },
-  viewerCloseBtn: {
-    padding: 4,
+  viewerZoomBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.4)',
+    marginRight: 10,
   },
-  viewerScrollContent: {
+  viewerZoomBadgeText: {
+    color: '#34D399',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  viewerCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  viewerZoomBar: {
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  viewerZoomControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  viewerZoomBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#334155',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerZoomBtnDisabled: {
+    backgroundColor: '#1E293B',
+    opacity: 0.5,
+  },
+  viewerPresetPills: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  viewerPresetPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  viewerPresetPillActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  viewerPresetPillText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  viewerPresetPillTextActive: {
+    color: '#FFF',
+  },
+  viewerResetFitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.3)',
+  },
+  viewerResetFitText: {
+    color: '#A7F3D0',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  viewerZoomHint: {
+    color: '#94A3B8',
+    fontSize: 11,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  viewerVerticalScrollContent: {
     flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 10,
+    paddingVertical: 12,
   },
-  viewerImage: {
-    width: '100%',
-    height: 450,
+  viewerHorizontalScrollContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
   },
   viewerEmptyWrap: {
     flex: 1,
@@ -1448,39 +2143,336 @@ const styles = StyleSheet.create({
   },
   viewerBottomBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    gap: 12,
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    gap: 8,
+  },
+  viewerCropBtn: {
+    flex: 1.2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#059669',
+    paddingVertical: 10,
+    borderRadius: 10,
+    ...Shadows.small,
+  },
+  viewerCropBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  viewerRotateBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  viewerRotateBtnText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   viewerChangeBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: Colors.primary,
+    gap: 5,
+    backgroundColor: '#334155',
     paddingVertical: 10,
     borderRadius: 10,
   },
   viewerChangeBtnText: {
     color: '#FFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   viewerDeleteBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEE2E2',
+  },
+
+  // Crop & Optimize Modal Styles
+  cropModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  cropModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 24,
+    maxHeight: '92%',
+    ...Shadows.large,
+  },
+  cropModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  cropModalTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+  },
+  cropModalSub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  cropCloseBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+  },
+  cropModalScroll: {
+    paddingBottom: 16,
+  },
+  cropTipBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 14,
+  },
+  cropTipText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#065F46',
+  },
+  cropPreviewContainer: {
+    height: 230,
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    overflow: 'hidden',
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  cropPreviewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cropMaskTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+  },
+  cropMaskBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+  },
+  cropMaskLeft: {
+    position: 'absolute',
+    left: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+  },
+  cropMaskRight: {
+    position: 'absolute',
+    right: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+  },
+  cropActiveFrame: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderColor: '#10B981',
+    borderStyle: 'dashed',
+    borderRadius: 4,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    padding: 4,
+  },
+  cropFrameBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.9)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  cropFrameBadgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  cropSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  cropPresetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  cropPresetChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  cropPresetChipActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
+  },
+  cropPresetChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  cropPresetChipTextActive: {
+    color: '#059669',
+    fontWeight: '700',
+  },
+  cropSteppersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  cropStepperCard: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  cropStepperLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  cropStepperControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cropStepBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cropStepVal: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  cropExtraActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 8,
+  },
+  cropRotateBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingVertical: 9,
     borderRadius: 10,
   },
-  viewerDeleteBtnText: {
-    color: '#DC2626',
-    fontSize: 13,
+  cropRotateBtnText: {
+    color: '#4F46E5',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cropNativeToolBtn: {
+    flex: 1.3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  cropNativeToolBtnText: {
+    color: '#15803D',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cropModalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  cropCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cropCancelBtnText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  cropSaveBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#059669',
+    ...Shadows.small,
+  },
+  cropSaveBtnText: {
+    color: '#FFF',
+    fontSize: 14,
     fontWeight: '700',
   },
 });

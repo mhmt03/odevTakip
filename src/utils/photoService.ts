@@ -102,13 +102,17 @@ export const pickSinglePhotoFromSource = async (
   };
 };
 
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+
 /**
- * Pick a full schedule photo using Camera or Gallery (without 1:1 cropping constraint)
+ * Pick a full schedule photo using Camera or Gallery (with optional crop editing)
  */
 export const pickSchedulePhoto = async (
-  source: 'camera' | 'gallery'
+  source: 'camera' | 'gallery',
+  options?: { allowsEditing?: boolean }
 ): Promise<string | null> => {
   let result: ImagePicker.ImagePickerResult;
+  const allowsEditing = options?.allowsEditing ?? true;
 
   if (source === 'camera') {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -117,8 +121,8 @@ export const pickSchedulePhoto = async (
     }
     result = await ImagePicker.launchCameraAsync({
       mediaTypes: ['images'],
-      allowsEditing: false,
-      quality: 0.9,
+      allowsEditing,
+      quality: 0.95,
     });
   } else {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -127,8 +131,8 @@ export const pickSchedulePhoto = async (
     }
     result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: false,
-      quality: 0.9,
+      allowsEditing,
+      quality: 0.95,
     });
   }
 
@@ -143,9 +147,60 @@ export const pickSchedulePhoto = async (
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   }
 
-  const targetPath = `${dir}official_schedule_photo.jpg`;
+  const targetPath = `${dir}official_schedule_photo_${Date.now()}.jpg`;
   await FileSystem.copyAsync({
     from: asset.uri,
+    to: targetPath,
+  });
+
+  return targetPath;
+};
+
+export interface CropArea {
+  originX: number;
+  originY: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Crops and/or rotates a schedule photo using expo-image-manipulator
+ */
+export const cropAndRotateSchedulePhoto = async (
+  imageUri: string,
+  options: {
+    crop?: CropArea;
+    rotate?: number;
+  }
+): Promise<string> => {
+  const actions: any[] = [];
+  if (options.rotate && options.rotate % 360 !== 0) {
+    actions.push({ rotate: options.rotate });
+  }
+  if (options.crop) {
+    const crop = {
+      originX: Math.max(0, Math.round(options.crop.originX)),
+      originY: Math.max(0, Math.round(options.crop.originY)),
+      width: Math.max(10, Math.round(options.crop.width)),
+      height: Math.max(10, Math.round(options.crop.height)),
+    };
+    actions.push({ crop });
+  }
+
+  const result = await manipulateAsync(imageUri, actions, {
+    compress: 0.95,
+    format: SaveFormat.JPEG,
+  });
+
+  const dir = `${FileSystem.documentDirectory}schedule/`;
+  const dirInfo = await FileSystem.getInfoAsync(dir);
+  if (!dirInfo.exists) {
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+  }
+
+  const targetPath = `${dir}official_schedule_photo_${Date.now()}.jpg`;
+  await FileSystem.copyAsync({
+    from: result.uri,
     to: targetPath,
   });
 
