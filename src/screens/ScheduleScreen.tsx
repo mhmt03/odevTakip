@@ -26,8 +26,6 @@ import {
   getSlotsForDay,
   getCustomDaysWithOverrides,
   saveDaySlotTime,
-  loadOfficialWeeklySchedule,
-  checkOfficialSchedulePrerequisites,
   clearEntireSchedule,
   getSchedulePhotoUri,
   setSchedulePhotoUri,
@@ -214,82 +212,30 @@ export const ScheduleScreen: React.FC = () => {
     }
   };
 
-  const handleLoadOfficialSchedule = async () => {
-    try {
-      const check = await checkOfficialSchedulePrerequisites();
-
-      if (!check.isValid) {
-        let alertMessage =
-          'Ders programını resimden yükleyebilmek için programda yer alan ders kısa isimleri ve şubelerin sistemde tanımlı olması gerekmektedir:\n\n';
-
-        if (check.missingCourseCodes.length > 0) {
-          alertMessage += '❌ Sistemde Tanımlı Olmayan Ders Kısa İsimleri:\n';
-          check.missingCourseCodes.forEach((c) => {
-            alertMessage += `• ${c.code} (${c.defaultName})\n`;
-          });
-          alertMessage +=
-            '👉 Lütfen "Programı Düzenle > Dersler" menüsünden bu dersleri ve kısa adlarını sisteme ekleyiniz.\n\n';
-        }
-
-        if (check.missingClasses.length > 0) {
-          alertMessage += '❌ Sistemde Kayıtlı Olmayan Şubeler:\n';
-          check.missingClasses.forEach((cls) => {
-            alertMessage += `• ${cls}\n`;
-          });
-          alertMessage += '👉 Lütfen "Şubeler" bölümünden bu şubeleri sisteme ekleyiniz.\n';
-        }
-
-        const buttons: any[] = [{ text: 'Tamam', style: 'cancel' }];
-        if (check.missingCourseCodes.length > 0) {
-          buttons.push({
-            text: 'Dersleri Ekle',
-            onPress: () => navigation.navigate('ScheduleManage', { initialTab: 'courses' }),
-          });
-        }
-        if (check.missingClasses.length > 0) {
-          buttons.push({
-            text: 'Şubeleri Ekle',
-            onPress: () => navigation.navigate('ScheduleManage', { initialTab: 'classes' }),
-          });
-        }
-
-        Alert.alert('⚠️ Eksik Tanımlama Uyarısı', alertMessage.trim(), buttons);
-        return;
-      }
-
+  const handleScanUploadedPhoto = () => {
+    setPhotoMenuVisible(false);
+    if (!schedulePhotoUri) {
       Alert.alert(
-        'Resimdeki Programı Otomatik Yükle',
-        'Kamil Miras Anadolu Lisesi resmi haftalık ders programı (27 Saat) yüklenecektir:\n\n' +
-          '• S.FZK (Seçmeli Fizik) - 24 Saat\n' +
-          '• HDTE2 (Hedef Temelli Destek Eğitimi 2) - 3 Saat\n' +
-          '• Şubeler: 11-A, 11-B, 11-C, 12-C, 12-D, 12-E\n\n' +
-          '⚠️ Kural: Önceden tanımladığınız özel ders saatleriniz (başlangıç/bitiş zamanları) KORUNUR, sadece 27 ders saatinin şube ve ders kodları atanır.\n\n' +
-          'Programı yüklemek istiyor musunuz?',
+        'Sisteme Yüklü Resim Bulunamadı 📸',
+        'Sisteme henüz bir haftalık ders programı fotoğrafı yüklenmemiş.\n\nÖnce "Galeriden Fotoğraf Seç" veya "Kameradan Fotoğraf Çek" seçeneğiyle ders programınızın fotoğrafını sisteme ekleyiniz.',
         [
           { text: 'Vazgeç', style: 'cancel' },
           {
-            text: 'Evet, Programı Yükle',
-            onPress: async () => {
-              try {
-                const res = await loadOfficialWeeklySchedule();
-                await loadData();
-                Alert.alert(
-                  'Başarıyla Yüklendi 🎉',
-                  `Toplam ${res.totalLessonsLoaded} saatlik resmi okul ders programı yüklendi!\n\n` +
-                    `• Dersler: ${res.coursesEnsured.map((c) => `${c.code} (${c.name})`).join(', ')}\n` +
-                    `• Şubeler: ${res.classesEnsured.join(', ')}\n\n` +
-                    `Ders saatleriniz korunmuştur.`
-                );
-              } catch (err: any) {
-                Alert.alert('Hata', 'Program yüklenirken bir sorun oluştu: ' + (err?.message || err));
-              }
-            },
+            text: 'Kameradan Çek',
+            onPress: () => handlePickSchedulePhoto('camera', true, true),
+          },
+          {
+            text: 'Galeriden Seç',
+            onPress: () => handlePickSchedulePhoto('gallery', true, true),
           },
         ]
       );
-    } catch (err: any) {
-      Alert.alert('Hata', err?.message || 'Ön kontroller yapılırken bir sorun oluştu.');
+      return;
     }
+
+    setTimeout(() => {
+      handleRunAiAnalysis(schedulePhotoUri);
+    }, 200);
   };
 
   const handleClearEntireSchedule = () => {
@@ -980,10 +926,10 @@ export const ScheduleScreen: React.FC = () => {
             </View>
 
             <View style={styles.photoModalOptions}>
-              {/* Option 0: Yapay Zeka ile Tara & Yükle (Primary) */}
+              {/* Option 1: Sisteme Yüklü Olan Resmi Tara ve Yükle */}
               <TouchableOpacity
                 style={[styles.photoOptionCard, { borderColor: '#C4B5FD', backgroundColor: '#F5F3FF' }]}
-                onPress={() => handleRunAiAnalysis()}
+                onPress={handleScanUploadedPhoto}
                 activeOpacity={0.7}
               >
                 <View style={[styles.photoOptionIconWrap, { backgroundColor: '#EDE9FE' }]}>
@@ -992,22 +938,22 @@ export const ScheduleScreen: React.FC = () => {
                 <View style={styles.photoOptionTextWrap}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text style={[styles.photoOptionTitle, { color: '#6D28D9' }]}>
-                      Yapay Zeka ile Programı Tara & Yükle
+                      Sisteme Yüklü Olan Resmi Tara ve Yükle
                     </Text>
                     <View style={[styles.autoLoadBadge, { backgroundColor: '#DDD6FE' }]}>
-                      <Text style={[styles.autoLoadBadgeText, { color: '#6D28D9' }]}>Gemini AI</Text>
+                      <Text style={[styles.autoLoadBadgeText, { color: '#6D28D9' }]}>Yapay Zeka</Text>
                     </View>
                   </View>
                   <Text style={styles.photoOptionDesc}>
                     {schedulePhotoUri
-                      ? 'Kayıtlı fotoğrafı yapay zeka ile analiz eder, günleri, saatleri ve şubeleri otomatik programa aktarır.'
-                      : 'Yeni fotoğraf seçerek veya çekerek haftalık ders dağılımını otomatik sisteme aktarır.'}
+                      ? 'Sistemde kayıtlı olan haftalık ders programı fotoğrafını yapay zeka ile analiz eder ve dersleri otomatik programa aktarır.'
+                      : 'Henüz fotoğraf yüklenmemiş. Seçtiğinizde kameradan veya galeriden fotoğraf ekleyip otomatik taratabilirsiniz.'}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#7C3AED" />
               </TouchableOpacity>
 
-              {/* Option 1: Kameradan Çek */}
+              {/* Option 2: Kameradan Çek */}
               <TouchableOpacity
                 style={styles.photoOptionCard}
                 onPress={() => handlePickSchedulePhoto('camera', true)}
@@ -1025,7 +971,7 @@ export const ScheduleScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
 
-              {/* Option 2: Galeriden Seç */}
+              {/* Option 3: Galeriden Seç */}
               <TouchableOpacity
                 style={styles.photoOptionCard}
                 onPress={() => handlePickSchedulePhoto('gallery', true)}
@@ -1043,7 +989,7 @@ export const ScheduleScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
 
-              {/* Option 3: Eğer Kayıtlı Fotoğraf Varsa */}
+              {/* Option 4: Eğer Kayıtlı Fotoğraf Varsa */}
               {schedulePhotoUri ? (
                 <TouchableOpacity
                   style={[styles.photoOptionCard, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}
@@ -1066,7 +1012,7 @@ export const ScheduleScreen: React.FC = () => {
                 </TouchableOpacity>
               ) : null}
 
-              {/* Option 4: Yapay Zeka (Gemini API) Ayarları */}
+              {/* Option 5: Yapay Zeka (Gemini API) Ayarları */}
               <TouchableOpacity
                 style={styles.photoOptionCard}
                 onPress={handleOpenApiKeySettings}
@@ -1084,32 +1030,6 @@ export const ScheduleScreen: React.FC = () => {
                   </View>
                   <Text style={styles.photoOptionDesc}>
                     Otomatik görsel tarama için Google Gemini API anahtarınızı görüntüleyin veya değiştirin.
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-              </TouchableOpacity>
-
-              {/* Option 5: Sabit Şablon Yükle (Kamil Miras AL 27 Saat) */}
-              <TouchableOpacity
-                style={styles.photoOptionCard}
-                onPress={() => {
-                  setPhotoMenuVisible(false);
-                  setTimeout(() => handleLoadOfficialSchedule(), 200);
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#DCFCE7' }]}>
-                  <Ionicons name="cloud-download" size={24} color="#16A34A" />
-                </View>
-                <View style={styles.photoOptionTextWrap}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={styles.photoOptionTitle}>Kamil Miras AL Sabit Şablonu Yükle</Text>
-                    <View style={styles.autoLoadBadge}>
-                      <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.photoOptionDesc}>
-                    Önceden tanımlanmış sabit haftalık ders dağılımını (S.FZK ve HDTE2) programa aktarır.
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
