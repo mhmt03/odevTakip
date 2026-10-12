@@ -8,6 +8,11 @@ import { getClasses } from '../database/operations/classOperations';
 import { Student, Assignment, AssignmentStudent, StudentNote, LessonSlot, ScheduleItem, ClassItem, QuizItem, StudentGradeRow } from '../types';
 import { createQuiz, bulkSaveGradebookFromExcel } from '../database/operations/gradeOperations';
 import { formatDateToTR, DAYS_OF_WEEK } from './dateUtils';
+import {
+  detectStudentExcelSchemaWithGemini,
+  normalizeClassName,
+  getGeminiApiKey,
+} from './geminiScheduleService';
 
 // Helper to save and share excel workbook across Web and Native
 export const saveAndShareWorkbook = async (workbook: XLSX.WorkBook, fileName: string): Promise<boolean> => {
@@ -400,6 +405,314 @@ export const validateBulkStudentImport = (
     missingClassStudents,
     totalStudents: students.length,
     validCount,
+  };
+};
+
+export interface AllSchoolImportResult {
+  fileName: string;
+  totalStudentsFound: number;
+  matchedPayloads: ClassBulkImportPayload[];
+  matchedCount: number;
+  skippedOtherClasses: { className: string; count: number }[];
+  skippedCount: number;
+  missingClassCount: number;
+  aiUsed: boolean;
+}
+
+/**
+ * Tüm okul öğrenci listesi Excel dosyasını (e-Okul veya idare listesi) seçer,
+ * yapay zeka (Gemini) ile kolon yapısını çözer ve SADECE öğretmenin sisteminde
+ * kayıtlı olan aktif şubelerin öğrencilerini filtreleyerek ayıklar.
+ */
+export const pickAndParseAllSchoolStudentsWithAi = async (
+  existingClasses: ClassItem[]
+): Promise<AllSchoolImportResult | null> => {
+  let result;
+  try {
+    result = await DocumentPicker.getDocumentAsync({
+      type: [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'text/csv',
+        'application/octet-stream',
+        '*/*',
+      ],
+      copyToCacheDirectory: true,
+    });
+  } catch (err: any) {
+    throw new Error('Dosya seçici açılamadı: ' + (err?.message || err));
+  }
+
+  if (result.canceled || !result.assets || result.assets.length === 0) {
+    return null;
+  }
+
+  const asset = result.assets[0];
+  const workbook = await readWorkbookFromAsset(asset);
+
+  if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+    throw new Error('Excel dosyasında herhangi bir çalışma sayfası bulunamadı.');
+  }
+
+  // Çalışma sayfasını belirle
+  let sheetName = workbook.SheetNames[0];
+  const preferredSheet = workbook.SheetNames.find(
+    (name) =>
+      name.toLowerCase().includes('öğrenci') ||
+      name.toLowerCase().includes('ogrenci') ||
+      name.toLowerCase().includes('liste') ||
+      name.toLowerCase().includes('okul') ||
+      name.toLowerCase().includes('student')
+  );
+  if (preferredSheet) {
+    sheetName = preferredSheet;
+  }
+
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error('Excel sayfa içeriği okunamadı.');
+  }
+
+  const rawRows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+  if (!rawRows || rawRows.length === 0) {
+    throw new Error('Excel çalışma sayfası boş görünüyor.');
+  }
+
+  // 1. Yapay Zeka ile Sütun Yapısını Çözmeyi Dene
+  let aiUsed = false;
+  let schema = null;
+  const apiKey = await getGeminiApiKey();
+
+  if (apiKey) {
+    try {
+      schema = await detectStudentExcelSchemaWithGemini(rawRows.slice(0, 15), apiKey);
+      if (schema) {
+        aiUsed = true;
+      }
+    } catch (aiErr) {
+      console.warn('Gemini Excel şema analizi yapılamadı, yerel algoritmaya geçiliyor:', aiErr);
+    }
+  }
+
+  // 2. Eğer AI şemayı çözemediyse yerel başlık arama algoritması
+  let headerIndex = schema?.headerRowIndex ?? -1;
+  let colGrade = schema?.gradeLevelCol ?? -1;
+  let colClass = schema?.classNameCol ?? -1;
+  let colNumber = schema?.studentNumberCol ?? -1;
+  let colFirstName = schema?.firstNameCol ?? -1;
+  let colLastName = schema?.lastNameCol ?? -1;
+  let colFullName = schema?.fullNameCol ?? -1;
+  let colNotes = schema?.notesCol ?? -1;
+
+  if (!schema) {
+    for (let r = 0; r < Math.min(rawRows.length, 12); r++) {
+      const row = rawRows[r];
+      if (!Array.isArray(row)) continue;
+
+      for (let c = 0; c < row.length; c++) {
+        const cell = String(row[c] || '').trim().toLowerCase();
+        if (
+          cell === 'sınıf düzeyi' ||
+          cell === 'sinif duzeyi' ||
+          cell === 'düzey' ||
+          cell === 'kademe'
+        ) {
+          colGrade = c;
+        } else if (
+          cell === 'şube' ||
+          cell === 'sube' ||
+          cell.includes('şube adı') ||
+          cell.includes('sube adi') ||
+          cell === 'sınıf/şube' ||
+          cell === 'sinif/sube'
+        ) {
+          colClass = c;
+        } else if (cell === 'sınıf' || cell === 'sinif') {
+          if (colClass === -1) colClass = c;
+          else if (colGrade === -1) colGrade = c;
+        } else if (
+          cell.includes('numara') ||
+          cell.includes('öğrenci no') ||
+          cell.includes('ogrenci no') ||
+          cell === 'no' ||
+          cell === 'okul no'
+        ) {
+          colNumber = c;
+        } else if (
+          cell === 'ad' ||
+          cell === 'öğrenci adı' ||
+          cell === 'adı' ||
+          cell === 'adi' ||
+          cell === 'isim'
+        ) {
+          colFirstName = c;
+        } else if (
+          cell === 'soyad' ||
+          cell === 'öğrenci soyadı' ||
+          cell === 'soyadı' ||
+          cell === 'soyadi'
+        ) {
+          colLastName = c;
+        } else if (
+          cell === 'ad soyad' ||
+          cell === 'adı soyadı' ||
+          cell === 'ad ve soyad' ||
+          cell === 'öğrenci ad soyad'
+        ) {
+          colFullName = c;
+        } else if (cell.includes('not') || cell.includes('açıklama')) {
+          colNotes = c;
+        }
+      }
+
+      if (colNumber !== -1 || colFirstName !== -1 || colFullName !== -1 || colClass !== -1) {
+        headerIndex = r;
+        break;
+      }
+    }
+  }
+
+  // 3. Öğrencileri Oku
+  const allParsedStudents: StudentImportItem[] = [];
+  const startRow = headerIndex !== -1 ? headerIndex + 1 : 0;
+
+  for (let r = startRow; r < rawRows.length; r++) {
+    const row = rawRows[r];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    let gradeLevel: number | undefined = undefined;
+    let className = '';
+    let num = '';
+    let fName = '';
+    let lName = '';
+    let notes = '';
+
+    if (colGrade !== -1 && row[colGrade] !== undefined) {
+      const gRaw = String(row[colGrade]).trim();
+      const m = gRaw.match(/\d{1,2}/);
+      if (m) gradeLevel = parseInt(m[0], 10);
+    }
+
+    if (colClass !== -1 && row[colClass] !== undefined) {
+      className = String(row[colClass]).trim();
+    }
+
+    if (colNumber !== -1 && row[colNumber] !== undefined) {
+      num = String(row[colNumber]).trim().replace(/\.0$/, '');
+    }
+
+    if (colFullName !== -1 && row[colFullName] !== undefined) {
+      const full = String(row[colFullName]).trim();
+      const parts = full.split(/\s+/);
+      if (parts.length > 1) {
+        lName = parts.pop() || '';
+        fName = parts.join(' ');
+      } else {
+        fName = full;
+      }
+    } else {
+      if (colFirstName !== -1 && row[colFirstName] !== undefined) {
+        fName = String(row[colFirstName]).trim();
+      }
+      if (colLastName !== -1 && row[colLastName] !== undefined) {
+        lName = String(row[colLastName]).trim();
+      }
+    }
+
+    if (colNotes !== -1 && row[colNotes] !== undefined) {
+      notes = String(row[colNotes]).trim();
+    }
+
+    // Şube adını normalize et (örn: "11/A" -> "11-A", "11A" -> "11-A")
+    if (className) {
+      className = normalizeClassName(className);
+      if (gradeLevel === undefined) {
+        const mg = className.match(/^(\d{1,2})/);
+        if (mg) gradeLevel = parseInt(mg[1], 10);
+      }
+    }
+
+    // Sadece geçerli veri barındıran satırları al
+    if (fName || num) {
+      allParsedStudents.push({
+        className: className || undefined,
+        gradeLevel,
+        studentNumber: num,
+        firstName: fName,
+        lastName: lName,
+        notes,
+      });
+    }
+  }
+
+  // 4. Öğretmenin Sisteminde Kayıtlı Olan Şubelerle Eşleştir ve Filtrele
+  const classLookup = new Map<string, ClassItem>();
+  existingClasses.forEach((c) => {
+    const raw = c.name.trim().toLowerCase();
+    const clean = c.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    classLookup.set(raw, c);
+    classLookup.set(clean, c);
+  });
+
+  const grouped = new Map<number, { classItem: ClassItem; students: StudentImportItem[] }>();
+  const skippedMap = new Map<string, number>();
+  let missingClassCount = 0;
+
+  for (const s of allParsedStudents) {
+    const rawClass = (s.className || '').trim();
+    if (!rawClass) {
+      missingClassCount++;
+      continue;
+    }
+
+    const cleanRaw = rawClass.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    let matched = classLookup.get(rawClass.toLowerCase()) || classLookup.get(cleanRaw);
+
+    // Eğer şube sadece harfse (örn: "A") ve gradeLevel varsa ("11" + "A" -> "11-A")
+    if (!matched && s.gradeLevel) {
+      const comb = `${s.gradeLevel}-${rawClass}`.toLowerCase();
+      const combClean = `${s.gradeLevel}${rawClass}`.toLowerCase();
+      matched = classLookup.get(comb) || classLookup.get(combClean);
+    }
+
+    if (matched) {
+      if (!grouped.has(matched.id)) {
+        grouped.set(matched.id, { classItem: matched, students: [] });
+      }
+      grouped.get(matched.id)!.students.push(s);
+    } else {
+      skippedMap.set(rawClass, (skippedMap.get(rawClass) || 0) + 1);
+    }
+  }
+
+  const matchedPayloads: ClassBulkImportPayload[] = [];
+  let matchedCount = 0;
+  grouped.forEach(({ classItem, students: classStudents }) => {
+    matchedPayloads.push({
+      classId: classItem.id,
+      className: classItem.name,
+      students: classStudents,
+    });
+    matchedCount += classStudents.length;
+  });
+
+  const skippedOtherClasses: { className: string; count: number }[] = [];
+  let skippedCount = 0;
+  skippedMap.forEach((count, className) => {
+    skippedOtherClasses.push({ className, count });
+    skippedCount += count;
+  });
+  skippedOtherClasses.sort((a, b) => a.className.localeCompare(b.className));
+
+  return {
+    fileName: asset.name || 'Öğrenci_Listesi.xlsx',
+    totalStudentsFound: allParsedStudents.length,
+    matchedPayloads,
+    matchedCount,
+    skippedOtherClasses,
+    skippedCount,
+    missingClassCount,
+    aiUsed,
   };
 };
 

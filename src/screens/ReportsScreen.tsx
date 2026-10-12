@@ -36,6 +36,7 @@ import {
   generateStudentTemplateExcel,
   exportScheduleToExcel,
   pickAndParseStudentsExcel,
+  pickAndParseAllSchoolStudentsWithAi,
   validateBulkStudentImport,
   exportCustomStudentsReport,
   exportCustomNotesReport,
@@ -405,6 +406,84 @@ export const ReportsScreen: React.FC = () => {
       Alert.alert('Hata', 'Şablon dosyası oluşturulamadı: ' + (e?.message || e));
     } finally {
       setLoading(false);
+    }
+  };
+  // AI All-School Bulk Student Import (Filters only active teacher classes)
+  const handleAllSchoolAiImport = async () => {
+    try {
+      if (classes.length === 0) {
+        Alert.alert(
+          'Kayıtlı Şube Yok',
+          'Sistemde henüz kayıtlı şube bulunmamaktadır. Lütfen önce "Program > Ders Programını Tara ve Yükle" veya "Şubeler" ekranından şubelerinizi oluşturunuz.'
+        );
+        return;
+      }
+
+      setLoading(true);
+      const res = await pickAndParseAllSchoolStudentsWithAi(classes);
+      if (!res) {
+        setLoading(false);
+        return;
+      }
+
+      if (res.totalStudentsFound === 0) {
+        setLoading(false);
+        Alert.alert('Uyarı', 'Seçilen Excel dosyasında öğrenci verisi bulunamadı.');
+        return;
+      }
+
+      if (res.matchedCount === 0) {
+        setLoading(false);
+        let msg = `Excel dosyasında toplam ${res.totalStudentsFound} öğrenci bulundu ancak hiçbiri sisteminizdeki şubelerle eşleşmedi.\n\n`;
+        if (res.skippedOtherClasses.length > 0) {
+          msg += `Dosyadaki Şubeler:\n${res.skippedOtherClasses.slice(0, 8).map((u) => `• ${u.className} (${u.count} öğrenci)`).join('\n')}\n\n`;
+        }
+        msg += `Sisteminizdeki Şubeler:\n${classes.map((c) => `• ${c.name}`).join('\n')}\n\nLütfen dosyadaki şube adlarını kontrol ediniz.`;
+        Alert.alert('Şube Eşleşmesi Bulunamadı ⚠️', msg);
+        return;
+      }
+
+      let summaryMsg = `📄 Dosya: ${res.fileName}\n👥 Toplam Dosya Mevcudu: ${res.totalStudentsFound} öğrenci\n\n`;
+      summaryMsg += `🎯 Sizin Şubelerinizle Eşleşen (${res.matchedCount} Öğrenci):\n`;
+      summaryMsg += res.matchedPayloads.map((p) => `  • ${p.className}: ${p.students.length} öğrenci`).join('\n');
+
+      if (res.skippedOtherClasses.length > 0) {
+        summaryMsg += `\n\n⏭️ Diğer Okul Şubeleri (Atlanacak - ${res.skippedCount} Öğrenci):\n`;
+        summaryMsg += res.skippedOtherClasses.slice(0, 6).map((u) => `  • ${u.className}: ${u.count} öğrenci`).join('\n');
+        if (res.skippedOtherClasses.length > 6) {
+          summaryMsg += `  ... ve ${res.skippedOtherClasses.length - 6} şube daha\n`;
+        }
+      }
+
+      if (res.aiUsed) {
+        summaryMsg += '\n\n✨ Yapay zeka ile sütun yapısı otomatik tespit edildi.';
+      }
+
+      summaryMsg += `\n\nSadece sizin dersinize giren ${res.matchedCount} öğrenci sisteme kaydedilsin mi?`;
+
+      Alert.alert('Tüm Okul Listesi Analizi 🎓', summaryMsg, [
+        { text: 'Vazgeç', style: 'cancel', onPress: () => setLoading(false) },
+        {
+          text: 'Onayla ve Şubelere Aktar',
+          onPress: async () => {
+            try {
+              const saveResult = await bulkCreateStudentsMultipleClasses(res.matchedPayloads);
+              await loadData();
+              Alert.alert(
+                'Başarıyla Yüklendi 🎉',
+                `Toplam ${saveResult.totalAdded} öğrenci şubelerinize başarıyla aktarıldı!\n\nŞimdi "PDF'ten Fotoğraf Aktar" butonuna dokunarak okul numaralarına göre e-Okul fotoğraflarını tek tıkla yükleyebilirsiniz.`
+              );
+            } catch (err: any) {
+              Alert.alert('Hata', 'Kayıt sırasında hata oluştu: ' + (err?.message || err));
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]);
+    } catch (e: any) {
+      setLoading(false);
+      Alert.alert('Hata', e?.message || 'Tüm okul listesi işlenirken hata oluştu.');
     }
   };
 
@@ -837,11 +916,39 @@ export const ReportsScreen: React.FC = () => {
         <View style={styles.templateSection}>
           <Text style={styles.sectionHeader}>Şube & Öğrenci İşlemleri</Text>
 
-          {/* 1. Manuel Öğrenci Ekle */}
+          {/* 1. TÜM OKUL LİSTESİ - YAPAY ZEKA DESTEKLİ VE ŞUBE FİLTRELİ */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleAllSchoolAiImport}
+            disabled={loading}
+          >
+            <Card style={[styles.reportCard, { backgroundColor: '#FAF5FF', borderColor: '#D8B4FE', borderWidth: 1.5 }]}>
+              <View style={styles.cardRow}>
+                <View style={[styles.iconWrap, { backgroundColor: '#F3E8FF' }]}>
+                  <Ionicons name="sparkles" size={24} color="#7C3AED" />
+                </View>
+                <View style={styles.cardTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={[styles.reportTitle, { color: '#6B21A8' }]}>Tüm Okul Excel Listesi</Text>
+                    <View style={[styles.subActionBadgeSuccess, { backgroundColor: '#E9D5FF' }]}>
+                      <Text style={[styles.subActionBadgeSuccessText, { color: '#6B21A8' }]}>✨ AI Şube Filtreli</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.reportDesc}>
+                    Tüm okul e-Okul listesini yükleyin; yapay zeka sadece ders programınızdaki şubelerin öğrencilerini ayıklayıp kaydetsin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#7C3AED" />
+              </View>
+            </Card>
+          </TouchableOpacity>
+
+          {/* 2. Manuel Öğrenci Ekle */}
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleOpenManualAddStudent}
             disabled={loading}
+            style={{ marginTop: 10 }}
           >
             <Card style={[styles.reportCard, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0', borderWidth: 1 }]}>
               <View style={styles.cardRow}>

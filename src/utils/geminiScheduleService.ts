@@ -30,6 +30,18 @@ export interface AnalysisResponse {
   rawResponse?: string;
 }
 
+export interface GeminiUsageStats {
+  date: string; // YYYY-MM-DD
+  requestsToday: number;
+  tokensToday: number;
+  lastRequestTime: string; // HH:mm
+  model: string;
+  dailyRequestLimit: number; // 1500 for Flash, 50 for Pro
+  remainingRequests: number;
+  remainingPercent: number; // 0..100
+  lastTokensUsed: number;
+}
+
 /**
  * SQLite app_settings tablosundan kaydedilmiş Gemini API anahtarını alır.
  * Kayıtlı yoksa varsayılan anahtara döner.
@@ -62,6 +74,154 @@ export const setGeminiApiKey = async (apiKey: string): Promise<void> => {
   } else {
     await db.runAsync("DELETE FROM app_settings WHERE key = 'gemini_api_key'");
   }
+};
+
+/**
+ * Günlük Gemini API istek ve harcanan token kullanımını kaydeder.
+ */
+export const recordGeminiApiUsage = async (
+  model: string,
+  usageMetadata?: { totalTokenCount?: number; promptTokenCount?: number; candidatesTokenCount?: number }
+): Promise<void> => {
+  try {
+    const db = await getDB();
+    const today = new Date().toISOString().split('T')[0];
+    const nowTime = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+    const dateRow = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'gemini_usage_date'"
+    );
+    const isToday = dateRow?.value === today;
+
+    let reqCount = 0;
+    let tokenCount = 0;
+
+    if (isToday) {
+      const reqRow = await db.getFirstAsync<{ value: string }>(
+        "SELECT value FROM app_settings WHERE key = 'gemini_usage_requests'"
+      );
+      const tokRow = await db.getFirstAsync<{ value: string }>(
+        "SELECT value FROM app_settings WHERE key = 'gemini_usage_tokens'"
+      );
+      reqCount = parseInt(reqRow?.value || '0', 10) || 0;
+      tokenCount = parseInt(tokRow?.value || '0', 10) || 0;
+    }
+
+    reqCount += 1;
+    const addedTokens = usageMetadata?.totalTokenCount || 0;
+    tokenCount += addedTokens;
+
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_usage_date', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      today
+    );
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_usage_requests', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      String(reqCount)
+    );
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_usage_tokens', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      String(tokenCount)
+    );
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_usage_last_time', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      nowTime
+    );
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_usage_last_tokens', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      String(addedTokens)
+    );
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_usage_last_model', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      model
+    );
+  } catch (err) {
+    console.warn('API kullanım istatistiği kaydedilemedi:', err);
+  }
+};
+
+/**
+ * Günlük ücretsiz kota ve token kalan durumunu hesaplar.
+ */
+export const getGeminiUsageStats = async (): Promise<GeminiUsageStats> => {
+  const today = new Date().toISOString().split('T')[0];
+  const model = await getGeminiModel();
+  const isPro = model.toLowerCase().includes('pro');
+  // Google AI Studio Free Tier limitleri: Flash: 1,500 RPD, Pro: 50 RPD
+  const dailyRequestLimit = isPro ? 50 : 1500;
+
+  try {
+    const db = await getDB();
+    const dateRow = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'gemini_usage_date'"
+    );
+    const isToday = dateRow?.value === today;
+
+    if (!isToday) {
+      return {
+        date: today,
+        requestsToday: 0,
+        tokensToday: 0,
+        lastRequestTime: '-',
+        model,
+        dailyRequestLimit,
+        remainingRequests: dailyRequestLimit,
+        remainingPercent: 100,
+        lastTokensUsed: 0,
+      };
+    }
+
+    const [reqRow, tokRow, timeRow, lastTokRow] = await Promise.all([
+      db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = 'gemini_usage_requests'"),
+      db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = 'gemini_usage_tokens'"),
+      db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = 'gemini_usage_last_time'"),
+      db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = 'gemini_usage_last_tokens'"),
+    ]);
+
+    const requestsToday = parseInt(reqRow?.value || '0', 10) || 0;
+    const tokensToday = parseInt(tokRow?.value || '0', 10) || 0;
+    const lastRequestTime = timeRow?.value || '-';
+    const lastTokensUsed = parseInt(lastTokRow?.value || '0', 10) || 0;
+
+    const remainingRequests = Math.max(0, dailyRequestLimit - requestsToday);
+    const remainingPercent = Math.max(
+      0,
+      Math.min(100, Math.round(((dailyRequestLimit - requestsToday) / dailyRequestLimit) * 1000) / 10)
+    );
+
+    return {
+      date: today,
+      requestsToday,
+      tokensToday,
+      lastRequestTime,
+      model,
+      dailyRequestLimit,
+      remainingRequests,
+      remainingPercent,
+      lastTokensUsed,
+    };
+  } catch (err) {
+    console.warn('Gemini kullanım verisi okunamadı:', err);
+    return {
+      date: today,
+      requestsToday: 0,
+      tokensToday: 0,
+      lastRequestTime: '-',
+      model,
+      dailyRequestLimit,
+      remainingRequests: dailyRequestLimit,
+      remainingPercent: 100,
+      lastTokensUsed: 0,
+    };
+  }
+};
+
+/**
+ * Gemini kullanım sayacını sıfırlar.
+ */
+export const resetGeminiUsageStats = async (): Promise<void> => {
+  const db = await getDB();
+  await db.runAsync("DELETE FROM app_settings WHERE key LIKE 'gemini_usage_%'");
 };
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
@@ -200,6 +360,11 @@ export const testGeminiApiKey = async (
       const errJson = await res.json().catch(() => null);
       const errMsg = errJson?.error?.message || `HTTP ${res.status} ${res.statusText}`;
       return { success: false, message: `${model} bağlantı hatası: ${errMsg}` };
+    }
+
+    const resJson = await res.json().catch(() => null);
+    if (resJson?.usageMetadata) {
+      await recordGeminiApiUsage(model, resJson.usageMetadata);
     }
 
     return {
@@ -355,6 +520,9 @@ export const analyzeSchedulePhotoWithGemini = async (
       }
 
       const responseData = await response.json();
+      if (responseData?.usageMetadata) {
+        await recordGeminiApiUsage(model, responseData.usageMetadata);
+      }
       const rawText =
         responseData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
@@ -575,6 +743,9 @@ JSON Şeması:
       }
 
       const responseData = await response.json();
+      if (responseData?.usageMetadata) {
+        await recordGeminiApiUsage(model, responseData.usageMetadata);
+      }
       const rawText =
         responseData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
@@ -627,4 +798,134 @@ JSON Şeması:
   }
 
   throw lastError || new Error('Yıllık plan yapay zeka ile dönüştürülemedi.');
+};
+
+export interface DetectedStudentExcelSchema {
+  headerRowIndex: number;
+  classNameCol: number;
+  gradeLevelCol: number;
+  studentNumberCol: number;
+  firstNameCol: number;
+  lastNameCol: number;
+  fullNameCol: number;
+  notesCol: number;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Excel öğrenci listesinin ilk satırlarını Gemini ile inceleyip
+ * şube, numara, ad, soyad vb. sütun indekslerini akıllıca tespit eder.
+ */
+export const detectStudentExcelSchemaWithGemini = async (
+  sampleRows: any[][],
+  providedApiKey?: string
+): Promise<DetectedStudentExcelSchema | null> => {
+  const apiKey = (providedApiKey || (await getGeminiApiKey())).trim();
+  if (!apiKey) return null;
+
+  // İlk 15 satırı kompakt JSON'a dönüştür
+  const cleaned: string[][] = [];
+  for (const r of sampleRows.slice(0, 15)) {
+    if (!Array.isArray(r)) continue;
+    const cleanCells = r.map((c) => {
+      const str = c !== null && c !== undefined ? String(c).trim() : '';
+      return str.length > 50 ? str.slice(0, 50) : str;
+    });
+    if (cleanCells.some(Boolean)) {
+      cleaned.push(cleanCells);
+    }
+  }
+
+  if (cleaned.length < 2) return null;
+
+  const prompt = `Sen MEB okulları ve e-Okul Excel öğrenci listesi analiz uzmanısın.
+Aşağıda bir okulun veya öğretmenin öğrenci listesi Excel dosyasından alınmış ilk satırlar JSON dizisi olarak verilmiştir:
+
+${JSON.stringify(cleaned)}
+
+GÖREVLERİN:
+1. Başlık satırının indeksini (0 tabanlı: 0, 1, 2...) bul ("headerRowIndex").
+2. Öğrencinin şube/sınıf adının (örn: "11-A", "12/B", "10A", "9-C") bulunduğu sütunun indeksini bul ("classNameCol").
+3. Sınıf düzeyi (9, 10, 11, 12 vb.) ayrı bir sütundaysa indeksini bul ("gradeLevelCol"), ayrı değilse -1 yap.
+4. Okul numarasının (örn: 105, 342, 1284) bulunduğu sütun indeksini bul ("studentNumberCol").
+5. Öğrenci ad ve soyadını tespit et:
+   - Ad ve soyad ayrı sütunlardaysa "firstNameCol" ve "lastNameCol" indekslerini ver, "fullNameCol" -1 olsun.
+   - Adı ve soyadı tek bir sütunda birleşmişse (örn: "Ahmet YILMAZ") "fullNameCol" indeksini ver, "firstNameCol" ve "lastNameCol" -1 olsun.
+6. Varsa not/açıklama sütunu indeksini ("notesCol"), yoksa -1 yap.
+7. Analiz güven derecesini "high", "medium" veya "low" olarak belirt.
+8. Yanıtını YALNIZCA aşağıdaki JSON formatında ver, başka hiçbir metin veya markdown ekleme:
+
+{
+  "headerRowIndex": 0,
+  "classNameCol": 1,
+  "gradeLevelCol": -1,
+  "studentNumberCol": 2,
+  "firstNameCol": 3,
+  "lastNameCol": 4,
+  "fullNameCol": -1,
+  "notesCol": -1,
+  "confidence": "high"
+}`;
+
+  const selectedModel = await getGeminiModel();
+  const candidateModels = [
+    selectedModel,
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+    'gemini-1.5-flash',
+  ];
+  const modelsToTry = Array.from(new Set(candidateModels.filter(Boolean)));
+
+  for (const model of modelsToTry) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+          },
+        }),
+      });
+
+      if (!res.ok) continue;
+
+      const resData = await res.json();
+      if (resData?.usageMetadata) {
+        await recordGeminiApiUsage(model, resData.usageMetadata);
+      }
+
+      const rawText = resData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let cleanedJson = rawText.trim();
+      if (cleanedJson.startsWith('```')) {
+        cleanedJson = cleanedJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      }
+
+      const parsed = JSON.parse(cleanedJson);
+      if (
+        typeof parsed.headerRowIndex === 'number' &&
+        typeof parsed.classNameCol === 'number' &&
+        typeof parsed.studentNumberCol === 'number'
+      ) {
+        return {
+          headerRowIndex: Number(parsed.headerRowIndex),
+          classNameCol: Number(parsed.classNameCol),
+          gradeLevelCol: Number(parsed.gradeLevelCol ?? -1),
+          studentNumberCol: Number(parsed.studentNumberCol),
+          firstNameCol: Number(parsed.firstNameCol ?? -1),
+          lastNameCol: Number(parsed.lastNameCol ?? -1),
+          fullNameCol: Number(parsed.fullNameCol ?? -1),
+          notesCol: Number(parsed.notesCol ?? -1),
+          confidence: parsed.confidence || 'high',
+        };
+      }
+    } catch (e) {
+      console.warn(`detectStudentExcelSchemaWithGemini ${model} hatası:`, e);
+    }
+  }
+
+  return null;
 };

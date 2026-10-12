@@ -54,6 +54,9 @@ import {
   fetchAvailableGeminiModels,
   PRESET_GEMINI_MODELS,
   DEFAULT_GEMINI_MODEL,
+  getGeminiUsageStats,
+  resetGeminiUsageStats,
+  GeminiUsageStats,
 } from '../utils/geminiScheduleService';
 
 const APP_VERSION =
@@ -106,16 +109,18 @@ export const OperationsScreen: React.FC = () => {
   const [fetchingLiveModels, setFetchingLiveModels] = useState(false);
   const [testingGeminiKey, setTestingGeminiKey] = useState(false);
   const [savingGeminiKey, setSavingGeminiKey] = useState(false);
+  const [usageStats, setUsageStats] = useState<GeminiUsageStats | null>(null);
 
   const loadData = async () => {
     try {
-      const [dbStats, notes, schoolList, defId, gemKey, curModel] = await Promise.all([
+      const [dbStats, notes, schoolList, defId, gemKey, curModel, usage] = await Promise.all([
         getDatabaseStats(),
         getQuickNotes(),
         getSchools(),
         getDefaultSchoolId(),
         getGeminiApiKey(),
         getGeminiModel(),
+        getGeminiUsageStats(),
       ]);
       setStats(dbStats);
       setQuickNotes(notes);
@@ -124,6 +129,7 @@ export const OperationsScreen: React.FC = () => {
       setGeminiApiKeyState(gemKey);
       setGeminiKeyInput(gemKey);
       setGeminiModelState(curModel || DEFAULT_GEMINI_MODEL);
+      setUsageStats(usage);
     } catch (e) {
       console.error('Error loading operations data:', e);
     }
@@ -163,9 +169,11 @@ export const OperationsScreen: React.FC = () => {
       const res = await testGeminiApiKey(trimmedKey, modelToTest);
       setTestingGeminiKey(false);
       if (res.success) {
+        const updatedUsage = await getGeminiUsageStats();
+        setUsageStats(updatedUsage);
         Alert.alert(
           'Bağlantı Başarılı 🎉',
-          `Google Gemini (${res.modelUsed || modelToTest}) bağlantısı başarıyla doğrulandı!\n\nDers programı OCR ve yıllık plan dönüştürme özellikleri kullanıma hazır.`
+          `Google Gemini (${res.modelUsed || modelToTest}) bağlantısı başarıyla doğrulandı!\n\nDers programı OCR, yıllık plan ve öğrenci listesi filtreleme özellikleri kullanıma hazır.`
         );
       } else {
         Alert.alert('Doğrulama Başarısız ❌', res.message);
@@ -174,6 +182,31 @@ export const OperationsScreen: React.FC = () => {
       setTestingGeminiKey(false);
       Alert.alert('Hata', e?.message || 'API anahtarı test edilemedi.');
     }
+  };
+
+  const handleRefreshUsageStats = async () => {
+    const stats = await getGeminiUsageStats();
+    setUsageStats(stats);
+  };
+
+  const handleResetUsageStats = () => {
+    Alert.alert(
+      'Kullanım Sayacını Sıfırla',
+      'Bugünkü istek ve token kullanım sayacını sıfırlamak istiyor musunuz?',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sıfırla',
+          style: 'destructive',
+          onPress: async () => {
+            await resetGeminiUsageStats();
+            const stats = await getGeminiUsageStats();
+            setUsageStats(stats);
+            Alert.alert('Bilgi', 'Kullanım sayacı başarıyla sıfırlandı.');
+          },
+        },
+      ]
+    );
   };
 
   const handleFetchLiveModels = async () => {
@@ -702,6 +735,166 @@ export const OperationsScreen: React.FC = () => {
                 <Ionicons name="trash-outline" size={16} color={Colors.danger} />
               </TouchableOpacity>
             ) : null}
+          </View>
+
+          {/* SECTION: CANLI KOTA VE TOKEN KULLANIM İBRESİ (GAUGE) */}
+          <View style={styles.aiGaugeCard}>
+            <View style={styles.aiGaugeHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="speedometer-outline" size={18} color="#7C3AED" />
+                <Text style={styles.aiGaugeTitle}>Canlı Kota & Token İbresi</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.aiGaugeRefreshBtn}
+                onPress={handleRefreshUsageStats}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="refresh" size={15} color="#7C3AED" />
+                <Text style={styles.aiGaugeRefreshText}>Yenile</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Arched Speedometer Visual */}
+            {(() => {
+              const remPct = usageStats?.remainingPercent ?? 100;
+              const isGreen = remPct >= 50;
+              const isAmber = remPct >= 20 && remPct < 50;
+              const gaugeColor = isGreen ? '#10B981' : isAmber ? '#F59E0B' : '#EF4444';
+              const gaugeBgTint = isGreen ? '#ECFDF5' : isAmber ? '#FFFBEB' : '#FEF2F2';
+              const isPro = (usageStats?.model || geminiModel).toLowerCase().includes('pro');
+
+              return (
+                <View style={[styles.aiGaugeBody, { backgroundColor: gaugeBgTint }]}>
+                  {/* Semicircular Arch Gauge */}
+                  <View style={styles.aiArchWrap}>
+                    <View
+                      style={[
+                        styles.aiArchTrack,
+                        { borderColor: gaugeColor },
+                      ]}
+                    >
+                      <View style={styles.aiArchInner}>
+                        <Ionicons
+                          name={isGreen ? 'checkmark-circle' : isAmber ? 'alert-circle' : 'warning'}
+                          size={22}
+                          color={gaugeColor}
+                        />
+                        <Text style={[styles.aiArchPercentText, { color: gaugeColor }]}>
+                          %{remPct}
+                        </Text>
+                        <Text style={styles.aiArchPercentSub}>Kalan Ücretsiz Kota</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Horizontal Progress Bar */}
+                  <View style={styles.aiGaugeProgressTrack}>
+                    <View
+                      style={[
+                        styles.aiGaugeProgressBar,
+                        {
+                          width: `${Math.max(4, Math.min(100, remPct))}%`,
+                          backgroundColor: gaugeColor,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <View style={styles.aiGaugeProgressLabels}>
+                    <Text style={styles.aiGaugeProgressLabel}>%0 Tükendi</Text>
+                    <Text style={styles.aiGaugeProgressLabel}>
+                      {usageStats?.remainingRequests ?? 1500} İstek Kaldı
+                    </Text>
+                    <Text style={styles.aiGaugeProgressLabel}>%100 Tam</Text>
+                  </View>
+
+                  {/* 2x2 Stats Grid */}
+                  <View style={styles.aiGaugeGrid}>
+                    <View style={styles.aiGaugeGridItem}>
+                      <Text style={styles.aiGaugeGridItemLabel}>Bugünkü İstek</Text>
+                      <Text style={styles.aiGaugeGridItemVal}>
+                        {usageStats?.requestsToday ?? 0} / {usageStats?.dailyRequestLimit ?? 1500}
+                      </Text>
+                      <Text style={styles.aiGaugeGridItemSub}>
+                        {isPro ? 'Pro Günlük Sınırı (50)' : 'Flash Günlük Sınırı (1.500)'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.aiGaugeGridItem}>
+                      <Text style={styles.aiGaugeGridItemLabel}>Kullanılan Token</Text>
+                      <Text style={[styles.aiGaugeGridItemVal, { color: '#7C3AED' }]}>
+                        {(usageStats?.tokensToday ?? 0).toLocaleString('tr-TR')}
+                      </Text>
+                      <Text style={styles.aiGaugeGridItemSub}>Bugün tüketilen toplam</Text>
+                    </View>
+
+                    <View style={styles.aiGaugeGridItem}>
+                      <Text style={styles.aiGaugeGridItemLabel}>Son İstek Zamanı</Text>
+                      <Text style={styles.aiGaugeGridItemVal}>
+                        {usageStats?.lastRequestTime || '-'}
+                      </Text>
+                      <Text style={styles.aiGaugeGridItemSub}>Yerel saat</Text>
+                    </View>
+
+                    <View style={styles.aiGaugeGridItem}>
+                      <Text style={styles.aiGaugeGridItemLabel}>Son Harcanan Token</Text>
+                      <Text style={styles.aiGaugeGridItemVal}>
+                        {usageStats?.lastTokensUsed ?? 0} token
+                      </Text>
+                      <Text style={styles.aiGaugeGridItemSub}>Son işlem maliyeti</Text>
+                    </View>
+                  </View>
+
+                  {/* Model Advice Banner */}
+                  <View
+                    style={[
+                      styles.aiModelAdviceBox,
+                      isPro ? styles.aiModelAdviceBoxPro : styles.aiModelAdviceBoxFlash,
+                    ]}
+                  >
+                    <Ionicons
+                      name={isPro ? 'information-circle' : 'sparkles'}
+                      size={16}
+                      color={isPro ? '#B45309' : '#047857'}
+                    />
+                    <Text
+                      style={[
+                        styles.aiModelAdviceText,
+                        { color: isPro ? '#92400E' : '#065F46' },
+                      ]}
+                    >
+                      {isPro
+                        ? 'Dikkat: Pro modellerinde Google AI Studio günlük ücretsiz kota sınırı 50 istektir. Kota tasarrufu için Flash modellerini (1.500 istek/gün) tercih edebilirsiniz.'
+                        : 'Flash modeli seçili: Günde 1.500 ücretsiz istek hakkınız bulunmaktadır. Kotanız ders programı ve öğrenci listesi yüklemeleri için fazlasıyla yeterlidir.'}
+                    </Text>
+                  </View>
+
+                  {/* Buttons: Live Google Link & Reset */}
+                  <View style={styles.aiGaugeBottomBtns}>
+                    <TouchableOpacity
+                      style={styles.aiStudioPlanBtn}
+                      onPress={() =>
+                        Linking.openURL('https://aistudio.google.com/app/plan_information')
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="open-outline" size={14} color="#0369A1" />
+                      <Text style={styles.aiStudioPlanBtnText}>
+                        Google AI Studio'da Kotayı Aç
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.aiResetGaugeBtn}
+                      onPress={handleResetUsageStats}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="trash-outline" size={14} color={Colors.textSecondary} />
+                      <Text style={styles.aiResetGaugeBtnText}>Sayacı Sıfırla</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })()}
           </View>
 
           {/* Educational Step-by-Step Box */}
@@ -1675,5 +1868,188 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#FFF',
+  },
+  aiGaugeCard: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#DDD6FE',
+    borderWidth: 1.5,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 14,
+  },
+  aiGaugeHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  aiGaugeTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6B21A8',
+  },
+  aiGaugeRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#EDE9FE',
+  },
+  aiGaugeRefreshText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7C3AED',
+  },
+  aiGaugeBody: {
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  aiArchWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 6,
+  },
+  aiArchTrack: {
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    borderWidth: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    ...Shadows.small,
+  },
+  aiArchInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aiArchPercentText: {
+    fontSize: 26,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  aiArchPercentSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  aiGaugeProgressTrack: {
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  aiGaugeProgressBar: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  aiGaugeProgressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  aiGaugeProgressLabel: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    fontWeight: '600',
+  },
+  aiGaugeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  aiGaugeGridItem: {
+    flex: 1,
+    minWidth: '46%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 9,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  aiGaugeGridItemLabel: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  aiGaugeGridItemVal: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    marginTop: 2,
+  },
+  aiGaugeGridItemSub: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    marginTop: 1,
+  },
+  aiModelAdviceBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  aiModelAdviceBoxFlash: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  aiModelAdviceBoxPro: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  aiModelAdviceText: {
+    flex: 1,
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  aiGaugeBottomBtns: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  aiStudioPlanBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#E0F2FE',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 8,
+    paddingVertical: 8,
+  },
+  aiStudioPlanBtnText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  aiResetGaugeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  aiResetGaugeBtnText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: Colors.textSecondary,
   },
 });
