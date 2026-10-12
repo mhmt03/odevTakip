@@ -876,6 +876,12 @@ export const mergeAndDetectConflicts = (
   });
 };
 
+export interface ApplyScheduleOptions {
+  clearDaysOption?: 'all_week' | 'matched_days';
+  autoCreateClasses?: boolean;
+  autoCreateCourses?: boolean;
+}
+
 export interface ApplyScheduleResult {
   success: boolean;
   totalLessonsLoaded: number;
@@ -883,16 +889,31 @@ export interface ApplyScheduleResult {
   coursesEnsured: string[];
   slotsCount: number;
   message: string;
+  skippedLessonsCount?: number;
+  missingClassesSkipped?: string[];
+  missingCoursesSkipped?: string[];
 }
 
 /**
  * Yapay zeka (Gemini Vision) tarafından analiz edilen haftalık ders programını
- * veritabanına otomatik aktarır. Eksik şubeleri ve dersleri otomatik oluşturur.
+ * veritabanına otomatik aktarır. Eksik şubeleri ve dersleri isteğe bağlı oluşturur.
  */
 export const applyAnalyzedSchedule = async (
   lessons: AnalyzedLessonItem[],
-  clearDaysOption: 'all_week' | 'matched_days' = 'all_week'
+  options?: ApplyScheduleOptions | ('all_week' | 'matched_days')
 ): Promise<ApplyScheduleResult> => {
+  let clearDaysOption: 'all_week' | 'matched_days' = 'all_week';
+  let autoCreateClasses = true;
+  let autoCreateCourses = true;
+
+  if (typeof options === 'string') {
+    clearDaysOption = options;
+  } else if (options) {
+    if (options.clearDaysOption) clearDaysOption = options.clearDaysOption;
+    if (options.autoCreateClasses !== undefined) autoCreateClasses = options.autoCreateClasses;
+    if (options.autoCreateCourses !== undefined) autoCreateCourses = options.autoCreateCourses;
+  }
+
   const db = await getDB();
   const { getActiveSchool } = await import('./schoolOperations');
   const activeSchool = await getActiveSchool();
@@ -950,6 +971,7 @@ export const applyAnalyzedSchedule = async (
   const normalizeNorm = (str: string) => (str || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   const classIdMap: Record<string, number> = {};
   const classesEnsuredSet = new Set<string>();
+  const missingClassesSkipped = new Set<string>();
 
   for (const item of lessons) {
     const rawName = item.className.trim();
@@ -966,8 +988,8 @@ export const applyAnalyzedSchedule = async (
       if (match) {
         classIdMap[norm] = match.id;
         classesEnsuredSet.add(match.name);
-      } else {
-        // Yoksa otomatik oluştur
+      } else if (autoCreateClasses) {
+        // Yoksa ve otomatik ekleme açıksa oluştur
         const res = await db.runAsync(
           'INSERT INTO classes (name, school_id) VALUES (?, ?)',
           rawName,
@@ -976,6 +998,8 @@ export const applyAnalyzedSchedule = async (
         classIdMap[norm] = res.lastInsertRowId;
         classesEnsuredSet.add(rawName);
         existingClasses.push({ id: res.lastInsertRowId, name: rawName, school_id: activeSchoolId });
+      } else {
+        missingClassesSkipped.add(rawName);
       }
     }
   }
@@ -986,6 +1010,7 @@ export const applyAnalyzedSchedule = async (
   );
   const courseIdMap: Record<string, number> = {};
   const coursesEnsuredSet = new Set<string>();
+  const missingCoursesSkipped = new Set<string>();
 
   const courseColors = ['#4F46E5', '#059669', '#DC2626', '#D97706', '#7C3AED', '#2563EB', '#DB2777', '#0891B2'];
   let colorIdx = 0;
@@ -1012,7 +1037,7 @@ export const applyAnalyzedSchedule = async (
       if (match) {
         courseIdMap[key] = match.id;
         coursesEnsuredSet.add(match.name);
-      } else {
+      } else if (autoCreateCourses) {
         const color = courseColors[colorIdx % courseColors.length];
         colorIdx++;
         const res = await db.runAsync(
@@ -1024,6 +1049,8 @@ export const applyAnalyzedSchedule = async (
         courseIdMap[key] = res.lastInsertRowId;
         coursesEnsuredSet.add(cName);
         existingCourses.push({ id: res.lastInsertRowId, name: cName, code: cCode });
+      } else {
+        missingCoursesSkipped.add(cName);
       }
     }
   }
@@ -1039,6 +1066,9 @@ export const applyAnalyzedSchedule = async (
   }
 
   // 5. YENİ DERSLERİ EKLE
+  let totalLessonsLoaded = 0;
+  let skippedLessonsCount = 0;
+
   for (const item of lessons) {
     const slotId = slotMap[item.slotNumber];
     const normClass = normalizeNorm(item.className);
@@ -1062,16 +1092,22 @@ export const applyAnalyzedSchedule = async (
         courseId,
         item.classroom || null
       );
+      totalLessonsLoaded++;
+    } else {
+      skippedLessonsCount++;
     }
   }
 
   return {
     success: true,
-    totalLessonsLoaded: lessons.length,
+    totalLessonsLoaded,
     classesEnsured: Array.from(classesEnsuredSet),
     coursesEnsured: Array.from(coursesEnsuredSet),
     slotsCount: Object.keys(slotMap).length,
-    message: `${lessons.length} saatlik ders programı başarıyla yüklendi!`,
+    skippedLessonsCount,
+    missingClassesSkipped: Array.from(missingClassesSkipped),
+    missingCoursesSkipped: Array.from(missingCoursesSkipped),
+    message: `${totalLessonsLoaded} ders saati başarıyla yüklendi!`,
   };
 };
 

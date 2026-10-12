@@ -93,6 +93,8 @@ export const ScheduleScreen: React.FC = () => {
   const [aiPreviewModalVisible, setAiPreviewModalVisible] = useState(false);
   const [analyzedLessons, setAnalyzedLessons] = useState<AnalyzedLessonItem[]>([]);
   const [applyingSchedule, setApplyingSchedule] = useState(false);
+  const [autoCreateClasses, setAutoCreateClasses] = useState(true);
+  const [autoCreateCourses, setAutoCreateCourses] = useState(true);
 
 
   // Slot Edit Modal
@@ -325,18 +327,26 @@ export const ScheduleScreen: React.FC = () => {
 
     try {
       setApplyingSchedule(true);
-      const res = await applyAnalyzedSchedule(analyzedLessons, 'all_week');
+      const res = await applyAnalyzedSchedule(analyzedLessons, {
+        clearDaysOption: 'all_week',
+        autoCreateClasses,
+        autoCreateCourses,
+      });
       await loadData();
       setApplyingSchedule(false);
       setAiPreviewModalVisible(false);
 
-      Alert.alert(
-        'Ders Programı Başarıyla Yüklendi 🎉',
+      let msg =
         `Toplam ${res.totalLessonsLoaded} ders saati başarıyla programa aktarıldı!\n\n` +
-          `• Şubeler: ${res.classesEnsured.join(', ')}\n` +
-          `• Dersler: ${res.coursesEnsured.join(', ')}\n\n` +
-          `Özel ders saatleriniz korunarak haftalık ders programınız güncellendi.`
-      );
+        `• Şubeler: ${res.classesEnsured.join(', ') || 'Yok'}\n` +
+        `• Dersler: ${res.coursesEnsured.join(', ') || 'Yok'}\n\n` +
+        `Özel ders saatleriniz korunarak haftalık ders programınız güncellendi.`;
+
+      if (res.skippedLessonsCount && res.skippedLessonsCount > 0) {
+        msg += `\n\n⚠️ ${res.skippedLessonsCount} ders saati (sistemde olmayan şube/ders ekleme kapalı olduğu için) programa dahil edilmedi.`;
+      }
+
+      Alert.alert('Ders Programı Başarıyla Yüklendi 🎉', msg);
     } catch (err: any) {
       setApplyingSchedule(false);
       Alert.alert('Hata', 'Program kaydedilirken bir hata oluştu: ' + (err?.message || err));
@@ -1841,6 +1851,55 @@ export const ScheduleScreen: React.FC = () => {
               </View>
             </ScrollView>
 
+            {/* Onay Kutuları: Sistemde Olmayan Şube ve Dersleri Ekle */}
+            <View style={styles.aiOptionsCard}>
+              <TouchableOpacity
+                style={styles.aiCheckboxRow}
+                onPress={() => setAutoCreateClasses(!autoCreateClasses)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={autoCreateClasses ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={autoCreateClasses ? '#059669' : Colors.textMuted}
+                />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={[styles.aiCheckboxTitle, autoCreateClasses && styles.aiCheckboxTitleActive]}>
+                    Sistemde olmayan şubeleri sisteme ekle
+                  </Text>
+                  <Text style={styles.aiCheckboxDesc}>
+                    {autoCreateClasses
+                      ? 'Fotoğraftaki yeni şubeler otomatik olarak şube listenize kaydedilir.'
+                      : 'Kapalı: Tanımsız şubelerin dersleri programa aktarılmaz.'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.aiCheckboxDivider} />
+
+              <TouchableOpacity
+                style={styles.aiCheckboxRow}
+                onPress={() => setAutoCreateCourses(!autoCreateCourses)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={autoCreateCourses ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={autoCreateCourses ? '#059669' : Colors.textMuted}
+                />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={[styles.aiCheckboxTitle, autoCreateCourses && styles.aiCheckboxTitleActive]}>
+                    Sistemde olmayan dersleri sisteme ekle
+                  </Text>
+                  <Text style={styles.aiCheckboxDesc}>
+                    {autoCreateCourses
+                      ? 'Fotoğraftaki yeni dersler otomatik olarak ders listenize kaydedilir.'
+                      : 'Kapalı: Tanımsız derslerin saatleri programa aktarılmaz.'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.aiPreviewFooter}>
               <Button
                 title="Vazgeç"
@@ -3005,6 +3064,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#065F46',
     lineHeight: 16,
+  },
+  aiOptionsCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 10,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  aiCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  aiCheckboxDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 6,
+  },
+  aiCheckboxTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  aiCheckboxTitleActive: {
+    color: '#065F46',
+  },
+  aiCheckboxDesc: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 1,
   },
   aiPreviewFooter: {
     flexDirection: 'row',
