@@ -56,16 +56,127 @@ export const setGeminiApiKey = async (apiKey: string): Promise<void> => {
   }
 };
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+
+export interface GeminiModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  isRecommended?: boolean;
+}
+
+export const PRESET_GEMINI_MODELS: GeminiModelInfo[] = [
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    description: 'En hızlı, güncel ve Google tarafından önerilen model (Ücretsiz kota)',
+    isRecommended: true,
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    description: 'Yeni nesil yüksek performanslı multimodal model',
+  },
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    description: 'En son çıkan Flash modeli',
+  },
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    description: 'Karmaşık el yazısı ve yoğun tablolar için gelişmiş model',
+  },
+  {
+    id: 'gemini-1.5-flash',
+    name: 'Gemini 1.5 Flash',
+    description: 'Klasik hafif model',
+  },
+];
+
+/**
+ * Seçili Gemini model adını SQLite app_settings tablosundan okur.
+ */
+export const getGeminiModel = async (): Promise<string> => {
+  try {
+    const db = await getDB();
+    const row = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM app_settings WHERE key = 'gemini_model'"
+    );
+    const model = (row?.value || '').trim();
+    if (model) return model;
+  } catch (e) {
+    console.warn('Gemini model veritabanından okunamadı:', e);
+  }
+  return DEFAULT_GEMINI_MODEL;
+};
+
+/**
+ * Gemini model tercihini SQLite app_settings tablosuna kaydeder.
+ */
+export const setGeminiModel = async (model: string): Promise<void> => {
+  const db = await getDB();
+  const trimmed = model.trim();
+  if (trimmed) {
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('gemini_model', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      trimmed
+    );
+  } else {
+    await db.runAsync("DELETE FROM app_settings WHERE key = 'gemini_model'");
+  }
+};
+
+/**
+ * Google Gemini API'sindeki aktif modelleri kullanıcının API anahtarıyla dinamik olarak çeker.
+ */
+export const fetchAvailableGeminiModels = async (
+  apiKey: string
+): Promise<string[]> => {
+  const key = apiKey.trim();
+  if (!key) return [];
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`
+    );
+    if (!res.ok) {
+      throw new Error(`Modeller alınamadı: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const modelsList: any[] = data?.models || [];
+    const valid = modelsList
+      .filter((m) => {
+        const methods: string[] = m.supportedGenerationMethods || [];
+        return (
+          methods.includes('generateContent') &&
+          typeof m.name === 'string' &&
+          m.name.includes('gemini')
+        );
+      })
+      .map((m) => m.name.replace(/^models\//, ''));
+
+    return valid;
+  } catch (err) {
+    console.warn('Modeller listelenemedi:', err);
+    return [];
+  }
+};
+
 /**
  * Verilen API anahtarının geçerli olup olmadığını küçük bir ping isteğiyle test eder.
  */
-export const testGeminiApiKey = async (apiKey: string): Promise<{ success: boolean; message: string }> => {
+export const testGeminiApiKey = async (
+  apiKey: string,
+  modelToTest?: string
+): Promise<{ success: boolean; message: string; modelUsed?: string }> => {
   const key = apiKey.trim();
   if (!key) {
     return { success: false, message: 'API anahtarı boş olamaz.' };
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+  const model = (modelToTest || (await getGeminiModel())).trim() || DEFAULT_GEMINI_MODEL;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
   try {
     const res = await fetch(endpoint, {
@@ -80,10 +191,14 @@ export const testGeminiApiKey = async (apiKey: string): Promise<{ success: boole
     if (!res.ok) {
       const errJson = await res.json().catch(() => null);
       const errMsg = errJson?.error?.message || `HTTP ${res.status} ${res.statusText}`;
-      return { success: false, message: `Bağlantı hatası: ${errMsg}` };
+      return { success: false, message: `${model} bağlantı hatası: ${errMsg}` };
     }
 
-    return { success: true, message: 'Google Gemini API bağlantısı başarılı! ✅' };
+    return {
+      success: true,
+      message: `Google Gemini (${model}) bağlantısı başarılı! ✅`,
+      modelUsed: model,
+    };
   } catch (err: any) {
     return { success: false, message: `Ağ hatası: ${err?.message || err}` };
   }
@@ -176,8 +291,16 @@ export const analyzeSchedulePhotoWithGemini = async (
   // 1. Görseli Base64 olarak oku
   const { base64, mimeType } = await prepareImageBase64(photoUri);
 
-  // 2. Modelleri dene (önce 1.5-flash, sonra 2.0-flash)
-  const modelsToTry = ['gemini-1.5-flash', 'gemini-2.0-flash'];
+  // 2. Modelleri dene (Kullanıcının seçtiği model önce, sonra güncel alternatifler)
+  const selectedModel = await getGeminiModel();
+  const candidateModels = [
+    selectedModel,
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+    'gemini-3.8-flash',
+    'gemini-1.5-flash',
+  ];
+  const modelsToTry = Array.from(new Set(candidateModels.filter(Boolean)));
   let lastError: any = null;
 
   for (const model of modelsToTry) {
@@ -352,7 +475,15 @@ JSON Şeması:
   }
 ]`;
 
-  const modelsToTry = ['gemini-1.5-flash', 'gemini-2.0-flash'];
+  const selectedModel = await getGeminiModel();
+  const candidateModels = [
+    selectedModel,
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+    'gemini-3.8-flash',
+    'gemini-1.5-flash',
+  ];
+  const modelsToTry = Array.from(new Set(candidateModels.filter(Boolean)));
   let lastError: any = null;
 
   for (const model of modelsToTry) {

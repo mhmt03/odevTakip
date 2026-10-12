@@ -36,6 +36,10 @@ import {
   getGeminiApiKey,
   setGeminiApiKey,
   testGeminiApiKey,
+  getGeminiModel,
+  setGeminiModel,
+  PRESET_GEMINI_MODELS,
+  DEFAULT_GEMINI_MODEL,
   AnalyzedLessonItem,
 } from '../utils/geminiScheduleService';
 import { getClasses } from '../database/operations/classOperations';
@@ -84,6 +88,7 @@ export const ScheduleScreen: React.FC = () => {
   const [aiStatusText, setAiStatusText] = useState('');
   const [apiKeyModalVisible, setApiKeyModalVisible] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [selectedGeminiModel, setSelectedGeminiModel] = useState(DEFAULT_GEMINI_MODEL);
   const [testingApiKey, setTestingApiKey] = useState(false);
   const [aiPreviewModalVisible, setAiPreviewModalVisible] = useState(false);
   const [analyzedLessons, setAnalyzedLessons] = useState<AnalyzedLessonItem[]>([]);
@@ -340,15 +345,17 @@ export const ScheduleScreen: React.FC = () => {
 
   const handleOpenApiKeySettings = async () => {
     setPhotoMenuVisible(false);
-    const key = await getGeminiApiKey();
+    const [key, model] = await Promise.all([getGeminiApiKey(), getGeminiModel()]);
     setApiKeyInput(key);
+    setSelectedGeminiModel(model || DEFAULT_GEMINI_MODEL);
     setApiKeyModalVisible(true);
   };
 
   const handleTestAndSaveApiKey = async () => {
     const trimmed = apiKeyInput.trim();
+    const modelToSave = selectedGeminiModel || DEFAULT_GEMINI_MODEL;
     if (!trimmed) {
-      await setGeminiApiKey('');
+      await Promise.all([setGeminiApiKey(''), setGeminiModel(modelToSave)]);
       setApiKeyModalVisible(false);
       Alert.alert('Bilgi', 'Gemini API anahtarı temizlendi.');
       return;
@@ -356,20 +363,20 @@ export const ScheduleScreen: React.FC = () => {
 
     try {
       setTestingApiKey(true);
-      const res = await testGeminiApiKey(trimmed);
+      const res = await testGeminiApiKey(trimmed, modelToSave);
       setTestingApiKey(false);
 
       if (res.success) {
-        await setGeminiApiKey(trimmed);
+        await Promise.all([setGeminiApiKey(trimmed), setGeminiModel(modelToSave)]);
         setApiKeyModalVisible(false);
-        Alert.alert('Başarılı ✅', 'API anahtarınız doğrulandı ve kaydedildi.');
+        Alert.alert('Başarılı ✅', `API anahtarınız ve seçili model (${modelToSave}) doğrulandı ve kaydedildi.`);
       } else {
         Alert.alert('Doğrulama Başarısız ❌', res.message + '\n\nYine de kaydetmek istiyor musunuz?', [
           { text: 'Düzenle', style: 'cancel' },
           {
             text: 'Yine de Kaydet',
             onPress: async () => {
-              await setGeminiApiKey(trimmed);
+              await Promise.all([setGeminiApiKey(trimmed), setGeminiModel(modelToSave)]);
               setApiKeyModalVisible(false);
             },
           },
@@ -1671,7 +1678,7 @@ export const ScheduleScreen: React.FC = () => {
               </View>
             </View>
 
-            <View style={{ marginVertical: 12 }}>
+            <View style={{ marginVertical: 10 }}>
               <Text style={styles.inputLabel}>Gemini API Key (AIzaSy...):</Text>
               <Input
                 placeholder="Örn: AIzaSyD..."
@@ -1680,6 +1687,50 @@ export const ScheduleScreen: React.FC = () => {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
+            </View>
+
+            {/* Model Selection in ScheduleScreen */}
+            <View style={{ marginBottom: 14 }}>
+              <Text style={styles.inputLabel}>Kullanılacak Yapay Zekâ Modeli:</Text>
+              <View style={{ gap: 6, marginTop: 4 }}>
+                {PRESET_GEMINI_MODELS.map((item) => {
+                  const isSelected = selectedGeminiModel === item.id;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={{
+                        paddingVertical: 7,
+                        paddingHorizontal: 10,
+                        borderRadius: 8,
+                        borderWidth: 1.5,
+                        borderColor: isSelected ? '#7C3AED' : '#E2E8F0',
+                        backgroundColor: isSelected ? '#F5F3FF' : '#F8FAFC',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onPress={() => setSelectedGeminiModel(item.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <Ionicons
+                          name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                          size={15}
+                          color={isSelected ? '#7C3AED' : Colors.textMuted}
+                        />
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: isSelected ? '#7C3AED' : Colors.textPrimary }}>
+                          {item.name}
+                        </Text>
+                      </View>
+                      {item.isRecommended ? (
+                        <View style={{ backgroundColor: '#DCFCE7', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: '#15803D' }}>ÖNERİLEN</Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
 
             <View style={styles.modalActions}>

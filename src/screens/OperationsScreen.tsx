@@ -49,6 +49,11 @@ import {
   getGeminiApiKey,
   setGeminiApiKey,
   testGeminiApiKey,
+  getGeminiModel,
+  setGeminiModel,
+  fetchAvailableGeminiModels,
+  PRESET_GEMINI_MODELS,
+  DEFAULT_GEMINI_MODEL,
 } from '../utils/geminiScheduleService';
 
 const APP_VERSION =
@@ -96,17 +101,21 @@ export const OperationsScreen: React.FC = () => {
   const [geminiApiKey, setGeminiApiKeyState] = useState('');
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [geminiModel, setGeminiModelState] = useState(DEFAULT_GEMINI_MODEL);
+  const [availableLiveModels, setAvailableLiveModels] = useState<string[]>([]);
+  const [fetchingLiveModels, setFetchingLiveModels] = useState(false);
   const [testingGeminiKey, setTestingGeminiKey] = useState(false);
   const [savingGeminiKey, setSavingGeminiKey] = useState(false);
 
   const loadData = async () => {
     try {
-      const [dbStats, notes, schoolList, defId, gemKey] = await Promise.all([
+      const [dbStats, notes, schoolList, defId, gemKey, curModel] = await Promise.all([
         getDatabaseStats(),
         getQuickNotes(),
         getSchools(),
         getDefaultSchoolId(),
         getGeminiApiKey(),
+        getGeminiModel(),
       ]);
       setStats(dbStats);
       setQuickNotes(notes);
@@ -114,44 +123,49 @@ export const OperationsScreen: React.FC = () => {
       setDefaultSchoolIdState(defId);
       setGeminiApiKeyState(gemKey);
       setGeminiKeyInput(gemKey);
+      setGeminiModelState(curModel || DEFAULT_GEMINI_MODEL);
     } catch (e) {
       console.error('Error loading operations data:', e);
     }
   };
 
   const handleSaveGeminiKey = async () => {
-    const trimmed = geminiKeyInput.trim();
+    const trimmedKey = geminiKeyInput.trim();
+    const modelToSave = (geminiModel || DEFAULT_GEMINI_MODEL).trim();
     try {
       setSavingGeminiKey(true);
-      await setGeminiApiKey(trimmed);
-      setGeminiApiKeyState(trimmed);
+      await Promise.all([
+        setGeminiApiKey(trimmedKey),
+        setGeminiModel(modelToSave),
+      ]);
+      setGeminiApiKeyState(trimmedKey);
+      setGeminiModelState(modelToSave);
       setSavingGeminiKey(false);
       Alert.alert(
         'Kaydedildi ✅',
-        trimmed
-          ? 'Google Gemini API anahtarı başarıyla güncellendi.'
-          : 'API anahtarı temizlendi.'
+        `Google Gemini ayarları başarıyla kaydedildi.\n\n• Aktif Model: ${modelToSave}\n• API Anahtarı: ${trimmedKey ? 'Tanımlandı' : 'Temizlendi'}`
       );
     } catch (e: any) {
       setSavingGeminiKey(false);
-      Alert.alert('Hata', e?.message || 'API anahtarı kaydedilemedi.');
+      Alert.alert('Hata', e?.message || 'API ayarları kaydedilemedi.');
     }
   };
 
   const handleTestGeminiKey = async () => {
-    const trimmed = geminiKeyInput.trim();
-    if (!trimmed) {
+    const trimmedKey = geminiKeyInput.trim();
+    if (!trimmedKey) {
       Alert.alert('Uyarı', 'Lütfen önce bir API anahtarı giriniz.');
       return;
     }
+    const modelToTest = geminiModel || DEFAULT_GEMINI_MODEL;
     try {
       setTestingGeminiKey(true);
-      const res = await testGeminiApiKey(trimmed);
+      const res = await testGeminiApiKey(trimmedKey, modelToTest);
       setTestingGeminiKey(false);
       if (res.success) {
         Alert.alert(
           'Bağlantı Başarılı 🎉',
-          'Google Gemini API bağlantısı doğrulandı. Ders programı fotoğraf tarama ve yıllık plan dönüştürme özellikleri kullanıma hazır!'
+          `Google Gemini (${res.modelUsed || modelToTest}) bağlantısı başarıyla doğrulandı!\n\nDers programı OCR ve yıllık plan dönüştürme özellikleri kullanıma hazır.`
         );
       } else {
         Alert.alert('Doğrulama Başarısız ❌', res.message);
@@ -159,6 +173,28 @@ export const OperationsScreen: React.FC = () => {
     } catch (e: any) {
       setTestingGeminiKey(false);
       Alert.alert('Hata', e?.message || 'API anahtarı test edilemedi.');
+    }
+  };
+
+  const handleFetchLiveModels = async () => {
+    const key = geminiKeyInput.trim() || geminiApiKey;
+    if (!key) {
+      Alert.alert('API Anahtarı Gerekli 🔑', 'Google hesabınızdaki modelleri listelemek için lütfen önce API anahtarınızı giriniz.');
+      return;
+    }
+    try {
+      setFetchingLiveModels(true);
+      const models = await fetchAvailableGeminiModels(key);
+      setFetchingLiveModels(false);
+      if (models.length > 0) {
+        setAvailableLiveModels(models);
+        Alert.alert('Modeller Alındı 🎉', `Google API hesabınızda ${models.length} adet aktif model bulundu. Listedeki modellerden birini seçebilirsiniz.`);
+      } else {
+        Alert.alert('Bilgi', 'API üzerinden model listesi alınamadı. Standart önerilen modelleri kullanabilirsiniz.');
+      }
+    } catch (err: any) {
+      setFetchingLiveModels(false);
+      Alert.alert('Hata', err?.message || 'Modeller alınamadı.');
     }
   };
 
@@ -542,6 +578,90 @@ export const OperationsScreen: React.FC = () => {
             </View>
           </View>
 
+          {/* Model Selection Row */}
+          <View style={styles.aiModelSection}>
+            <View style={styles.aiModelLabelRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="hardware-chip-outline" size={17} color={Colors.textPrimary} />
+                <Text style={styles.aiModelLabel}>Yapay Zekâ Modeli:</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.aiFetchModelsBtn}
+                onPress={handleFetchLiveModels}
+                disabled={fetchingLiveModels}
+                activeOpacity={0.7}
+              >
+                {fetchingLiveModels ? (
+                  <ActivityIndicator size="small" color="#7C3AED" />
+                ) : (
+                  <>
+                    <Ionicons name="cloud-download-outline" size={14} color="#7C3AED" />
+                    <Text style={styles.aiFetchModelsBtnText}>API'den Modelleri Çek</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Model Chips (Presets) */}
+            <View style={styles.aiModelChipsWrap}>
+              {PRESET_GEMINI_MODELS.map((item) => {
+                const isSelected = geminiModel === item.id;
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.aiModelChip, isSelected && styles.aiModelChipActive]}
+                    onPress={() => setGeminiModelState(item.id)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.aiModelChipHeader}>
+                      <Ionicons
+                        name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                        size={15}
+                        color={isSelected ? '#7C3AED' : Colors.textMuted}
+                      />
+                      <Text style={[styles.aiModelChipTitle, isSelected && styles.aiModelChipTitleActive]}>
+                        {item.name}
+                      </Text>
+                      {item.isRecommended ? (
+                        <View style={styles.aiModelRecBadge}>
+                          <Text style={styles.aiModelRecBadgeText}>ÖNERİLEN</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.aiModelChipDesc}>{item.description}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              {/* Dynamic models from API if any */}
+              {availableLiveModels
+                .filter((m) => !PRESET_GEMINI_MODELS.some((p) => p.id === m))
+                .map((m) => {
+                  const isSelected = geminiModel === m;
+                  return (
+                    <TouchableOpacity
+                      key={m}
+                      style={[styles.aiModelChip, isSelected && styles.aiModelChipActive]}
+                      onPress={() => setGeminiModelState(m)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.aiModelChipHeader}>
+                        <Ionicons
+                          name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                          size={15}
+                          color={isSelected ? '#7C3AED' : Colors.textMuted}
+                        />
+                        <Text style={[styles.aiModelChipTitle, isSelected && styles.aiModelChipTitleActive]}>
+                          {m}
+                        </Text>
+                      </View>
+                      <Text style={styles.aiModelChipDesc}>Google API hesabınızda aktif model</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+            </View>
+          </View>
+
           {/* Action Buttons */}
           <View style={styles.aiActionBtnsRow}>
             <TouchableOpacity
@@ -554,7 +674,7 @@ export const OperationsScreen: React.FC = () => {
               ) : (
                 <>
                   <Ionicons name="flash-outline" size={16} color={Colors.primary} />
-                  <Text style={styles.aiTestBtnText}>Test Et</Text>
+                  <Text style={styles.aiTestBtnText}>Modeli Test Et</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -569,7 +689,7 @@ export const OperationsScreen: React.FC = () => {
               ) : (
                 <>
                   <Ionicons name="save-outline" size={16} color="#FFF" />
-                  <Text style={styles.aiSaveBtnText}>Kaydet</Text>
+                  <Text style={styles.aiSaveBtnText}>Ayarları Kaydet</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -1427,6 +1547,81 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEE2E2',
     borderWidth: 1,
     borderColor: '#FECACA',
+  },
+  aiModelSection: {
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  aiModelLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  aiModelLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  aiFetchModelsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: '#EDE9FE',
+  },
+  aiFetchModelsBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7C3AED',
+  },
+  aiModelChipsWrap: {
+    gap: 7,
+    marginBottom: 8,
+  },
+  aiModelChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  aiModelChipActive: {
+    borderColor: '#7C3AED',
+    backgroundColor: '#F5F3FF',
+  },
+  aiModelChipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  aiModelChipTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  aiModelChipTitleActive: {
+    color: '#7C3AED',
+  },
+  aiModelRecBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  aiModelRecBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  aiModelChipDesc: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginTop: 2,
+    marginLeft: 21,
   },
   aiGuideBox: {
     backgroundColor: '#FFFBEB',
