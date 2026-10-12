@@ -41,6 +41,7 @@ import {
   PRESET_GEMINI_MODELS,
   DEFAULT_GEMINI_MODEL,
   AnalyzedLessonItem,
+  AnalyzedSlotTime,
 } from '../utils/geminiScheduleService';
 import { getClasses } from '../database/operations/classOperations';
 import { exportScheduleToExcel } from '../utils/excelService';
@@ -95,6 +96,8 @@ export const ScheduleScreen: React.FC = () => {
   const [applyingSchedule, setApplyingSchedule] = useState(false);
   const [autoCreateClasses, setAutoCreateClasses] = useState(true);
   const [autoCreateCourses, setAutoCreateCourses] = useState(true);
+  const [detectedSlotTimes, setDetectedSlotTimes] = useState<AnalyzedSlotTime[]>([]);
+  const [updateSlotTimes, setUpdateSlotTimes] = useState(false);
 
 
   // Slot Edit Modal
@@ -301,6 +304,9 @@ export const ScheduleScreen: React.FC = () => {
 
       setAnalyzingAi(false);
       setAnalyzedLessons(result.lessons);
+      const slotsFound = result.detectedSlotTimes || [];
+      setDetectedSlotTimes(slotsFound);
+      setUpdateSlotTimes(slotsFound.length > 0);
       setAiPreviewModalVisible(true);
     } catch (err: any) {
       setAnalyzingAi(false);
@@ -331,6 +337,8 @@ export const ScheduleScreen: React.FC = () => {
         clearDaysOption: 'all_week',
         autoCreateClasses,
         autoCreateCourses,
+        updateSlotTimes,
+        detectedSlotTimes,
       });
       await loadData();
       setApplyingSchedule(false);
@@ -339,11 +347,15 @@ export const ScheduleScreen: React.FC = () => {
       let msg =
         `Toplam ${res.totalLessonsLoaded} ders saati başarıyla programa aktarıldı!\n\n` +
         `• Şubeler: ${res.classesEnsured.join(', ') || 'Yok'}\n` +
-        `• Dersler: ${res.coursesEnsured.join(', ') || 'Yok'}\n\n` +
-        `Özel ders saatleriniz korunarak haftalık ders programınız güncellendi.`;
+        `• Dersler: ${res.coursesEnsured.join(', ') || 'Yok'}\n`;
+
+      if (res.slotTimesUpdatedCount && res.slotTimesUpdatedCount > 0) {
+        msg += `• Saat Dilimleri: ${res.slotTimesUpdatedCount} ders saatinin zamanları güncellendi.\n`;
+      }
+      msg += `\nHaftalık ders programınız başarıyla güncellendi.`;
 
       if (res.skippedLessonsCount && res.skippedLessonsCount > 0) {
-        msg += `\n\n⚠️ ${res.skippedLessonsCount} ders saati (sistemde olmayan şube/ders ekleme kapalı olduğu için) programa dahil edilmedi.`;
+        msg += `\n\n⚠️ ${res.skippedLessonsCount} ders saati (tanımsız şube/ders ekleme kapalı olduğu için) dahil edilmedi.`;
       }
 
       Alert.alert('Ders Programı Başarıyla Yüklendi 🎉', msg);
@@ -1806,6 +1818,14 @@ export const ScheduleScreen: React.FC = () => {
                   {new Set(analyzedLessons.map((l) => l.courseName)).size} Ders
                 </Text>
               </View>
+              {detectedSlotTimes.length > 0 ? (
+                <View style={[styles.aiStatBadge, { backgroundColor: '#EDE9FE' }]}>
+                  <Ionicons name="alarm" size={14} color="#7C3AED" />
+                  <Text style={[styles.aiStatBadgeText, { color: '#7C3AED' }]}>
+                    {detectedSlotTimes.length} Saat Dilimi
+                  </Text>
+                </View>
+              ) : null}
             </View>
 
             {/* Scrollable Grouped Days List */}
@@ -1895,6 +1915,42 @@ export const ScheduleScreen: React.FC = () => {
                     {autoCreateCourses
                       ? 'Fotoğraftaki yeni dersler otomatik olarak ders listenize kaydedilir.'
                       : 'Kapalı: Tanımsız derslerin saatleri programa aktarılmaz.'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.aiCheckboxDivider} />
+
+              {/* Option 3: Saat Dilimlerini Sisteme Yükle */}
+              <TouchableOpacity
+                style={styles.aiCheckboxRow}
+                onPress={() => setUpdateSlotTimes(!updateSlotTimes)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={updateSlotTimes ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={updateSlotTimes ? '#059669' : Colors.textMuted}
+                />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.aiCheckboxTitle, updateSlotTimes && styles.aiCheckboxTitleActive]}>
+                      Saat dilimlerini sisteme yükle
+                    </Text>
+                    {detectedSlotTimes.length > 0 ? (
+                      <View style={{ backgroundColor: '#EDE9FE', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: '#7C3AED' }}>
+                          {detectedSlotTimes.length} SAAT BULUNDU
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.aiCheckboxDesc}>
+                    {updateSlotTimes
+                      ? detectedSlotTimes.length > 0
+                        ? `Fotoğraftan okunan saatler (örn: 1. Ders ${detectedSlotTimes[0].startTime}-${detectedSlotTimes[0].endTime}) sisteme aktarılır.`
+                        : 'Fotoğraftaki ders başlangıç/bitiş saatleri sisteme aktarılır.'
+                      : 'Kapalı: Tanımlı özel ders saatleriniz korunur.'}
                   </Text>
                 </View>
               </TouchableOpacity>

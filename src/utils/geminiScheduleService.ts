@@ -14,9 +14,17 @@ export interface AnalyzedLessonItem {
   classroom?: string; // Örn: "Derslik 3"
 }
 
+export interface AnalyzedSlotTime {
+  slotNumber: number;
+  startTime: string; // Örn: "08:30"
+  endTime: string; // Örn: "09:10"
+  slotName?: string; // Örn: "1. Ders"
+}
+
 export interface AnalysisResponse {
   success: boolean;
   lessons: AnalyzedLessonItem[];
+  detectedSlotTimes?: AnalyzedSlotTime[];
   modelUsed: string;
   notes?: string;
   rawResponse?: string;
@@ -254,23 +262,30 @@ Görevin:
    - Cumartesi: 6
    - Pazar: 7
 3. Ders saatlerini (slot numaralarını) tespit et: 1, 2, 3, 4, 5, 6, 7, 8 vb. (1. ders = 1, 2. ders = 2...)
+   Eğer tabloda veya tablonun başlığında/sol sütununda her bir ders saatinin başlangıç ve bitiş zamanları yazıyorsa (Örn: 08:30 - 09:10, 09:25 - 10:05), bunları "slotTimes" listesi altında saat formatında (HH:mm) topla.
 4. Hücrelerdeki şube adlarını (örn. 11-A, 11/A, 12-D, 9-B) ve ders adlarını/kodlarını (örn. S.FZK, Fizik, HDTE2, REH, Kimya, MAT vb.) tespit et.
 5. Şube isimlerini "11-A", "12-D" gibi araya tire koyarak standartlaştır.
 6. Eğer dersin kodu (örn: S.FZK) ve adı (örn: Seçmeli Fizik) varsa her ikisini de doldur. Sadece biri biliniyorsa ikisine de aynı değeri koyabilirsin.
 7. Eğer bir saatte ders yoksa, boşluk veya öğle arası ise o saati kesinlikle LİSTEYE DAHİL ETME. Sadece aktif dersleri ekle.
-8. Yanıtını SADECE geçerli bir JSON array olarak döndür. Başka hiçbir açıklama, markdown veya metin ekleme.
+8. Yanıtını aşağıdaki JSON şemasına uygun tek bir JSON objesi olarak döndür. Başka hiçbir açıklama, markdown veya metin ekleme.
 
 JSON Şeması:
-[
-  {
-    "day": 1,
-    "slotNumber": 1,
-    "className": "12-D",
-    "courseCode": "HDTE2",
-    "courseName": "Hedef Temelli Destek Eğitimi 2",
-    "classroom": "Derslik" // Varsa opsiyonel
-  }
-]`;
+{
+  "slotTimes": [
+    { "slotNumber": 1, "startTime": "08:30", "endTime": "09:10", "slotName": "1. Ders" },
+    { "slotNumber": 2, "startTime": "09:25", "endTime": "10:05", "slotName": "2. Ders" }
+  ],
+  "lessons": [
+    {
+      "day": 1,
+      "slotNumber": 1,
+      "className": "12-D",
+      "courseCode": "HDTE2",
+      "courseName": "Hedef Temelli Destek Eğitimi 2",
+      "classroom": "Derslik"
+    }
+  ]
+}`;
 
 /**
  * Ders programı fotoğrafını Google Gemini Vision modeline göndererek
@@ -354,7 +369,51 @@ export const analyzeSchedulePhotoWithGemini = async (
       }
 
       const parsed = JSON.parse(cleanedJson);
-      const rawList: any[] = Array.isArray(parsed) ? parsed : parsed.lessons || [];
+      let rawList: any[] = [];
+      let rawSlotTimes: any[] = [];
+
+      if (Array.isArray(parsed)) {
+        rawList = parsed;
+      } else {
+        rawList = Array.isArray(parsed.lessons) ? parsed.lessons : [];
+        rawSlotTimes = Array.isArray(parsed.slotTimes)
+          ? parsed.slotTimes
+          : Array.isArray(parsed.slot_times)
+          ? parsed.slot_times
+          : [];
+      }
+
+      // Slot saat dilimleri ayrıştırma
+      const detectedSlotTimes: AnalyzedSlotTime[] = [];
+      for (const st of rawSlotTimes) {
+        const slotNumber = Number(st.slotNumber || st.slot_number || st.slot);
+        let startTime = String(st.startTime || st.start_time || st.start || '').trim();
+        let endTime = String(st.endTime || st.end_time || st.end || '').trim();
+        const slotName = String(st.slotName || st.slot_name || `${slotNumber}. Ders`).trim();
+
+        // Saat formatı düzenleme ("8:30" -> "08:30", "0830" -> "08:30")
+        if (startTime && !startTime.includes(':') && startTime.length === 4) {
+          startTime = `${startTime.slice(0, 2)}:${startTime.slice(2)}`;
+        }
+        if (endTime && !endTime.includes(':') && endTime.length === 4) {
+          endTime = `${endTime.slice(0, 2)}:${endTime.slice(2)}`;
+        }
+        if (startTime.length === 4 && startTime[1] === ':') {
+          startTime = `0${startTime}`;
+        }
+        if (endTime.length === 4 && endTime[1] === ':') {
+          endTime = `0${endTime}`;
+        }
+
+        if (slotNumber >= 1 && startTime && endTime) {
+          detectedSlotTimes.push({
+            slotNumber,
+            startTime,
+            endTime,
+            slotName,
+          });
+        }
+      }
 
       // Validasyon ve filtreleme
       const lessons: AnalyzedLessonItem[] = [];
@@ -393,6 +452,7 @@ export const analyzeSchedulePhotoWithGemini = async (
       return {
         success: true,
         lessons,
+        detectedSlotTimes,
         modelUsed: model,
         rawResponse: rawText,
       };

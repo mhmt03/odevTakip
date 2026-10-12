@@ -1,7 +1,7 @@
 import { getDB } from '../db';
 import { CourseName, LessonSlot, ScheduleItem, DaySlotInfo, DaySlotTime } from '../../types';
 import { getDayOfWeekIndex, getCurrentTimeString, isTimeBetween, DAYS_OF_WEEK } from '../../utils/dateUtils';
-import { AnalyzedLessonItem } from '../../utils/geminiScheduleService';
+import { AnalyzedLessonItem, AnalyzedSlotTime } from '../../utils/geminiScheduleService';
 
 // --- COURSES (Ders Adları) ---
 export const getCourses = async (): Promise<CourseName[]> => {
@@ -880,6 +880,8 @@ export interface ApplyScheduleOptions {
   clearDaysOption?: 'all_week' | 'matched_days';
   autoCreateClasses?: boolean;
   autoCreateCourses?: boolean;
+  updateSlotTimes?: boolean;
+  detectedSlotTimes?: AnalyzedSlotTime[];
 }
 
 export interface ApplyScheduleResult {
@@ -892,6 +894,7 @@ export interface ApplyScheduleResult {
   skippedLessonsCount?: number;
   missingClassesSkipped?: string[];
   missingCoursesSkipped?: string[];
+  slotTimesUpdatedCount?: number;
 }
 
 /**
@@ -905,6 +908,8 @@ export const applyAnalyzedSchedule = async (
   let clearDaysOption: 'all_week' | 'matched_days' = 'all_week';
   let autoCreateClasses = true;
   let autoCreateCourses = true;
+  let updateSlotTimes = false;
+  let detectedSlotTimes: AnalyzedSlotTime[] = [];
 
   if (typeof options === 'string') {
     clearDaysOption = options;
@@ -912,6 +917,8 @@ export const applyAnalyzedSchedule = async (
     if (options.clearDaysOption) clearDaysOption = options.clearDaysOption;
     if (options.autoCreateClasses !== undefined) autoCreateClasses = options.autoCreateClasses;
     if (options.autoCreateCourses !== undefined) autoCreateCourses = options.autoCreateCourses;
+    if (options.updateSlotTimes !== undefined) updateSlotTimes = options.updateSlotTimes;
+    if (options.detectedSlotTimes) detectedSlotTimes = options.detectedSlotTimes;
   }
 
   const db = await getDB();
@@ -923,7 +930,7 @@ export const applyAnalyzedSchedule = async (
     throw new Error('Yüklenecek ders saati bulunamadı.');
   }
 
-  // 1. DERS SAATLERİ (SLOTS) KONTROLÜ VE OLUŞTURULMASI
+  // 1. DERS SAATLERİ (SLOTS) KONTROLÜ, OLUŞTURULMASI VE GÜNCELLENMESİ
   const maxSlotNeeded = Math.max(...lessons.map((l) => l.slotNumber), 8);
   const existingSlots = await db.getAllAsync<{ id: number; slot_number: number }>(
     'SELECT id, slot_number FROM lesson_slots ORDER BY slot_number ASC'
@@ -931,6 +938,35 @@ export const applyAnalyzedSchedule = async (
   const slotMap: Record<number, number> = {};
   for (const s of existingSlots) {
     slotMap[s.slot_number] = s.id;
+  }
+
+  // Eğer kullanıcı fotoğraftaki saat dilimlerini sisteme yüklemeyi seçtiyse
+  let slotTimesUpdatedCount = 0;
+  if (updateSlotTimes && detectedSlotTimes.length > 0) {
+    for (const dt of detectedSlotTimes) {
+      if (dt.slotNumber >= 1 && dt.startTime && dt.endTime) {
+        if (slotMap[dt.slotNumber]) {
+          await db.runAsync(
+            'UPDATE lesson_slots SET start_time = ?, end_time = ? WHERE id = ?',
+            dt.startTime,
+            dt.endTime,
+            slotMap[dt.slotNumber]
+          );
+          slotTimesUpdatedCount++;
+        } else {
+          const sName = dt.slotName || `${dt.slotNumber}. Ders`;
+          const res = await db.runAsync(
+            'INSERT INTO lesson_slots (slot_number, slot_name, start_time, end_time) VALUES (?, ?, ?, ?)',
+            dt.slotNumber,
+            sName,
+            dt.startTime,
+            dt.endTime
+          );
+          slotMap[dt.slotNumber] = res.lastInsertRowId;
+          slotTimesUpdatedCount++;
+        }
+      }
+    }
   }
 
   const defaultStarterTimes: Record<number, { name: string; start: string; end: string }> = {
@@ -1107,6 +1143,7 @@ export const applyAnalyzedSchedule = async (
     skippedLessonsCount,
     missingClassesSkipped: Array.from(missingClassesSkipped),
     missingCoursesSkipped: Array.from(missingCoursesSkipped),
+    slotTimesUpdatedCount,
     message: `${totalLessonsLoaded} ders saati başarıyla yüklendi!`,
   };
 };
