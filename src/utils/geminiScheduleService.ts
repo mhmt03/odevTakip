@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { getDB } from '../database/db';
+import type { ParsedYearlyPlanRow } from './excelService';
 
 // Varsayılan API Anahtarı (Kullanıcı dilerse buraya doğrudan tanımlayabilir veya uygulama içinden girebilir)
 export const DEFAULT_GEMINI_API_KEY = '';
@@ -279,4 +280,160 @@ export const analyzeSchedulePhotoWithGemini = async (
   }
 
   throw lastError || new Error('Görsel analiz edilemedi.');
+};
+
+/**
+ * Yıllık plan Excel dosyasındaki ham satırları Google Gemini ile analiz edip
+ * uygulamanın yıllık plan formatına (hafta no, başlangıç/bitiş tarihi, ders saati, konu, kazanım) dönüştürür.
+ */
+export const adaptYearlyPlanExcelWithGemini = async (
+  rawRows: any[][],
+  weeklyHours: number = 4,
+  providedApiKey?: string
+): Promise<ParsedYearlyPlanRow[]> => {
+  const apiKey = (providedApiKey || (await getGeminiApiKey())).trim();
+
+  if (!apiKey) {
+    throw new Error(
+      'Gemini API anahtarı bulunamadı. Lütfen "İşlemler > Yapay Zeka Ayarları" menüsünden Google Gemini API anahtarınızı giriniz.'
+    );
+  }
+
+  // 1. Ham satırları sıkıştır (tamamen boş satırları ve gereksiz uzunlukları temizle)
+  const cleanedRows: string[][] = [];
+  for (const row of rawRows) {
+    if (!row || !Array.isArray(row) || row.length === 0) continue;
+    const cleanCells = row
+      .map((c) => (c !== null && c !== undefined ? String(c).trim() : ''))
+      .filter(Boolean);
+    if (cleanCells.length === 0) continue;
+
+    // Satırı string dizisi olarak sakla (fazla uzun hücreleri 250 karakter ile sınırla)
+    cleanedRows.push(
+      row.map((c) => {
+        const str = c !== null && c !== undefined ? String(c).trim() : '';
+        return str.length > 250 ? str.substring(0, 250) + '...' : str;
+      })
+    );
+  }
+
+  if (cleanedRows.length < 2) {
+    throw new Error('Excel dosyasında analiz edilecek yeterli veri bulunamadı.');
+  }
+
+  // Gemini'ye göndermek için satırları kompakt JSON olarak hazırla (ilk 90 satır genellikle tüm yıllık planı kapsar)
+  const rowsPayload = JSON.stringify(cleanedRows.slice(0, 90));
+
+  const planPrompt = `Sen Türkiye MEB okulları için yıllık müfredat planı analizi ve dönüştürme uzmanısın.
+Ekte bir öğretmenin veya okulun farklı sütun ve hücre düzeninde hazırlanmış yıllık plan Excel tablosunun ham satırları JSON array formatında verilmiştir:
+
+${rowsPayload}
+
+Bu ders için haftalık toplam ders saati: ${weeklyHours} saattir.
+
+GÖREVLERİN:
+1. Tablodaki başlık satırını ve sütun anlamlarını tespit et (Örn: Ay/Hafta, Tarih aralığı, Saat, Konu/Ünite/Etkinlik, Kazanımlar/Açıklamalar).
+2. Tablodaki her bir eğitim haftasını (1. Hafta, 2. Hafta ... 36 veya 40. Hafta) ve deftere yazılacak konuları çıkar.
+3. "Deftere yazılacak konu" alanını (subjectTopic) bürokratik kodlardan (örn: FİZ.10.1.2 gibi), uzun paragraf karmaşasından ve gereksiz satır başlarından temizle; öğretmenin sınıf defterine yazacağı sade, net ve anlaşılır konu başlığı yap.
+4. Tarihleri tespit edebiliyorsan YYYY-AA-GG (örneğin 2024-09-09) formatına dönüştür. Tarih yoksa boş string ("") yap.
+5. Her bir konunun ders saatini (lessonHours) belirle. Eğer tabloda belirtilmemişse haftalık ders saati olan ${weeklyHours} değerini kullan.
+6. Eğer bir haftada birden fazla konu alt alta geliyorsa hepsini aynı hafta numarası (weekNumber) ile ayrı elemanlar olarak ekleyebilirsin.
+7. Yanıtını SADECE geçerli bir JSON array olarak döndür. Başka hiçbir açıklama veya markdown ekleme.
+
+JSON Şeması:
+[
+  {
+    "weekNumber": 1,
+    "dateStart": "2024-09-09",
+    "dateEnd": "2024-09-13",
+    "lessonHours": ${weeklyHours},
+    "subjectTopic": "Fizik Bilimine Giriş",
+    "learningOutcomes": "Fizik biliminin alt alanlarını açıklar."
+  }
+]`;
+
+  const modelsToTry = ['gemini-1.5-flash', 'gemini-2.0-flash'];
+  let lastError: any = null;
+
+  for (const model of modelsToTry) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+      const requestBody = {
+        contents: [
+          {
+            parts: [{ text: planPrompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+        },
+      };
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const errMsg = errorData?.error?.message || `HTTP ${response.status} ${response.statusText}`;
+        throw new Error(`${model} API hatası: ${errMsg}`);
+      }
+
+      const responseData = await response.json();
+      const rawText =
+        responseData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+      if (!rawText.trim()) {
+        throw new Error('Yapay zeka tablodan veri üretemedi.');
+      }
+
+      let cleanedJson = rawText.trim();
+      if (cleanedJson.startsWith('```')) {
+        cleanedJson = cleanedJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      }
+
+      const parsed = JSON.parse(cleanedJson);
+      const rawList: any[] = Array.isArray(parsed) ? parsed : parsed.plan || parsed.rows || [];
+
+      const result: ParsedYearlyPlanRow[] = [];
+      let autoWeek = 1;
+
+      for (const item of rawList) {
+        const weekNumber = Number(item.weekNumber || item.week || autoWeek) || autoWeek;
+        const subjectTopic = String(item.subjectTopic || item.topic || item.konu || '').trim();
+        if (!subjectTopic) continue;
+
+        const dateStart = String(item.dateStart || item.startDate || '').trim();
+        const dateEnd = String(item.dateEnd || item.endDate || '').trim();
+        const lessonHours = Number(item.lessonHours || item.hours || weeklyHours) || weeklyHours;
+        const learningOutcomes = String(item.learningOutcomes || item.outcomes || item.kazanim || '').trim();
+
+        result.push({
+          weekNumber,
+          dateStart,
+          dateEnd,
+          lessonHours,
+          subjectTopic,
+          learningOutcomes,
+        });
+
+        autoWeek = Math.max(autoWeek, weekNumber);
+      }
+
+      if (result.length === 0) {
+        throw new Error('Excel dosyasından herhangi bir haftalık konu veya plan çıkarılamadı.');
+      }
+
+      return result;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`${model} yıllık plan denemesi başarısız:`, err?.message || err);
+    }
+  }
+
+  throw lastError || new Error('Yıllık plan yapay zeka ile dönüştürülemedi.');
 };

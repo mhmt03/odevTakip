@@ -45,6 +45,11 @@ import {
   setActiveSchool,
 } from '../database/operations/schoolOperations';
 import { useSchoolTheme } from '../context/SchoolThemeContext';
+import {
+  getGeminiApiKey,
+  setGeminiApiKey,
+  testGeminiApiKey,
+} from '../utils/geminiScheduleService';
 
 const APP_VERSION =
   Constants.expoConfig?.version ||
@@ -87,21 +92,94 @@ export const OperationsScreen: React.FC = () => {
   const [schools, setSchools] = useState<School[]>([]);
   const [defaultSchoolId, setDefaultSchoolIdState] = useState<number | null>(null);
 
+  // Gemini AI Settings State
+  const [geminiApiKey, setGeminiApiKeyState] = useState('');
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [testingGeminiKey, setTestingGeminiKey] = useState(false);
+  const [savingGeminiKey, setSavingGeminiKey] = useState(false);
+
   const loadData = async () => {
     try {
-      const [dbStats, notes, schoolList, defId] = await Promise.all([
+      const [dbStats, notes, schoolList, defId, gemKey] = await Promise.all([
         getDatabaseStats(),
         getQuickNotes(),
         getSchools(),
         getDefaultSchoolId(),
+        getGeminiApiKey(),
       ]);
       setStats(dbStats);
       setQuickNotes(notes);
       setSchools(schoolList);
       setDefaultSchoolIdState(defId);
+      setGeminiApiKeyState(gemKey);
+      setGeminiKeyInput(gemKey);
     } catch (e) {
       console.error('Error loading operations data:', e);
     }
+  };
+
+  const handleSaveGeminiKey = async () => {
+    const trimmed = geminiKeyInput.trim();
+    try {
+      setSavingGeminiKey(true);
+      await setGeminiApiKey(trimmed);
+      setGeminiApiKeyState(trimmed);
+      setSavingGeminiKey(false);
+      Alert.alert(
+        'Kaydedildi ✅',
+        trimmed
+          ? 'Google Gemini API anahtarı başarıyla güncellendi.'
+          : 'API anahtarı temizlendi.'
+      );
+    } catch (e: any) {
+      setSavingGeminiKey(false);
+      Alert.alert('Hata', e?.message || 'API anahtarı kaydedilemedi.');
+    }
+  };
+
+  const handleTestGeminiKey = async () => {
+    const trimmed = geminiKeyInput.trim();
+    if (!trimmed) {
+      Alert.alert('Uyarı', 'Lütfen önce bir API anahtarı giriniz.');
+      return;
+    }
+    try {
+      setTestingGeminiKey(true);
+      const res = await testGeminiApiKey(trimmed);
+      setTestingGeminiKey(false);
+      if (res.success) {
+        Alert.alert(
+          'Bağlantı Başarılı 🎉',
+          'Google Gemini API bağlantısı doğrulandı. Ders programı fotoğraf tarama ve yıllık plan dönüştürme özellikleri kullanıma hazır!'
+        );
+      } else {
+        Alert.alert('Doğrulama Başarısız ❌', res.message);
+      }
+    } catch (e: any) {
+      setTestingGeminiKey(false);
+      Alert.alert('Hata', e?.message || 'API anahtarı test edilemedi.');
+    }
+  };
+
+  const handleClearGeminiKey = () => {
+    Alert.alert(
+      'API Anahtarını Kaldır',
+      'Kayıtlı Gemini API anahtarını silmek istediğinize emin misiniz? (Ders programı görsel tarama ve yıllık plan yapay zeka özellikleri anahtarsız çalışmaz)',
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: async () => {
+            await setGeminiApiKey('');
+            setGeminiApiKeyState('');
+            setGeminiKeyInput('');
+            Alert.alert('Bilgi', 'API anahtarı başarıyla kaldırıldı.');
+          },
+        },
+      ]
+    );
   };
 
   const handleSelectDefaultSchool = async (school: School) => {
@@ -404,7 +482,155 @@ export const OperationsScreen: React.FC = () => {
           )}
         </Card>
 
-        {/* SECTION 1: VERİTABANI YEDEKLEME & GERİ YÜKLEME */}
+        {/* SECTION 1: YAPAY ZEKA (GOOGLE GEMINI AI) AYARLARI */}
+        <View style={[styles.sectionHeaderRow, { marginTop: 24 }]}>
+          <Ionicons name="sparkles" size={20} color="#7C3AED" />
+          <Text style={styles.sectionHeader}>Yapay Zeka (Google Gemini AI) Ayarları</Text>
+        </View>
+
+        <Card style={styles.aiCard}>
+          <View style={styles.aiCardHeaderRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.aiCardTitle}>Google Gemini API</Text>
+              <Text style={styles.aiCardDesc}>
+                Haftalık ders programı fotoğraflarını taramak ve karmaşık yıllık plan Excel dosyalarını sınıf defterine dönüştürmek için kullanılır.
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.aiStatusBadge,
+                geminiApiKey ? styles.aiStatusBadgeActive : styles.aiStatusBadgeInactive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.aiStatusBadgeText,
+                  geminiApiKey ? styles.aiStatusBadgeTextActive : styles.aiStatusBadgeTextInactive,
+                ]}
+              >
+                {geminiApiKey ? '● Aktif' : '● Tanımlanmadı'}
+              </Text>
+            </View>
+          </View>
+
+          {/* API Key Input Row */}
+          <View style={styles.aiInputWrap}>
+            <Text style={styles.aiInputLabel}>Gemini API Anahtarı:</Text>
+            <View style={styles.aiInputFieldRow}>
+              <Ionicons name="key-outline" size={18} color={Colors.textMuted} style={{ marginLeft: 10 }} />
+              <TextInput
+                style={styles.aiTextInput}
+                placeholder="AIzaSy... ile başlayan anahtarınızı girin"
+                placeholderTextColor={Colors.textMuted}
+                value={geminiKeyInput}
+                onChangeText={setGeminiKeyInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry={!showGeminiKey}
+              />
+              <TouchableOpacity
+                style={styles.aiEyeBtn}
+                onPress={() => setShowGeminiKey(!showGeminiKey)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons
+                  name={showGeminiKey ? 'eye-off-outline' : 'eye-outline'}
+                  size={18}
+                  color={Colors.textMuted}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={styles.aiActionBtnsRow}>
+            <TouchableOpacity
+              style={styles.aiTestBtn}
+              onPress={handleTestGeminiKey}
+              disabled={testingGeminiKey}
+            >
+              {testingGeminiKey ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <>
+                  <Ionicons name="flash-outline" size={16} color={Colors.primary} />
+                  <Text style={styles.aiTestBtnText}>Test Et</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.aiSaveBtn}
+              onPress={handleSaveGeminiKey}
+              disabled={savingGeminiKey}
+            >
+              {savingGeminiKey ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="save-outline" size={16} color="#FFF" />
+                  <Text style={styles.aiSaveBtnText}>Kaydet</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {geminiApiKey ? (
+              <TouchableOpacity
+                style={styles.aiClearBtn}
+                onPress={handleClearGeminiKey}
+              >
+                <Ionicons name="trash-outline" size={16} color={Colors.danger} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {/* Educational Step-by-Step Box */}
+          <View style={styles.aiGuideBox}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <Ionicons name="help-circle" size={18} color="#92400E" />
+              <Text style={styles.aiGuideTitle}>Ücretsiz API Anahtarı Nasıl Alınır?</Text>
+            </View>
+
+            <Text style={styles.aiGuideStep}>
+              <Text style={{ fontWeight: '700' }}>1. Adım: </Text>
+              Aşağıdaki butona dokunarak Google AI Studio web sayfasını açın ve Gmail hesabınızla oturum açın.
+            </Text>
+            <Text style={styles.aiGuideStep}>
+              <Text style={{ fontWeight: '700' }}>2. Adım: </Text>
+              Açılan sayfada mavi renkteki <Text style={{ fontWeight: '700' }}>"Create API key"</Text> butonuna tıklayın.
+            </Text>
+            <Text style={styles.aiGuideStep}>
+              <Text style={{ fontWeight: '700' }}>3. Adım: </Text>
+              Oluşturulan <Text style={{ fontWeight: '700' }}>AIzaSy...</Text> kodunu kopyalayıp yukarıdaki kutucuğa yapıştırın ve <Text style={{ fontWeight: '700' }}>"Kaydet"</Text> butonuna basın.
+            </Text>
+
+            <View style={styles.aiFreePillsRow}>
+              <View style={styles.aiFreePill}>
+                <Ionicons name="checkmark-circle" size={13} color="#15803D" />
+                <Text style={styles.aiFreePillText}>Tamamen Ücretsiz</Text>
+              </View>
+              <View style={styles.aiFreePill}>
+                <Ionicons name="card-outline" size={13} color="#15803D" />
+                <Text style={styles.aiFreePillText}>Kredi Kartı İstemez</Text>
+              </View>
+              <View style={styles.aiFreePill}>
+                <Ionicons name="infinite" size={13} color="#15803D" />
+                <Text style={styles.aiFreePillText}>Günde 1.500 İstek</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.openAiStudioBtn}
+              onPress={() => Linking.openURL('https://aistudio.google.com/app/apikey')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="open-outline" size={17} color="#FFF" />
+              <Text style={styles.openAiStudioBtnText}>Google AI Studio'yu Aç (Ücretsiz API Al)</Text>
+            </TouchableOpacity>
+          </View>
+        </Card>
+
+        {/* SECTION 2: VERİTABANI YEDEKLEME & GERİ YÜKLEME */}
         <View style={[styles.sectionHeaderRow, { marginTop: 24 }]}>
           <Ionicons name="server-outline" size={20} color={Colors.primary} />
           <Text style={styles.sectionHeader}>Veritabanı Yedekleme & Geri Yükleme</Text>
@@ -1081,5 +1307,178 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.textPrimary,
     textAlign: 'center',
+  },
+  aiCard: {
+    padding: 16,
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+  },
+  aiCardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 12,
+  },
+  aiCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  aiCardDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 3,
+    lineHeight: 16,
+  },
+  aiStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  aiStatusBadgeActive: {
+    backgroundColor: '#DCFCE7',
+  },
+  aiStatusBadgeInactive: {
+    backgroundColor: '#FEF3C7',
+  },
+  aiStatusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  aiStatusBadgeTextActive: {
+    color: '#15803D',
+  },
+  aiStatusBadgeTextInactive: {
+    color: '#B45309',
+  },
+  aiInputWrap: {
+    marginBottom: 12,
+  },
+  aiInputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: 6,
+  },
+  aiInputFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  aiTextInput: {
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: Colors.textPrimary,
+  },
+  aiEyeBtn: {
+    padding: 10,
+  },
+  aiActionBtnsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  aiTestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryLight,
+  },
+  aiTestBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  aiSaveBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    backgroundColor: '#7C3AED',
+  },
+  aiSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  aiClearBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  aiGuideBox: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+  },
+  aiGuideTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  aiGuideStep: {
+    fontSize: 12,
+    color: '#78350F',
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  aiFreePillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginVertical: 10,
+  },
+  aiFreePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  aiFreePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803D',
+  },
+  openAiStudioBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#D97706',
+    paddingVertical: 11,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  openAiStudioBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFF',
   },
 });

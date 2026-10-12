@@ -35,8 +35,10 @@ import { getClasses } from '../database/operations/classOperations';
 import {
   generateYearlyPlanTemplateExcel,
   pickAndParseYearlyPlanExcel,
+  pickAndAdaptYearlyPlanExcelWithAi,
   ParsedYearlyPlanRow,
 } from '../utils/excelService';
+import { getGeminiApiKey } from '../utils/geminiScheduleService';
 import {
   pickAndSaveYearlyPlanPdf,
   viewYearlyPlanPdf,
@@ -76,6 +78,8 @@ export const YearlyPlanScreen: React.FC = () => {
   const [bulkModalVisible, setBulkModalVisible] = useState(false);
   const [parsedRows, setParsedRows] = useState<ParsedYearlyPlanRow[]>([]);
   const [loadingExcel, setLoadingExcel] = useState(false);
+  const [excelLoadingMsg, setExcelLoadingMsg] = useState('Excel dosyası okunuyor...');
+  const [isAiPlanMode, setIsAiPlanMode] = useState(false);
 
   // PDF Document State
   const [pdfDoc, setPdfDoc] = useState<YearlyPlanDocument | null>(null);
@@ -343,15 +347,70 @@ export const YearlyPlanScreen: React.FC = () => {
 
   const handlePickExcel = async () => {
     try {
+      setExcelLoadingMsg('Excel dosyası okunuyor...');
       setLoadingExcel(true);
       const rows = await pickAndParseYearlyPlanExcel();
       if (rows.length === 0) {
         setLoadingExcel(false);
         return;
       }
+      setIsAiPlanMode(false);
       setParsedRows(rows);
     } catch (e: any) {
-      Alert.alert('Hata', e?.message || 'Excel dosyası okunamadı.');
+      setLoadingExcel(false);
+      Alert.alert(
+        'Standart Format Uyarısı',
+        (e?.message || 'Excel dosyası standart şablona uymuyor.') +
+          '\n\nFarklı sitelerden (MEB, Zümre siteleri vb.) indirilmiş Excel dosyalarını Yapay Zeka (Gemini AI) ile otomatik analiz edip uygulamamıza uyarlamak ister misiniz?',
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: '✨ Yapay Zeka ile Dönüştür',
+            onPress: handlePickExcelWithAi,
+          },
+        ]
+      );
+    } finally {
+      setLoadingExcel(false);
+    }
+  };
+
+  const handlePickExcelWithAi = async () => {
+    const key = await getGeminiApiKey();
+    if (!key) {
+      Alert.alert(
+        'Gemini API Anahtarı Gerekli 🔑',
+        'Yapay zeka ile Excel dosyalarını otomatik dönüştürebilmek için önce Google Gemini API anahtarınızı tanımlamalısınız.\n\nİşlemler menüsünden ücretsiz anahtarınızı ekleyebilirsiniz.',
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'İşlemler Menüsüne Git',
+            onPress: () => {
+              setBulkModalVisible(false);
+              navigation.navigate('Main', { screen: 'OperationsTab' });
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    const weeklyHours = scheduleInfo?.totalWeeklyHours || 4;
+
+    try {
+      setExcelLoadingMsg(
+        'Yıllık plan Excel dosyası yapay zeka (Gemini AI) ile taranıyor...\nFarklı sütun ve konu başlıkları sınıf defterine uygun hale getiriliyor.'
+      );
+      setLoadingExcel(true);
+      const rows = await pickAndAdaptYearlyPlanExcelWithAi(weeklyHours);
+      if (rows.length === 0) {
+        setLoadingExcel(false);
+        return;
+      }
+      setIsAiPlanMode(true);
+      setParsedRows(rows);
+    } catch (e: any) {
+      Alert.alert('Yapay Zeka Dönüştürme Hatası', e?.message || 'Excel dosyası yapay zeka ile dönüştürülemedi.');
     } finally {
       setLoadingExcel(false);
     }
@@ -676,8 +735,8 @@ export const YearlyPlanScreen: React.FC = () => {
             <ScrollView showsVerticalScrollIndicator={false}>
               {loadingExcel ? (
                 <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={Colors.primary} />
-                  <Text style={styles.loadingText}>İşleniyor, lütfen bekleyiniz...</Text>
+                  <ActivityIndicator size="large" color="#7C3AED" />
+                  <Text style={styles.loadingText}>{excelLoadingMsg}</Text>
                 </View>
               ) : parsedRows.length === 0 ? (
                 <View>
@@ -700,28 +759,68 @@ export const YearlyPlanScreen: React.FC = () => {
                   <View style={[styles.guideCard, { marginTop: 12 }]}>
                     <Text style={styles.guideStepTitle}>Adım 2: Excel Dosyasını Yükleyin</Text>
                     <Text style={styles.guideStepDesc}>
-                      1. sütunda başlangıç tarihi, 2. sütunda bitiş tarihi, 3. sütunda ders saati ve 4. sütunda deftere yazılacak konu olan Excel dosyanızı seçin.
+                      Standart şablonu doğrudan yükleyebilir veya farklı sitelerden indirdiğiniz herhangi bir Excel dosyasını yapay zeka ile otomatik dönüştürebilirsiniz.
                     </Text>
-                    <TouchableOpacity
-                      style={styles.pickExcelBtn}
-                      onPress={handlePickExcel}
-                    >
-                      <Ionicons name="folder-open-outline" size={20} color="#fff" />
-                      <Text style={styles.pickExcelBtnText}>Excel Dosyası Seç</Text>
-                    </TouchableOpacity>
+
+                    <View style={{ gap: 10, marginTop: 10 }}>
+                      <TouchableOpacity
+                        style={styles.pickExcelAiBtn}
+                        onPress={handlePickExcelWithAi}
+                        activeOpacity={0.8}
+                      >
+                        <View style={styles.pickExcelAiIconWrap}>
+                          <Ionicons name="sparkles" size={20} color="#7C3AED" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.pickExcelAiBtnTitle}>Yapay Zeka ile Akıllı Excel Yükle</Text>
+                            <View style={styles.aiBadgeSmall}>
+                              <Text style={styles.aiBadgeSmallText}>Önerilen</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.pickExcelAiBtnSub}>
+                            Herhangi bir Excel sütun düzenini otomatik analiz edip sisteme uyarlar.
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color="#7C3AED" />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.pickExcelBtn}
+                        onPress={handlePickExcel}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons name="document-text-outline" size={18} color="#fff" />
+                        <Text style={styles.pickExcelBtnText}>Standart Şablon Excel Seç</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
               ) : (
                 <View>
-                  <View style={styles.previewHeader}>
+                  <View style={[styles.previewHeader, isAiPlanMode && styles.previewHeaderAi]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Ionicons name="checkmark-circle" size={18} color="#059669" />
-                      <Text style={styles.previewTitle}>
-                        Toplam {parsedRows.length} Ders Konusu / Saati Dağıtıldı
+                      <Ionicons
+                        name={isAiPlanMode ? 'sparkles' : 'checkmark-circle'}
+                        size={18}
+                        color={isAiPlanMode ? '#7C3AED' : '#059669'}
+                      />
+                      <Text
+                        style={[
+                          styles.previewTitle,
+                          isAiPlanMode && { color: '#6D28D9' },
+                        ]}
+                      >
+                        {isAiPlanMode ? '✨ Yapay Zeka Tarafından Dönüştürüldü' : 'Standart Plan Yüklendi'}
                       </Text>
                     </View>
-                    <Text style={styles.previewSub}>
-                      {selectedGradeLevel}. Sınıf ({scheduleInfo?.distinctClasses.join(', ')}) şubelerinin tamamında ders saatlerine göre homojen dağıtılmıştır.
+                    <Text
+                      style={[
+                        styles.previewSub,
+                        isAiPlanMode && { color: '#7C3AED' },
+                      ]}
+                    >
+                      Toplam {parsedRows.length} ders konusu/haftası {selectedGradeLevel}. Sınıf programınıza ({scheduleInfo?.totalWeeklyHours} Saat) göre homojen dağıtıldı.
                     </Text>
                   </View>
 
@@ -1364,6 +1463,52 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
     fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  pickExcelAiBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    borderColor: '#C4B5FD',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    padding: 12,
+    gap: 12,
+  },
+  pickExcelAiIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#EDE9FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickExcelAiBtnTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6D28D9',
+  },
+  pickExcelAiBtnSub: {
+    fontSize: 11,
+    color: '#7C3AED',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  aiBadgeSmall: {
+    backgroundColor: '#DDD6FE',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  aiBadgeSmallText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#6D28D9',
+  },
+  previewHeaderAi: {
+    backgroundColor: '#F5F3FF',
+    borderColor: '#DDD6FE',
   },
   previewHeader: {
     backgroundColor: '#ECFDF5',

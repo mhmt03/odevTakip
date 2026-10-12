@@ -1075,6 +1075,45 @@ export const pickAndParseYearlyPlanExcel = async (): Promise<ParsedYearlyPlanRow
   return parsedItems;
 };
 
+/**
+ * Herhangi bir kaynaktan (MEB, Zümre, İnternet) indirilmiş farklı format ve sütun düzenindeki
+ * Excel dosyasını seçtirir ve Google Gemini AI ile analiz ederek ParsedYearlyPlanRow[] formatına uyarlar.
+ */
+export const pickAndAdaptYearlyPlanExcelWithAi = async (
+  weeklyHours: number = 4
+): Promise<ParsedYearlyPlanRow[]> => {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'application/octet-stream',
+      '*/*',
+    ],
+    copyToCacheDirectory: true,
+  });
+
+  if (result.canceled || !result.assets || result.assets.length === 0) {
+    return [];
+  }
+
+  const asset = result.assets[0];
+  const workbook = await readWorkbookFromAsset(asset);
+
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error('Excel dosyasında geçerli bir sayfa bulunamadı.');
+  }
+
+  const rawRows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+  if (rawRows.length < 2) {
+    throw new Error('Excel dosyasında veri satırı bulunamadı.');
+  }
+
+  const { adaptYearlyPlanExcelWithGemini } = await import('./geminiScheduleService');
+  return await adaptYearlyPlanExcelWithGemini(rawRows, weeklyHours);
+};
+
 // 10. GRADEBOOK: Generate template for 3 Exams, 3 Performances and Quizzes
 export const generateGradebookTemplateExcel = async (
   className: string,
