@@ -3,7 +3,7 @@ import { getDB } from '../database/db';
 import type { ParsedYearlyPlanRow } from './excelService';
 
 // Varsayılan API Anahtarı (Kullanıcı dilerse buraya doğrudan tanımlayabilir veya uygulama içinden girebilir)
-export const DEFAULT_GEMINI_API_KEY = '';
+export const DEFAULT_GEMINI_API_KEY = 'AQ.Ab8RN6Jo0l8xWLJabe72du_7hkSGRYm9miUkzxV0-ISPbqFC';
 
 export interface AnalyzedLessonItem {
   day: number; // 1: Pazartesi .. 7: Pazar
