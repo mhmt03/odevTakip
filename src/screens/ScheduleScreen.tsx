@@ -31,7 +31,15 @@ import {
   clearEntireSchedule,
   getSchedulePhotoUri,
   setSchedulePhotoUri,
+  applyAnalyzedSchedule,
 } from '../database/operations/scheduleOperations';
+import {
+  analyzeSchedulePhotoWithGemini,
+  getGeminiApiKey,
+  setGeminiApiKey,
+  testGeminiApiKey,
+  AnalyzedLessonItem,
+} from '../utils/geminiScheduleService';
 import { getClasses } from '../database/operations/classOperations';
 import { exportScheduleToExcel } from '../utils/excelService';
 import { DAYS_OF_WEEK, getDayOfWeekIndex, isTimeBetween, getCurrentTimeString } from '../utils/dateUtils';
@@ -72,6 +80,17 @@ export const ScheduleScreen: React.FC = () => {
     right: 0,
   });
   const [isProcessingCrop, setIsProcessingCrop] = useState(false);
+
+  // Gemini AI Vision States
+  const [analyzingAi, setAnalyzingAi] = useState(false);
+  const [aiStatusText, setAiStatusText] = useState('');
+  const [apiKeyModalVisible, setApiKeyModalVisible] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [testingApiKey, setTestingApiKey] = useState(false);
+  const [aiPreviewModalVisible, setAiPreviewModalVisible] = useState(false);
+  const [analyzedLessons, setAnalyzedLessons] = useState<AnalyzedLessonItem[]>([]);
+  const [applyingSchedule, setApplyingSchedule] = useState(false);
+
 
   // Slot Edit Modal
   const [modalVisible, setModalVisible] = useState(false);
@@ -296,7 +315,131 @@ export const ScheduleScreen: React.FC = () => {
     );
   };
 
-  const handlePickSchedulePhoto = async (source: 'camera' | 'gallery', withCrop: boolean = true) => {
+  const handleRunAiAnalysis = async (targetUri?: string | null) => {
+    const uriToUse = targetUri || schedulePhotoUri;
+
+    // Check API Key first
+    const currentKey = await getGeminiApiKey();
+    if (!currentKey) {
+      setApiKeyInput('');
+      setApiKeyModalVisible(true);
+      return;
+    }
+
+    if (!uriToUse) {
+      Alert.alert(
+        'Fotoğraf Gerekli 📸',
+        'Yapay zeka ile analiz edebilmek için önce ders programının fotoğrafını çekin veya galeriden seçin.',
+        [
+          { text: 'Vazgeç', style: 'cancel' },
+          { text: 'Kameradan Çek', onPress: () => handlePickSchedulePhoto('camera', false, true) },
+          { text: 'Galeriden Seç', onPress: () => handlePickSchedulePhoto('gallery', false, true) },
+        ]
+      );
+      return;
+    }
+
+    try {
+      setPhotoMenuVisible(false);
+      setAnalyzingAi(true);
+      setAiStatusText('Fotoğraf yapay zeka (Gemini Vision) ile taranıyor...\nTablo satırları, şubeler ve ders saatleri çözümleniyor.');
+
+      const result = await analyzeSchedulePhotoWithGemini(uriToUse, currentKey);
+
+      setAnalyzingAi(false);
+      setAnalyzedLessons(result.lessons);
+      setAiPreviewModalVisible(true);
+    } catch (err: any) {
+      setAnalyzingAi(false);
+      const msg = err?.message || 'Bilinmeyen bir hata oluştu.';
+      if (msg.includes('API anahtarı')) {
+        Alert.alert('API Anahtarı Gerekli', msg, [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'Anahtarı Gir',
+            onPress: () => {
+              setApiKeyInput('');
+              setApiKeyModalVisible(true);
+            },
+          },
+        ]);
+      } else {
+        Alert.alert('Yapay Zeka Analiz Hatası', msg);
+      }
+    }
+  };
+
+  const handleApplyAnalyzedSchedule = async () => {
+    if (!analyzedLessons || analyzedLessons.length === 0) return;
+
+    try {
+      setApplyingSchedule(true);
+      const res = await applyAnalyzedSchedule(analyzedLessons, 'all_week');
+      await loadData();
+      setApplyingSchedule(false);
+      setAiPreviewModalVisible(false);
+
+      Alert.alert(
+        'Ders Programı Başarıyla Yüklendi 🎉',
+        `Toplam ${res.totalLessonsLoaded} ders saati başarıyla programa aktarıldı!\n\n` +
+          `• Şubeler: ${res.classesEnsured.join(', ')}\n` +
+          `• Dersler: ${res.coursesEnsured.join(', ')}\n\n` +
+          `Özel ders saatleriniz korunarak haftalık ders programınız güncellendi.`
+      );
+    } catch (err: any) {
+      setApplyingSchedule(false);
+      Alert.alert('Hata', 'Program kaydedilirken bir hata oluştu: ' + (err?.message || err));
+    }
+  };
+
+  const handleOpenApiKeySettings = async () => {
+    setPhotoMenuVisible(false);
+    const key = await getGeminiApiKey();
+    setApiKeyInput(key);
+    setApiKeyModalVisible(true);
+  };
+
+  const handleTestAndSaveApiKey = async () => {
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) {
+      await setGeminiApiKey('');
+      setApiKeyModalVisible(false);
+      Alert.alert('Bilgi', 'Gemini API anahtarı temizlendi.');
+      return;
+    }
+
+    try {
+      setTestingApiKey(true);
+      const res = await testGeminiApiKey(trimmed);
+      setTestingApiKey(false);
+
+      if (res.success) {
+        await setGeminiApiKey(trimmed);
+        setApiKeyModalVisible(false);
+        Alert.alert('Başarılı ✅', 'API anahtarınız doğrulandı ve kaydedildi.');
+      } else {
+        Alert.alert('Doğrulama Başarısız ❌', res.message + '\n\nYine de kaydetmek istiyor musunuz?', [
+          { text: 'Düzenle', style: 'cancel' },
+          {
+            text: 'Yine de Kaydet',
+            onPress: async () => {
+              await setGeminiApiKey(trimmed);
+              setApiKeyModalVisible(false);
+            },
+          },
+        ]);
+      }
+    } catch (err: any) {
+      setTestingApiKey(false);
+      Alert.alert('Hata', err?.message || 'API anahtarı test edilemedi.');
+    }
+  };
+
+  const handlePickSchedulePhoto = async (
+    source: 'camera' | 'gallery',
+    withCrop: boolean = false,
+    autoRunAi = false
+  ) => {
     try {
       setPhotoMenuVisible(false);
       setCropModalVisible(false);
@@ -313,10 +456,22 @@ export const ScheduleScreen: React.FC = () => {
       setCropMargins({ top: 0, bottom: 0, left: 0, right: 0 });
       setLoadingPhoto(false);
 
-      Alert.alert(
-        'Ders Programı Fotoğrafı Kaydedildi 📸',
-        'Fotoğraf başarıyla yüklendi. "Fotoğrafı İncele" butonuyla ders programınızı dilediğiniz gibi büyütebilir, inceleyebilir veya kırpabilirsiniz.'
-      );
+      if (autoRunAi) {
+        handleRunAiAnalysis(targetPath);
+      } else {
+        Alert.alert(
+          'Ders Programı Fotoğrafı Kaydedildi 📸',
+          'Fotoğraftaki haftalık ders programını Yapay Zeka (Gemini) ile otomatik tarayıp programa aktarmak ister misiniz?',
+          [
+            { text: 'Yalnızca Fotoğrafı Sakla', style: 'cancel' },
+            {
+              text: '✨ Yapay Zeka ile Tara & Yükle',
+              onPress: () => handleRunAiAnalysis(targetPath),
+            },
+          ]
+        );
+      }
+
     } catch (err: any) {
       setLoadingPhoto(false);
       Alert.alert('Hata', err?.message || 'Fotoğraf yüklenemedi.');
@@ -825,6 +980,33 @@ export const ScheduleScreen: React.FC = () => {
             </View>
 
             <View style={styles.photoModalOptions}>
+              {/* Option 0: Yapay Zeka ile Tara & Yükle (Primary) */}
+              <TouchableOpacity
+                style={[styles.photoOptionCard, { borderColor: '#C4B5FD', backgroundColor: '#F5F3FF' }]}
+                onPress={() => handleRunAiAnalysis()}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#EDE9FE' }]}>
+                  <Ionicons name="sparkles" size={24} color="#7C3AED" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={[styles.photoOptionTitle, { color: '#6D28D9' }]}>
+                      Yapay Zeka ile Programı Tara & Yükle
+                    </Text>
+                    <View style={[styles.autoLoadBadge, { backgroundColor: '#DDD6FE' }]}>
+                      <Text style={[styles.autoLoadBadgeText, { color: '#6D28D9' }]}>Gemini AI</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.photoOptionDesc}>
+                    {schedulePhotoUri
+                      ? 'Kayıtlı fotoğrafı yapay zeka ile analiz eder, günleri, saatleri ve şubeleri otomatik programa aktarır.'
+                      : 'Yeni fotoğraf seçerek veya çekerek haftalık ders dağılımını otomatik sisteme aktarır.'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#7C3AED" />
+              </TouchableOpacity>
+
               {/* Option 1: Kameradan Çek */}
               <TouchableOpacity
                 style={styles.photoOptionCard}
@@ -861,54 +1043,7 @@ export const ScheduleScreen: React.FC = () => {
                 <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
               </TouchableOpacity>
 
-              {/* Option 3: Hazır Okul Programını Yükle (27 Saat) */}
-              <TouchableOpacity
-                style={styles.photoOptionCard}
-                onPress={() => {
-                  setPhotoMenuVisible(false);
-                  setTimeout(() => handleLoadOfficialSchedule(), 200);
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#DCFCE7' }]}>
-                  <Ionicons name="cloud-download" size={24} color="#16A34A" />
-                </View>
-                <View style={styles.photoOptionTextWrap}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={styles.photoOptionTitle}>Resimdeki Okul Programını Yükle</Text>
-                    <View style={styles.autoLoadBadge}>
-                      <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.photoOptionDesc}>
-                    Fotoğraftaki Kamil Miras AL haftalık ders dağılımını (S.FZK ve HDTE2) programa aktarır.
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-              </TouchableOpacity>
-
-              {/* Option 4: Ders Programını Düzenle & Saatleri Yönet */}
-              <TouchableOpacity
-                style={styles.photoOptionCard}
-                onPress={() => {
-                  setPhotoMenuVisible(false);
-                  navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay });
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.photoOptionIconWrap, { backgroundColor: Colors.primaryLight }]}>
-                  <Ionicons name="create-outline" size={24} color={Colors.primary} />
-                </View>
-                <View style={styles.photoOptionTextWrap}>
-                  <Text style={styles.photoOptionTitle}>Ders Programını Düzenle & Saatleri Yönet</Text>
-                  <Text style={styles.photoOptionDesc}>
-                    Şubeler, ders saatleri ve haftalık ders programını manuel olarak düzenleyin.
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-              </TouchableOpacity>
-
-              {/* Option 5: Eğer Kayıtlı Fotoğraf Varsa */}
+              {/* Option 3: Eğer Kayıtlı Fotoğraf Varsa */}
               {schedulePhotoUri ? (
                 <TouchableOpacity
                   style={[styles.photoOptionCard, { borderColor: '#A7F3D0', backgroundColor: '#ECFDF5' }]}
@@ -931,7 +1066,77 @@ export const ScheduleScreen: React.FC = () => {
                 </TouchableOpacity>
               ) : null}
 
-              {/* Option 6: Ders Programını Sıfırla */}
+              {/* Option 4: Yapay Zeka (Gemini API) Ayarları */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={handleOpenApiKeySettings}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#FEF3C7' }]}>
+                  <Ionicons name="key-outline" size={24} color="#D97706" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.photoOptionTitle}>Yapay Zeka (Gemini API) Ayarları</Text>
+                    <View style={[styles.autoLoadBadge, { backgroundColor: '#FEF3C7' }]}>
+                      <Text style={[styles.autoLoadBadgeText, { color: '#B45309' }]}>Ücretsiz</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.photoOptionDesc}>
+                    Otomatik görsel tarama için Google Gemini API anahtarınızı görüntüleyin veya değiştirin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 5: Sabit Şablon Yükle (Kamil Miras AL 27 Saat) */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => {
+                  setPhotoMenuVisible(false);
+                  setTimeout(() => handleLoadOfficialSchedule(), 200);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: '#DCFCE7' }]}>
+                  <Ionicons name="cloud-download" size={24} color="#16A34A" />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.photoOptionTitle}>Kamil Miras AL Sabit Şablonu Yükle</Text>
+                    <View style={styles.autoLoadBadge}>
+                      <Text style={styles.autoLoadBadgeText}>27 Saat</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.photoOptionDesc}>
+                    Önceden tanımlanmış sabit haftalık ders dağılımını (S.FZK ve HDTE2) programa aktarır.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 6: Ders Programını Düzenle & Saatleri Yönet */}
+              <TouchableOpacity
+                style={styles.photoOptionCard}
+                onPress={() => {
+                  setPhotoMenuVisible(false);
+                  navigation.navigate('ScheduleManage', { initialTab: 'slots', initialDay: selectedDay });
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.photoOptionIconWrap, { backgroundColor: Colors.primaryLight }]}>
+                  <Ionicons name="create-outline" size={24} color={Colors.primary} />
+                </View>
+                <View style={styles.photoOptionTextWrap}>
+                  <Text style={styles.photoOptionTitle}>Ders Programını Düzenle & Saatleri Yönet</Text>
+                  <Text style={styles.photoOptionDesc}>
+                    Şubeler, ders saatleri ve haftalık ders programını manuel olarak düzenleyin.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+
+              {/* Option 7: Ders Programını Sıfırla */}
               <TouchableOpacity
                 style={[styles.photoOptionCard, { borderColor: '#FECACA' }]}
                 onPress={() => {
@@ -1512,6 +1717,187 @@ export const ScheduleScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Gemini AI API Key Settings Modal */}
+      <Modal
+        visible={apiKeyModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setApiKeyModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setApiKeyModalVisible(false)}
+        >
+          <View style={styles.modalContainer} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Google Gemini API Anahtarı</Text>
+                <Text style={styles.modalSub}>Ders programı fotoğraflarını yapay zeka ile otomatik taramak için kullanılır.</Text>
+              </View>
+              <TouchableOpacity onPress={() => setApiKeyModalVisible(false)}>
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.apiKeyInfoBox}>
+              <Ionicons name="information-circle-outline" size={20} color="#D97706" style={{ marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.apiKeyInfoTitle}>Ücretsizdir & Kredi Kartı Gerekmez</Text>
+                <Text style={styles.apiKeyInfoText}>
+                  Google AI Studio (<Text style={{ fontWeight: '700' }}>aistudio.google.com</Text>) adresine Google hesabınızla giriş yapıp 1 dakikada ücretsiz API anahtarı oluşturabilirsiniz.
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginVertical: 12 }}>
+              <Text style={styles.inputLabel}>Gemini API Key (AIzaSy...):</Text>
+              <Input
+                placeholder="Örn: AIzaSyD..."
+                value={apiKeyInput}
+                onChangeText={setApiKeyInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <Button
+                title="İptal"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setApiKeyModalVisible(false)}
+              />
+              <Button
+                title={testingApiKey ? 'Test Ediliyor...' : 'Doğrula ve Kaydet'}
+                style={{ flex: 2 }}
+                loading={testingApiKey}
+                onPress={handleTestAndSaveApiKey}
+              />
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Gemini AI Analyzed Schedule Preview & Confirm Modal */}
+      <Modal
+        visible={aiPreviewModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setAiPreviewModalVisible(false)}
+      >
+        <View style={styles.aiPreviewOverlay}>
+          <View style={styles.aiPreviewContainer}>
+            <View style={styles.aiPreviewHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="sparkles" size={20} color="#7C3AED" />
+                  <Text style={styles.aiPreviewTitle}>Tespit Edilen Ders Dağılımı</Text>
+                </View>
+                <Text style={styles.aiPreviewSub}>
+                  Yapay zeka fotoğraftaki tabloyu çözdü. Lütfen kontrol edip onaylayın.
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setAiPreviewModalVisible(false)}
+                style={styles.viewerCloseBtn}
+              >
+                <Ionicons name="close" size={24} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Stats Badges Bar */}
+            <View style={styles.aiStatsBar}>
+              <View style={styles.aiStatBadge}>
+                <Ionicons name="time" size={14} color="#7C3AED" />
+                <Text style={styles.aiStatBadgeText}>{analyzedLessons.length} Ders Saati</Text>
+              </View>
+              <View style={[styles.aiStatBadge, { backgroundColor: '#DCFCE7' }]}>
+                <Ionicons name="school" size={14} color="#15803D" />
+                <Text style={[styles.aiStatBadgeText, { color: '#15803D' }]}>
+                  {new Set(analyzedLessons.map((l) => l.className)).size} Şube
+                </Text>
+              </View>
+              <View style={[styles.aiStatBadge, { backgroundColor: '#FEF3C7' }]}>
+                <Ionicons name="book" size={14} color="#B45309" />
+                <Text style={[styles.aiStatBadgeText, { color: '#B45309' }]}>
+                  {new Set(analyzedLessons.map((l) => l.courseName)).size} Ders
+                </Text>
+              </View>
+            </View>
+
+            {/* Scrollable Grouped Days List */}
+            <ScrollView style={styles.aiLessonsScroll} showsVerticalScrollIndicator={false}>
+              {DAYS_OF_WEEK.map((day) => {
+                const dayLessons = analyzedLessons.filter((l) => l.day === day.id);
+                if (dayLessons.length === 0) return null;
+
+                return (
+                  <View key={`day-${day.id}`} style={styles.aiDayGroupCard}>
+                    <View style={styles.aiDayGroupHeader}>
+                      <Text style={styles.aiDayGroupTitle}>{day.name}</Text>
+                      <Text style={styles.aiDayGroupCount}>{dayLessons.length} Saat</Text>
+                    </View>
+
+                    <View style={styles.aiDayLessonsList}>
+                      {dayLessons.map((item, idx) => (
+                        <View key={`item-${day.id}-${idx}`} style={styles.aiLessonItemRow}>
+                          <View style={styles.aiSlotNumberCircle}>
+                            <Text style={styles.aiSlotNumberText}>{item.slotNumber}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={styles.aiClassBadge}>{item.className}</Text>
+                              <Text style={styles.aiCourseTitle}>{item.courseName}</Text>
+                            </View>
+                            {item.courseCode && item.courseCode !== item.courseName ? (
+                              <Text style={styles.aiCourseCode}>Kod: {item.courseCode}</Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              })}
+
+              <View style={styles.aiWarningNote}>
+                <Ionicons name="shield-checkmark-outline" size={18} color="#059669" />
+                <Text style={styles.aiWarningNoteText}>
+                  Onayladığınızda tanımladığınız özel ders saatleriniz (başlangıç/bitiş dakikaları) KORUNUR, sadece şube ve ders atamaları güncellenir.
+                </Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.aiPreviewFooter}>
+              <Button
+                title="Vazgeç"
+                variant="outline"
+                style={{ flex: 1 }}
+                onPress={() => setAiPreviewModalVisible(false)}
+              />
+              <Button
+                title={applyingSchedule ? 'Kaydediliyor...' : 'Programı Sisteme Yükle'}
+                style={{ flex: 2, backgroundColor: '#059669' }}
+                loading={applyingSchedule}
+                onPress={handleApplyAnalyzedSchedule}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* AI Analyzing Fullscreen Loading Overlay */}
+      {analyzingAi && (
+        <View style={styles.aiLoadingOverlay}>
+          <View style={styles.aiLoadingBox}>
+            <ActivityIndicator size="large" color="#7C3AED" />
+            <Text style={styles.aiLoadingTitle}>Yapay Zeka İnceliyor ✨</Text>
+            <Text style={styles.aiLoadingText}>{aiStatusText}</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -2474,5 +2860,219 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  apiKeyInfoBox: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    gap: 10,
+    marginVertical: 8,
+  },
+  apiKeyInfoTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 2,
+  },
+  apiKeyInfoText: {
+    fontSize: 12,
+    color: '#B45309',
+    lineHeight: 16,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  aiPreviewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  aiPreviewContainer: {
+    backgroundColor: Colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+    paddingBottom: 24,
+  },
+  aiPreviewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  aiPreviewTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  aiPreviewSub: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  aiStatsBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 8,
+  },
+  aiStatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EDE9FE',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  aiStatBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6D28D9',
+  },
+  aiLessonsScroll: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    maxHeight: 450,
+  },
+  aiDayGroupCard: {
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  aiDayGroupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  aiDayGroupTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  aiDayGroupCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  aiDayLessonsList: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  aiLessonItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    gap: 10,
+  },
+  aiSlotNumberCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#E0E7FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aiSlotNumberText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4338CA',
+  },
+  aiClassBadge: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  aiCourseTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  aiCourseCode: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  aiWarningNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginVertical: 10,
+  },
+  aiWarningNoteText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#065F46',
+    lineHeight: 16,
+  },
+  aiPreviewFooter: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    gap: 12,
+  },
+  aiLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+  },
+  aiLoadingBox: {
+    backgroundColor: '#FFF',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    maxWidth: '85%',
+    ...Shadows.medium,
+  },
+  aiLoadingTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginTop: 14,
+  },
+  aiLoadingText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 18,
   },
 });

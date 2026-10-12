@@ -1,6 +1,7 @@
 import { getDB } from '../db';
 import { CourseName, LessonSlot, ScheduleItem, DaySlotInfo, DaySlotTime } from '../../types';
 import { getDayOfWeekIndex, getCurrentTimeString, isTimeBetween, DAYS_OF_WEEK } from '../../utils/dateUtils';
+import { AnalyzedLessonItem } from '../../utils/geminiScheduleService';
 
 // --- COURSES (Ders Adları) ---
 export const getCourses = async (): Promise<CourseName[]> => {
@@ -873,5 +874,204 @@ export const mergeAndDetectConflicts = (
     }
     return (a.slot_number || 0) - (b.slot_number || 0);
   });
+};
+
+export interface ApplyScheduleResult {
+  success: boolean;
+  totalLessonsLoaded: number;
+  classesEnsured: string[];
+  coursesEnsured: string[];
+  slotsCount: number;
+  message: string;
+}
+
+/**
+ * Yapay zeka (Gemini Vision) tarafından analiz edilen haftalık ders programını
+ * veritabanına otomatik aktarır. Eksik şubeleri ve dersleri otomatik oluşturur.
+ */
+export const applyAnalyzedSchedule = async (
+  lessons: AnalyzedLessonItem[],
+  clearDaysOption: 'all_week' | 'matched_days' = 'all_week'
+): Promise<ApplyScheduleResult> => {
+  const db = await getDB();
+  const { getActiveSchool } = await import('./schoolOperations');
+  const activeSchool = await getActiveSchool();
+  const activeSchoolId = activeSchool?.id || 1;
+
+  if (!lessons || lessons.length === 0) {
+    throw new Error('Yüklenecek ders saati bulunamadı.');
+  }
+
+  // 1. DERS SAATLERİ (SLOTS) KONTROLÜ VE OLUŞTURULMASI
+  const maxSlotNeeded = Math.max(...lessons.map((l) => l.slotNumber), 8);
+  const existingSlots = await db.getAllAsync<{ id: number; slot_number: number }>(
+    'SELECT id, slot_number FROM lesson_slots ORDER BY slot_number ASC'
+  );
+  const slotMap: Record<number, number> = {};
+  for (const s of existingSlots) {
+    slotMap[s.slot_number] = s.id;
+  }
+
+  const defaultStarterTimes: Record<number, { name: string; start: string; end: string }> = {
+    1: { name: '1. Ders', start: '08:30', end: '09:10' },
+    2: { name: '2. Ders', start: '09:25', end: '10:05' },
+    3: { name: '3. Ders', start: '10:15', end: '10:55' },
+    4: { name: '4. Ders', start: '11:05', end: '11:45' },
+    5: { name: '5. Ders', start: '11:55', end: '12:35' },
+    6: { name: '6. Ders', start: '13:40', end: '14:20' },
+    7: { name: '7. Ders', start: '14:30', end: '15:10' },
+    8: { name: '8. Ders', start: '15:20', end: '16:00' },
+    9: { name: '9. Ders', start: '16:10', end: '16:50' },
+    10: { name: '10. Ders', start: '17:00', end: '17:40' },
+  };
+
+  for (let sNum = 1; sNum <= maxSlotNeeded; sNum++) {
+    if (!slotMap[sNum]) {
+      const def = defaultStarterTimes[sNum] || {
+        name: `${sNum}. Ders`,
+        start: '08:30',
+        end: '09:10',
+      };
+      const res = await db.runAsync(
+        'INSERT INTO lesson_slots (slot_number, slot_name, start_time, end_time) VALUES (?, ?, ?, ?)',
+        sNum,
+        def.name,
+        def.start,
+        def.end
+      );
+      slotMap[sNum] = res.lastInsertRowId;
+    }
+  }
+
+  // 2. ŞUBELERİN EŞLEŞTİRİLMESİ VEYA OLUŞTURULMASI
+  const existingClasses = await db.getAllAsync<{ id: number; name: string; school_id: number | null }>(
+    'SELECT id, name, school_id FROM classes'
+  );
+  const normalizeNorm = (str: string) => (str || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const classIdMap: Record<string, number> = {};
+  const classesEnsuredSet = new Set<string>();
+
+  for (const item of lessons) {
+    const rawName = item.className.trim();
+    const norm = normalizeNorm(rawName);
+    if (!norm) continue;
+
+    if (!classIdMap[norm]) {
+      // Önce mevcut sınıflarda ara
+      const match =
+        existingClasses.find(
+          (c) => normalizeNorm(c.name) === norm && (c.school_id === activeSchoolId || !c.school_id)
+        ) || existingClasses.find((c) => normalizeNorm(c.name) === norm);
+
+      if (match) {
+        classIdMap[norm] = match.id;
+        classesEnsuredSet.add(match.name);
+      } else {
+        // Yoksa otomatik oluştur
+        const res = await db.runAsync(
+          'INSERT INTO classes (name, school_id) VALUES (?, ?)',
+          rawName,
+          activeSchoolId
+        );
+        classIdMap[norm] = res.lastInsertRowId;
+        classesEnsuredSet.add(rawName);
+        existingClasses.push({ id: res.lastInsertRowId, name: rawName, school_id: activeSchoolId });
+      }
+    }
+  }
+
+  // 3. DERSLERİN EŞLEŞTİRİLMESİ VEYA OLUŞTURULMASI
+  const existingCourses = await db.getAllAsync<{ id: number; name: string; code?: string }>(
+    'SELECT id, name, code FROM courses'
+  );
+  const courseIdMap: Record<string, number> = {};
+  const coursesEnsuredSet = new Set<string>();
+
+  const courseColors = ['#4F46E5', '#059669', '#DC2626', '#D97706', '#7C3AED', '#2563EB', '#DB2777', '#0891B2'];
+  let colorIdx = 0;
+
+  for (const item of lessons) {
+    const cName = (item.courseName || item.courseCode || 'Ders').trim();
+    const cCode = (item.courseCode || cName).trim();
+    const key = `${normalizeNorm(cName)}_${normalizeNorm(cCode)}`;
+
+    if (!courseIdMap[key]) {
+      const match = existingCourses.find((c) => {
+        const mNormName = normalizeNorm(c.name);
+        const mNormCode = normalizeNorm(c.code || '');
+        const targetNormName = normalizeNorm(cName);
+        const targetNormCode = normalizeNorm(cCode);
+        return (
+          mNormName === targetNormName ||
+          (targetNormCode && mNormCode === targetNormCode) ||
+          mNormName === targetNormCode ||
+          mNormCode === targetNormName
+        );
+      });
+
+      if (match) {
+        courseIdMap[key] = match.id;
+        coursesEnsuredSet.add(match.name);
+      } else {
+        const color = courseColors[colorIdx % courseColors.length];
+        colorIdx++;
+        const res = await db.runAsync(
+          'INSERT INTO courses (name, code, color) VALUES (?, ?, ?)',
+          cName,
+          cCode,
+          color
+        );
+        courseIdMap[key] = res.lastInsertRowId;
+        coursesEnsuredSet.add(cName);
+        existingCourses.push({ id: res.lastInsertRowId, name: cName, code: cCode });
+      }
+    }
+  }
+
+  // 4. ESKİ PROGRAMI TEMİZLE
+  if (clearDaysOption === 'all_week') {
+    await db.runAsync('DELETE FROM schedules WHERE day_of_week BETWEEN 1 AND 7');
+  } else {
+    const daysToClear = Array.from(new Set(lessons.map((l) => l.day)));
+    for (const d of daysToClear) {
+      await db.runAsync('DELETE FROM schedules WHERE day_of_week = ?', d);
+    }
+  }
+
+  // 5. YENİ DERSLERİ EKLE
+  for (const item of lessons) {
+    const slotId = slotMap[item.slotNumber];
+    const normClass = normalizeNorm(item.className);
+    const classId = classIdMap[normClass];
+    const cName = (item.courseName || item.courseCode || 'Ders').trim();
+    const cCode = (item.courseCode || cName).trim();
+    const key = `${normalizeNorm(cName)}_${normalizeNorm(cCode)}`;
+    const courseId = courseIdMap[key];
+
+    if (slotId && classId && courseId) {
+      await db.runAsync(
+        `INSERT INTO schedules (day_of_week, slot_id, class_id, course_id, classroom)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(day_of_week, slot_id) DO UPDATE SET
+           class_id = excluded.class_id,
+           course_id = excluded.course_id,
+           classroom = excluded.classroom`,
+        item.day,
+        slotId,
+        classId,
+        courseId,
+        item.classroom || null
+      );
+    }
+  }
+
+  return {
+    success: true,
+    totalLessonsLoaded: lessons.length,
+    classesEnsured: Array.from(classesEnsuredSet),
+    coursesEnsured: Array.from(coursesEnsuredSet),
+    slotsCount: Object.keys(slotMap).length,
+    message: `${lessons.length} saatlik ders programı başarıyla yüklendi!`,
+  };
 };
 
